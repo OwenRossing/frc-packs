@@ -1,0 +1,742 @@
+<title>FRC Packs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Chakra+Petch:wght@500;600;700&display=swap">
+<style>
+/* Layout: a dark teal card table. Open tab: status bar, one pack in the middle, cards deal out one at a time into a row. Binder tab: tier chips and a grid of everything you own. */
+:root {
+  color-scheme: dark;
+  --bg: #06161d;
+  --bg-2: #0b2b36;
+  --ink: #e8f6f4;
+  --ink-dim: #7fa5aa;
+  --tide: #27d3c3;
+  --foam: #f5fbfa;
+  --line: #1f4650;
+  --panel: #0a222b;
+  --display: "Lilita One", "Arial Rounded MT Bold", system-ui, sans-serif;
+  --body: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --cw: clamp(150px, min(72vw, 270px, calc((100svh - 360px) / 1.4)), 270px);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { min-height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; overflow-x: hidden; }
+button { font: inherit; color: inherit; }
+.bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; background: radial-gradient(120% 90% at 50% 0%, var(--bg-2), var(--bg) 70%); }
+.bg i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; filter: blur(60px); opacity: .35; animation: drift 26s ease-in-out infinite alternate; }
+.bg i:nth-child(1) { background: #0f6b73; left: -25vmax; top: -20vmax; }
+.bg i:nth-child(2) { background: #14396b; right: -30vmax; bottom: -25vmax; animation-duration: 34s; animation-direction: alternate-reverse; }
+.bg i:nth-child(3) { background: #0c5a4a; left: 20vmax; top: 30vh; width: 40vmax; height: 40vmax; opacity: .22; animation-duration: 42s; }
+@keyframes drift { from { transform: translate(0,0) rotate(0deg) scale(1); } to { transform: translate(8vmax, 5vmax) rotate(40deg) scale(1.15); } }
+.rays { position: fixed; inset: -50vmax; z-index: 1; pointer-events: none; opacity: 0; transition: opacity .6s; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0 8deg, rgba(120,255,240,.14) 8deg 12deg); animation: spin 30s linear infinite; mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 38%); -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 38%); }
+body.takeover .rays { opacity: 1; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.dim { position: fixed; inset: 0; z-index: 2; background: rgba(2,8,12,.62); opacity: 0; pointer-events: none; transition: opacity .5s; }
+body.takeover .dim { opacity: 1; }
+.flash { position: fixed; inset: 0; z-index: 60; background: #fff; opacity: 0; pointer-events: none; }
+.flash.go { animation: flash .55s ease-out; }
+@keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+#fx { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 50; pointer-events: none; }
+
+.app { position: relative; z-index: 3; min-height: 100svh; display: flex; flex-direction: column; padding-inline: 16px; padding-block: 12px 22px; max-width: 760px; margin-inline: auto; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.brand { font-family: var(--display); font-size: 22px; letter-spacing: .02em; color: var(--foam); }
+.brand b { color: var(--tide); font-weight: inherit; }
+.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.seg button { background: none; border: 0; padding: 8px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); cursor: pointer; }
+.seg button[aria-pressed="true"], .seg button[aria-selected="true"] { background: #14414c; color: var(--foam); }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); cursor: pointer; }
+.chip[aria-pressed="true"], .chip.on { color: var(--foam); border-color: #2f7a86; }
+button:focus-visible, [role="button"]:focus-visible, .pack:focus-visible { outline: 2px solid var(--tide); outline-offset: 3px; }
+.settings { margin-top: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
+.settings[hidden] { display: none; }
+.settings .line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.settings small { color: var(--ink-dim); display: block; font-size: 12px; line-height: 1.4; max-width: 34ch; }
+.settings .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.warn { color: #ffb4a2; }
+
+.status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 14px; min-height: 52px; flex-wrap: wrap; }
+.status .packs { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: var(--ink-dim); }
+.status .packs b { font-family: var(--display); font-size: 24px; color: var(--foam); letter-spacing: 0; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.status .timer { font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; font-weight: 600; }
+.status .timer b { color: var(--foam); }
+.claim { background: var(--tide); color: #02211d; border: 0; border-radius: 10px; padding: 9px 16px; font-family: var(--display); font-size: 18px; cursor: pointer; box-shadow: 0 4px 0 #138a80; animation: pulse 1.6s ease-in-out infinite; }
+.claim:active { transform: translateY(3px); box-shadow: 0 1px 0 #138a80; }
+.claim[hidden] { display: none; }
+@keyframes pulse { 0%,100% { box-shadow: 0 4px 0 #138a80, 0 0 0 0 rgba(39,211,195,.5); } 50% { box-shadow: 0 4px 0 #138a80, 0 0 0 9px rgba(39,211,195,0); } }
+
+.view[hidden] { display: none; }
+.stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding-block: 14px 4px; position: relative; }
+.stage.shake { animation: shake .5s cubic-bezier(.36,.07,.19,.97); }
+.stage.shake-big { animation: shake .8s cubic-bezier(.36,.07,.19,.97); }
+@keyframes shake { 10%,90% { transform: translate(-1px,1px); } 20%,80% { transform: translate(3px,-2px); } 30%,50%,70% { transform: translate(-6px,3px) rotate(-.4deg); } 40%,60% { transform: translate(6px,-3px) rotate(.4deg); } }
+.hud { min-height: 46px; text-align: center; display: grid; gap: 2px; justify-items: center; }
+.hint { font-family: var(--display); font-size: 21px; letter-spacing: .02em; color: var(--foam); }
+.sub { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.pack-wrap { width: calc(var(--cw) * .82); aspect-ratio: 5 / 7.4; position: relative; perspective: 900px; touch-action: none; }
+.pack-wrap.hidden { display: none; }
+.pack-wrap.arrive .pack-bob { animation: arrive .6s cubic-bezier(.2,1.3,.4,1), bob 4.6s ease-in-out .6s infinite; }
+@keyframes arrive { from { transform: translateY(40px) scale(.7); opacity: 0; } to { transform: none; opacity: 1; } }
+.pack-bob { width: 100%; height: 100%; animation: bob 4.6s ease-in-out infinite; }
+@keyframes bob { 0%,100% { transform: translateY(0) rotate(-.6deg); } 50% { transform: translateY(-8px) rotate(.6deg); } }
+.pack { position: absolute; inset: 0; border: 0; padding: 0; background: none; cursor: grab; transform: rotateX(var(--prx,0deg)) rotateY(var(--pry,0deg)); transition: transform .15s ease-out; -webkit-tap-highlight-color: transparent; }
+.pack:active { cursor: grabbing; }
+.pack-body, .pack-top { position: absolute; left: 0; right: 0; background: linear-gradient(115deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.28) 46%, rgba(255,255,255,0) 60%) 0 0 / 260% 100%, repeating-linear-gradient(90deg, rgba(255,255,255,.07) 0 2px, rgba(0,0,0,0) 2px 9px), linear-gradient(170deg, #1fc3b8, #0d6f86 55%, #0a3e66); background-position: var(--sheen, 140%) 0, 0 0, 0 0; }
+.pack-top { top: 0; height: 17%; border-radius: 14px 14px 0 0; clip-path: polygon(0 0,100% 0,100% 82%,95% 100%,90% 84%,85% 100%,80% 84%,75% 100%,70% 84%,65% 100%,60% 84%,55% 100%,50% 84%,45% 100%,40% 84%,35% 100%,30% 84%,25% 100%,20% 84%,15% 100%,10% 84%,5% 100%,0 84%); transform-origin: 0 100%; transition: transform .6s cubic-bezier(.3,.7,.2,1), opacity .6s; z-index: 2; }
+.pack-body { top: 12%; bottom: 0; border-radius: 0 0 16px 16px; display: grid; place-items: center; box-shadow: 0 24px 50px rgba(0,0,0,.55), inset 0 0 0 3px rgba(255,255,255,.18); transition: transform .5s ease-in, opacity .5s; }
+.pack-art { display: grid; gap: 6px; justify-items: center; text-align: center; padding: 18% 10% 10%; width: 100%; }
+.pack-art .logo { font-family: var(--display); font-size: calc(var(--cw) * .15); line-height: .95; color: var(--foam); text-shadow: 0 3px 0 #08455a, 0 6px 12px rgba(0,0,0,.35); }
+.pack-art .set { font-weight: 700; letter-spacing: .22em; font-size: calc(var(--cw) * .043); color: #d6fffa; text-transform: uppercase; }
+.pack-art .count { margin-top: 4px; font-weight: 700; letter-spacing: .16em; font-size: calc(var(--cw) * .04); background: #08455a; color: var(--foam); padding: 5px 12px; border-radius: 99px; text-transform: uppercase; }
+.pack-art svg { width: 62%; margin-top: 2px; opacity: .9; }
+.pack-wrap.tear .pack-top { transform: translate(14%, -22%) rotate(16deg); opacity: 0; }
+.pack-wrap.tear .pack-body { transform: translateY(8%) scale(.96); opacity: 0; }
+.tear-guide { position: absolute; left: 4%; right: 4%; top: 15%; height: 0; border-top: 2px dashed rgba(255,255,255,.55); pointer-events: none; z-index: 3; }
+.tear-fill { position: absolute; left: 4%; top: 15%; height: 3px; width: 0; background: var(--foam); box-shadow: 0 0 10px var(--tide); z-index: 3; pointer-events: none; }
+.pack-wrap.tear .tear-guide, .pack-wrap.tear .tear-fill { opacity: 0; }
+.empty { width: calc(var(--cw) * .82); aspect-ratio: 5 / 7.4; border: 2px dashed #2b6470; border-radius: 16px; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--ink-dim); }
+.empty[hidden] { display: none; }
+.empty b { display: block; font-family: var(--display); font-weight: inherit; font-size: 22px; color: var(--foam); margin-bottom: 6px; }
+
+.slot { width: var(--cw); aspect-ratio: 5 / 7; perspective: 1100px; position: relative; }
+.slot.btn { cursor: pointer; }
+.slot.in { animation: dealin .55s cubic-bezier(.2,1.3,.4,1) both; }
+@keyframes dealin { from { transform: translateY(70px) scale(.55) rotate(-8deg); opacity: 0; } to { transform: none; opacity: 1; } }
+.float { width: 100%; height: 100%; animation: floaty 5.5s ease-in-out infinite; }
+@keyframes floaty { 0%,100% { transform: translateY(0) rotate(-.5deg); } 50% { transform: translateY(-6px) rotate(.5deg); } }
+.tilt { width: 100%; height: 100%; transform: rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)); transition: transform .12s ease-out; transform-style: preserve-3d; }
+.tilt.rest { transition: transform .6s cubic-bezier(.2,1.2,.3,1); }
+.flip { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform .75s cubic-bezier(.25,1.15,.35,1); }
+.flipped .flip { transform: rotateY(180deg); }
+.face { position: absolute; inset: 0; border-radius: calc(var(--cw) * .06); backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: hidden; }
+.back { background: radial-gradient(circle at 50% 50%, rgba(255,255,255,.15), rgba(255,255,255,0) 55%), repeating-linear-gradient(45deg, rgba(255,255,255,.07) 0 6px, rgba(0,0,0,0) 6px 14px), linear-gradient(160deg, #11818b, #0a3e66); border: calc(var(--cw) * .025) solid #d6fffa; display: grid; place-items: center; box-shadow: 0 14px 30px rgba(0,0,0,.5); }
+.back span { font-family: var(--display); font-size: calc(var(--cw) * .2); color: var(--foam); text-shadow: 0 3px 0 #08455a; transform: rotate(-8deg); line-height: .9; text-align: center; }
+.tease .back { animation: tease 1.4s ease-in-out infinite; }
+@keyframes tease { 0%,100% { box-shadow: 0 14px 30px rgba(0,0,0,.5), 0 0 0 0 var(--tc); } 50% { box-shadow: 0 14px 30px rgba(0,0,0,.5), 0 0 34px 8px var(--tc); } }
+.ribbon { position: absolute; z-index: 3; top: -6px; left: -6px; background: #ff3d6e; color: #fff; font-weight: 700; font-size: calc(var(--cw) * .05); letter-spacing: .1em; padding: .2em .7em; border-radius: 8px; transform: rotate(-6deg); box-shadow: 0 3px 8px rgba(0,0,0,.4); pointer-events: none; animation: popin .4s cubic-bezier(.2,1.6,.4,1) both; }
+.ribbon.dupe { background: #2b6470; }
+.ribbon[hidden] { display: none; }
+.count-badge { position: absolute; z-index: 3; top: -6px; right: -4px; background: var(--tide); color: #02211d; font-weight: 700; font-size: 12px; min-width: 24px; height: 24px; border-radius: 99px; display: grid; place-items: center; padding-inline: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.4); pointer-events: none; }
+@keyframes popin { from { transform: scale(0) rotate(-20deg); } to { transform: scale(1) rotate(-6deg); } }
+
+.front { transform: rotateY(180deg); padding: calc(var(--cw) * .028); background: var(--frame); box-shadow: 0 18px 40px rgba(0,0,0,.55), 0 0 28px -6px var(--glow); color: #0a1a20; font-size: calc(var(--cw) * .05); }
+.inner { position: relative; height: 100%; border-radius: calc(var(--cw) * .04); background: var(--paper); display: flex; flex-direction: column; padding: calc(var(--cw) * .04); gap: calc(var(--cw) * .022); overflow: hidden; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.num { font-weight: 700; font-size: calc(var(--cw) * .05); background: #0a1a20; color: var(--foam); border-radius: 99px; padding: .15em .7em; font-variant-numeric: tabular-nums; }
+.tier { font-weight: 700; letter-spacing: .14em; text-transform: uppercase; font-size: calc(var(--cw) * .04); color: var(--tier-ink); }
+.name { font-family: var(--display); font-size: calc(var(--cw) * .125 * var(--nl, 1)); line-height: 1.1; letter-spacing: .01em; color: #071318; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.art { position: relative; flex: 1; min-height: 0; border-radius: calc(var(--cw) * .03); overflow: hidden; background: var(--art); display: grid; place-items: end center; border: 2px solid rgba(7,19,24,.85); }
+.art svg { width: 82%; max-height: 92%; margin-bottom: 4%; }
+.art .year { position: absolute; top: 6px; left: 6px; font-family: var(--display); font-size: calc(var(--cw) * .06); background: #071318; color: var(--foam); padding: 0 .55em; border-radius: 6px; }
+.art .ph { position: absolute; right: 6px; bottom: 5px; font-size: calc(var(--cw) * .03); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; color: rgba(7,19,24,.7); }
+.where { font-weight: 600; font-size: calc(var(--cw) * .042); color: #1d3a43; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--cw) * .02); }
+.stat { background: rgba(7,19,24,.9); color: var(--foam); border-radius: calc(var(--cw) * .025); padding: calc(var(--cw) * .018) calc(var(--cw) * .01); text-align: center; }
+.stat small { display: block; font-size: calc(var(--cw) * .03); letter-spacing: .14em; text-transform: uppercase; color: #8fd8d1; font-weight: 700; }
+.stat b { font-size: calc(var(--cw) * .06); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.foot { display: flex; justify-content: space-between; align-items: baseline; font-size: calc(var(--cw) * .036); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #1d3a43; font-variant-numeric: tabular-nums; }
+.foil, .glare { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
+.foil { opacity: var(--foilop, 0); mix-blend-mode: color-dodge; background: linear-gradient(115deg, rgba(0,0,0,0) 12%, rgba(255,40,160,.55) 30%, rgba(0,255,220,.55) 45%, rgba(255,235,0,.55) 60%, rgba(120,80,255,.55) 75%, rgba(0,0,0,0) 90%); background-size: 260% 260%; background-position: calc(var(--mx,50) * 1%) calc(var(--my,50) * 1%); filter: saturate(1.2); }
+.glare { background: radial-gradient(circle at calc(var(--mx,50) * 1%) calc(var(--my,50) * 1%), rgba(255,255,255,.55), rgba(255,255,255,0) 45%); mix-blend-mode: soft-light; opacity: .8; }
+
+.card[data-tier="common"] { --frame: linear-gradient(150deg, #aab8c4, #738391); --paper: #e9eff3; --glow: rgba(160,176,190,0); --tier-ink: #54656f; --art: linear-gradient(160deg, #cfe0ea, #9fb7c7); --foilop: 0; --tc: rgba(170,184,196,.55); }
+.card[data-tier="uncommon"] { --frame: linear-gradient(150deg, #f4f8fb, #9aabb8 50%, #e6eef3); --paper: #eef6f7; --glow: rgba(210,225,235,.45); --tier-ink: #3f6070; --art: linear-gradient(160deg, #cdf1ee, #8fc7cf); --foilop: .12; --tc: rgba(220,235,245,.75); }
+.card[data-tier="rare"] { --frame: linear-gradient(150deg, #ffe08a, #c4871a 50%, #ffd36a); --paper: #fff7e0; --glow: rgba(255,200,80,.6); --tier-ink: #8a5a00; --art: linear-gradient(160deg, #ffe9a8, #f2b24a); --foilop: .3; --tc: rgba(255,200,80,.9); }
+.card[data-tier="legendary"] { --frame: linear-gradient(150deg, #ff9bd2, #7b4dff 50%, #4de1ff); --paper: #f4ecff; --glow: rgba(170,110,255,.8); --tier-ink: #5a2bd0; --art: linear-gradient(160deg, #e6d4ff, #a58bff); --foilop: .55; --tc: rgba(180,120,255,1); }
+.card[data-tier="mythic"] { --frame: conic-gradient(from var(--spin,0deg), #ff3d9a, #ffe14a, #38ffd2, #4d7bff, #c04dff, #ff3d9a); --paper: #07181f; --glow: rgba(60,255,220,.85); --tier-ink: #5cffe9; --art: linear-gradient(160deg, #0d4a5c, #05202b); --foilop: .75; --tc: rgba(60,255,220,1); }
+.card[data-tier="mythic"] .front { animation: spinframe 6s linear infinite; }
+@property --spin { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+@keyframes spinframe { to { --spin: 360deg; } }
+.card[data-tier="mythic"] .name, .card[data-tier="mythic"] .where { color: var(--foam); }
+.card[data-tier="mythic"] .foot { color: #8fd8d1; }
+.card[data-tier="mythic"] .art { border-color: rgba(92,255,233,.6); }
+.card[data-tier="mythic"] .art .ph { color: rgba(220,255,250,.7); }
+.card[data-tier="mythic"] .num { background: #5cffe9; color: #04141a; }
+
+.pull { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; --cw: min(17vw, 88px); }
+.pull .float, .grid .float { animation: none; }
+.cta-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; min-height: 52px; align-items: center; }
+.cta { background: var(--tide); color: #02211d; border: 0; border-radius: 12px; padding: 12px 22px; font-family: var(--display); font-size: 20px; letter-spacing: .02em; cursor: pointer; box-shadow: 0 5px 0 #138a80; transition: transform .1s, box-shadow .1s; }
+.cta:active { transform: translateY(4px); box-shadow: 0 1px 0 #138a80; }
+.cta.ghost { background: transparent; color: var(--foam); box-shadow: inset 0 0 0 2px #2b6470; }
+.cta.small { font-size: 15px; padding: 8px 14px; box-shadow: 0 3px 0 #138a80; }
+.cta.small.ghost { box-shadow: inset 0 0 0 2px #2b6470; }
+.cta[hidden] { display: none; }
+.banner { position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 66px); transform: translate(-50%, -30px); z-index: 70; background: linear-gradient(90deg, #ff3d9a, #ffb44a, #38ffd2, #4d7bff); color: #04141a; border-radius: 14px; padding: 10px 18px; font-weight: 700; font-size: 14px; letter-spacing: .04em; text-align: center; width: max-content; max-width: calc(100vw - 32px); box-shadow: 0 10px 30px rgba(0,0,0,.5); opacity: 0; transition: transform .6s cubic-bezier(.2,1.3,.4,1), opacity .3s; }
+.banner.show { transform: translate(-50%, 0); opacity: 1; }
+
+.binder-head { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.binder-sum { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.binder-sum h2 { margin: 0; font-family: var(--display); font-weight: inherit; font-size: 24px; color: var(--foam); }
+.binder-sum span { color: var(--ink-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.tiers { display: flex; gap: 8px; flex-wrap: wrap; }
+.tiers .chip { display: flex; flex-direction: column; gap: 4px; min-width: 76px; align-items: flex-start; text-transform: none; letter-spacing: .02em; }
+.tiers .chip b { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.tiers .chip em { font-style: normal; font-variant-numeric: tabular-nums; color: var(--foam); font-size: 13px; }
+.tiers .bar { width: 100%; height: 4px; background: #14323b; border-radius: 4px; overflow: hidden; }
+.tiers .bar i { display: block; height: 100%; background: var(--tc, var(--tide)); border-radius: 4px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, var(--cw)); justify-content: center; gap: 18px 12px; margin-top: 16px; --cw: min(29vw, 124px); padding-block: 8px; }
+.grid .slot.btn { cursor: pointer; transition: transform .15s; }
+.grid .slot.btn:hover { transform: translateY(-4px); }
+.slot.ghost { filter: grayscale(1) brightness(.36); opacity: .9; pointer-events: none; }
+.slot.ghost .count-badge { display: none; }
+.empty-binder { text-align: center; color: var(--ink-dim); padding: 36px 8px; line-height: 1.5; }
+.empty-binder b { display: block; font-family: var(--display); font-weight: inherit; font-size: 22px; color: var(--foam); margin-bottom: 6px; }
+.more { display: flex; justify-content: center; margin-top: 12px; }
+
+.modal { position: fixed; inset: 0; z-index: 80; background: rgba(2,8,12,.82); display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.modal[hidden] { display: none; }
+.modal-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 420px; width: 100%; --cw: clamp(190px, min(76vw, 300px, calc((100svh - 220px) / 1.4)), 300px); }
+.serials { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; font-size: 13px; color: var(--ink-dim); text-align: center; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.serials b { color: var(--foam); }
+
+.note { font-size: 12px; line-height: 1.5; color: var(--ink-dim); text-align: center; max-width: 560px; margin: 10px auto 0; }
+.note b { color: var(--ink); font-weight: 600; }
+@media (max-width: 460px) { .brand { font-size: 19px; } .seg button { padding: 7px 10px; font-size: 11px; } }
+@media (prefers-reduced-motion: reduce) {
+  .bg i, .rays, .pack-bob, .float, .tease .back, .card[data-tier="mythic"] .front, .claim { animation: none !important; }
+  .flip { transition-duration: .01s; }
+  .slot.in, .pack-wrap.arrive .pack-bob, .ribbon { animation: none; }
+  .stage.shake, .stage.shake-big, .flash.go { animation: none; }
+}
+</style>
+
+<div class="bg"><i></i><i></i><i></i></div>
+<div class="rays"></div>
+<div class="dim"></div>
+<div class="flash" id="flash"></div>
+<canvas id="fx"></canvas>
+<div class="banner" id="banner" role="status" aria-live="polite"></div>
+
+<div class="app">
+  <div class="top">
+    <div class="brand">FRC <b>PACKS</b></div>
+    <div class="tools">
+      <div class="seg" role="tablist" aria-label="Screens">
+        <button type="button" role="tab" id="tabOpen" aria-selected="true">Open</button>
+        <button type="button" role="tab" id="tabBinder" aria-selected="false">Binder</button>
+      </div>
+      <button type="button" class="chip" id="gear" aria-expanded="false" aria-controls="settings">Settings</button>
+    </div>
+  </div>
+
+  <div class="settings" id="settings" hidden>
+    <div class="line"><span>Sound<small>Chimes, rip and reveal stings. Off by default on some phones until you tap.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
+    <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 20,000.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
+    <div class="line"><span>Extra packs<small>Testing only. Real packs come from the 5-hour claim.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
+    <div class="line"><span>Start over<small id="resetNote">Deletes your collection on this device.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
+    <div class="line warn" id="storageWarn" hidden>This browser is blocking storage, so progress will be lost when you close the page.</div>
+  </div>
+
+  <div class="status" id="status">
+    <div class="packs">Packs<b id="packCount">0</b></div>
+    <div class="timer" id="timer"></div>
+    <button type="button" class="claim" id="claim" hidden>Claim pack</button>
+  </div>
+
+  <section class="view" id="viewOpen">
+    <main class="stage" id="stage">
+      <div class="hud"><div class="hint" id="hint" aria-live="polite"></div><div class="sub" id="sub"></div></div>
+      <div class="pack-wrap" id="packWrap">
+        <div class="pack-bob">
+          <button class="pack" id="pack" type="button" aria-label="Open a 2026 Season pack. Drag across the top to tear it, or press Enter.">
+            <div class="pack-top"></div>
+            <div class="pack-body"><div class="pack-art">
+              <div class="set">2026 Season</div><div class="logo">FRC<br>PACKS</div>
+              <svg viewBox="0 0 120 40" aria-hidden="true"><path d="M0 24 Q15 8 30 24 T60 24 T90 24 T120 24" fill="none" stroke="#f5fbfa" stroke-width="4" stroke-linecap="round"/><path d="M0 34 Q15 18 30 34 T60 34 T90 34 T120 34" fill="none" stroke="#f5fbfa" stroke-width="3" stroke-linecap="round" opacity=".5"/></svg>
+              <div class="count">5 cards</div>
+            </div></div>
+          </button>
+          <div class="tear-guide"></div><div class="tear-fill" id="tearFill"></div>
+        </div>
+      </div>
+      <div class="empty" id="emptyPack" hidden><div><b>Out of packs</b><span id="emptyText"></span></div></div>
+      <div id="active"></div>
+      <div class="pull" id="pull" aria-label="Cards you have revealed"></div>
+      <div class="cta-row"><button class="cta" id="next" type="button" hidden>Next card</button><button class="cta ghost" id="again" type="button" hidden>Open another pack</button></div>
+    </main>
+  </section>
+
+  <section class="view" id="viewBinder" hidden>
+    <div class="binder-head">
+      <div class="binder-sum"><h2>Binder</h2><span id="binderSum"></span></div>
+      <div class="tiers" id="tiers" role="group" aria-label="Filter by rarity"></div>
+      <div><button type="button" class="chip" id="missingBtn" aria-pressed="false" hidden>Show cards I'm missing</button></div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="more"><button type="button" class="cta small ghost" id="more" hidden>Show more</button></div>
+  </section>
+
+  <p class="note"><b>Prototype.</b> Team stats are 2026 Statbotics EPA for a sample of <span id="poolN">about 850</span> of 3,724 ranked teams (top 613 in full, plus slices lower down). Robots are drawings, not photos yet. Packs, serials and the claim timer live in this browser only, so a real build needs a server to make them cheat-proof.</p>
+</div>
+
+<div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-label="Card details"><div class="modal-in" id="modalIn"></div></div>
+
+<script>
+(function () {
+  "use strict";
+  var RAW = `/*TEAMS*/`;
+  var TOTAL = 3724, CLAIM_MS = 5 * 60 * 60 * 1000;
+  var $ = function (s) { return document.querySelector(s); };
+  var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- data ---------- */
+  var CA_PROV = { ON: 1, QC: 1, AB: 1, BC: 1, MB: 1, SK: 1, NS: 1, NB: 1 };
+  function place(loc) {
+    if (/^[A-Z]{2}$/.test(loc)) return CA_PROV[loc] ? loc + ", Canada" : loc + ", USA";
+    return loc;
+  }
+  var TEAMS = [], BY_NUM = {};
+  RAW.split("\n").forEach(function (line) {
+    line = line.trim(); if (!line || line.charAt(0) === "#") return;
+    var p = line.split("|"); if (p.length < 6) return;
+    var rank = +p[0], num = +p[1], epa = +p[3];
+    if (!rank || !num || !(epa >= 0) || BY_NUM[num]) return;
+    var t = { rank: rank, num: num, name: p[2], epa: epa, wl: p[4], loc: place(p[5]), tier: tierOf(rank) };
+    TEAMS.push(t); BY_NUM[num] = t;
+  });
+  function tierOf(rank) {
+    if (rank <= 50) return "mythic";
+    if (rank <= 112) return "legendary";
+    if (rank <= 559) return "rare";
+    if (rank <= 1490) return "uncommon";
+    return "common";
+  }
+  var ORDER = ["mythic", "legendary", "rare", "uncommon", "common"];
+  var TIERS = {
+    common: { label: "Common", color: "#aab8c4", parts: 10, pow: 4 },
+    uncommon: { label: "Uncommon", color: "#e6eef3", parts: 26, pow: 6 },
+    rare: { label: "Rare", color: "#ffc850", parts: 60, pow: 8 },
+    legendary: { label: "Legendary", color: "#b478ff", parts: 140, pow: 11 },
+    mythic: { label: "Mythic", color: "#3cffdc", parts: 260, pow: 13 }
+  };
+  var POOL = {}; ORDER.forEach(function (t) { POOL[t] = []; });
+  TEAMS.forEach(function (t) { POOL[t.tier].push(t); });
+  $("#poolN").textContent = "about " + (Math.round(TEAMS.length / 50) * 50).toLocaleString("en-US");
+
+  /* ---------- random + rolls ---------- */
+  function rand() {
+    try { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; } catch (e) { return Math.random(); }
+  }
+  function pick(arr) { return arr[Math.floor(rand() * arr.length)]; }
+  function weighted(w) { var r = rand(), s = 0, k; for (k in w) { s += w[k]; if (r < s) return k; } return k; }
+  var SLOT_ODDS = { common: .70, uncommon: .22, rare: .07, legendary: .01 };
+  var LAST_ODDS = { rare: .85, legendary: .15 };
+  function rollPack(demo, rng) {
+    var saved = rand; if (rng) rand = rng;
+    try {
+      var cards = [], used = {};
+      for (var i = 0; i < 5; i++) {
+        var tier;
+        if (i < 4) tier = weighted(SLOT_ODDS);
+        else {
+          var mythicChance = demo ? .2 : 1 / 20000;
+          if (rand() < mythicChance) tier = "mythic";
+          else tier = weighted(demo ? { rare: .6, legendary: .4 } : LAST_ODDS);
+        }
+        var team, tries = 0;
+        do { team = pick(POOL[tier]); tries++; } while (used[team.num] && tries < 12);
+        used[team.num] = 1;
+        cards.push({ num: team.num, tier: tier });
+      }
+      return cards;
+    } finally { rand = saved; }
+  }
+  function newSerial(owned) {
+    var s, tries = 0;
+    do { s = String(1 + Math.floor(rand() * 999999)).padStart(6, "0"); tries++; } while (owned.indexOf(s) >= 0 && tries < 20);
+    return s;
+  }
+
+  /* ---------- storage ---------- */
+  var KEY = "frcpacks.v1", storageOk = true, S;
+  function fresh() { return { v: 1, packs: 2, nextClaimAt: 0, inv: {}, pending: null, opened: 0, muted: false, demo: true }; }
+  function readSave() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) { var o = JSON.parse(raw); if (o && o.v === 1 && isFinite(o.packs) && o.packs >= 0 && o.packs < 10000 && isFinite(o.nextClaimAt) && o.inv && typeof o.inv === "object" && !Array.isArray(o.inv)) { o.packs = Math.floor(o.packs); o.opened = isFinite(o.opened) ? o.opened : 0; Object.keys(o.inv).forEach(function (k) { if (!Array.isArray(o.inv[k])) delete o.inv[k]; else o.inv[k] = o.inv[k].filter(function (x) { return /^\d{1,6}$/.test(x); }); }); return o; } }
+    } catch (e) { storageOk = false; }
+    return null;
+  }
+  function load() { return readSave() || fresh(); }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); storageOk = true; } catch (e) { storageOk = false; } $("#storageWarn").hidden = storageOk; }
+  S = load();
+  try { localStorage.setItem(KEY + ".probe", "1"); localStorage.removeItem(KEY + ".probe"); } catch (e) { storageOk = false; }
+  $("#storageWarn").hidden = storageOk;
+  if (S.pending && (!S.pending.cards || !S.pending.cards.length || S.pending.cards.some(function (c) { return !BY_NUM[c.num]; }))) { S.pending = null; }
+
+  /* Two tabs share one save. Re-read it whenever this tab is idle, so a stale tab can't overwrite the other one's cards. */
+  function sync() {
+    if (state !== "idle" && state !== "done") return;
+    var other = readSave(); if (!other || other.pending) return;
+    S = other; paintStatus(); paintToggles(); if (!vBinder.hidden) paintBinder(); if (state === "idle") paintIdle();
+  }
+  addEventListener("storage", function (e) { if (e.key === KEY) sync(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
+  addEventListener("focus", sync);
+
+  /* ---------- sound ---------- */
+  var ac = null;
+  function actx() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = false; } } if (ac && ac.state === "suspended") ac.resume(); return ac; }
+  function blip(f, d, type, v, when) {
+    if (S.muted) return; var a = actx(); if (!a) return;
+    var t = a.currentTime + (when || 0), o = a.createOscillator(), g = a.createGain();
+    o.type = type || "sine"; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v || .1, t + .01); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + d + .02);
+  }
+  function noise(d, v, lo) {
+    if (S.muted) return; var a = actx(); if (!a) return;
+    var n = Math.floor(a.sampleRate * d), buf = a.createBuffer(1, n, a.sampleRate), data = buf.getChannelData(0);
+    for (var i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    var s = a.createBufferSource(); s.buffer = buf;
+    var bp = a.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = lo; bp.Q.value = .7;
+    var g = a.createGain(); g.gain.value = v; s.connect(bp); bp.connect(g); g.connect(a.destination); s.start();
+  }
+  function chord(freqs, step, type, v) { freqs.forEach(function (f, i) { blip(f, .5, type, v, i * step); }); }
+  function buzz(ms) { try { if (!S.muted && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+  var sfx = {
+    rip: function () { noise(.35, .5, 2200); blip(180, .15, "sawtooth", .05); buzz([20, 30, 40]); },
+    deal: function () { blip(320, .07, "triangle", .07); },
+    claim: function () { chord([392, 523, 659], .08, "triangle", .09); },
+    flip: function (tier) {
+      if (tier === "common") blip(440, .09, "triangle", .08);
+      else if (tier === "uncommon") chord([523, 659], .07, "triangle", .08);
+      else if (tier === "rare") { chord([523, 659, 784], .07, "triangle", .1); buzz(30); }
+      else if (tier === "legendary") { chord([392, 523, 659, 784, 988], .08, "square", .06); noise(.6, .25, 3000); buzz([30, 40, 60]); }
+      else { chord([261, 392, 523, 659, 784, 1046, 1318], .09, "square", .06); blip(65, 1.2, "sine", .3); noise(1.1, .3, 1800); buzz([40, 60, 40, 60, 120]); }
+    }
+  };
+
+  /* ---------- particles ---------- */
+  var cv = $("#fx"), cx = cv.getContext("2d"), parts = [], raf = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function size() { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; }
+  size(); addEventListener("resize", size);
+  var PALETTE = ["#ff3d9a", "#ffe14a", "#38ffd2", "#4d7bff", "#c04dff", "#ffffff"];
+  function burst(x, y, n, color, pow, rainbow) {
+    if (RM) n = Math.min(n, 12);
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, s = (.3 + Math.random()) * pow;
+      parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - pow * .35, life: 1, dec: .008 + Math.random() * .014, sz: 3 + Math.random() * 6, c: rainbow ? PALETTE[i % PALETTE.length] : color, rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
+    }
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+  function tick() {
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, innerWidth, innerHeight);
+    for (var i = parts.length - 1; i >= 0; i--) {
+      var p = parts[i]; p.x += p.vx; p.y += p.vy; p.vy += .22; p.vx *= .985; p.life -= p.dec; p.rot += p.vr;
+      if (p.life <= 0) { parts.splice(i, 1); continue; }
+      cx.save(); cx.globalAlpha = Math.max(p.life, 0); cx.translate(p.x, p.y); cx.rotate(p.rot); cx.fillStyle = p.c; cx.fillRect(-p.sz / 2, -p.sz / 3, p.sz, p.sz * .66); cx.restore();
+    }
+    raf = parts.length ? requestAnimationFrame(tick) : 0;
+    if (!raf) cx.clearRect(0, 0, innerWidth, innerHeight);
+  }
+  var stage = $("#stage"), flashEl = $("#flash"), banner = $("#banner");
+  function shake(big) { if (RM) return; var c = big ? "shake-big" : "shake"; stage.classList.remove("shake", "shake-big"); void stage.offsetWidth; stage.classList.add(c); setTimeout(function () { stage.classList.remove(c); }, big ? 850 : 550); }
+  function flash() { if (RM) return; flashEl.classList.remove("go"); void flashEl.offsetWidth; flashEl.classList.add("go"); }
+  function say(msg, ms) { banner.textContent = msg; banner.classList.add("show"); clearTimeout(say.t); say.t = setTimeout(function () { banner.classList.remove("show"); }, ms || 3200); }
+
+  /* ---------- card markup ---------- */
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function robot(num, mythic) {
+    var hue = (num * 137) % 360, v = num % 3;
+    var body = mythic ? "#27d3c3" : "hsl(" + hue + ",65%,48%)", dark = mythic ? "#0b4a52" : "hsl(" + hue + ",60%,26%)", bump = mythic ? "#f5fbfa" : "hsl(" + hue + ",75%,70%)";
+    var K = "#071318", s = '<svg viewBox="0 0 200 130" aria-hidden="true"><ellipse cx="100" cy="122" rx="82" ry="6" fill="rgba(0,0,0,.28)"/>';
+    s += '<rect x="14" y="78" width="172" height="30" rx="8" fill="' + bump + '" stroke="' + K + '" stroke-width="3"/>';
+    if (v === 0) {
+      s += '<rect x="28" y="44" width="120" height="38" rx="6" fill="' + body + '" stroke="' + K + '" stroke-width="3"/><rect x="40" y="52" width="38" height="22" rx="3" fill="' + dark + '" opacity=".75"/>' +
+        '<path d="M138 50 L168 18 L182 28 L152 62 Z" fill="' + dark + '" stroke="' + K + '" stroke-width="3" stroke-linejoin="round"/><circle cx="175" cy="23" r="8" fill="' + bump + '" stroke="' + K + '" stroke-width="3"/>';
+    } else if (v === 1) {
+      s += '<rect x="30" y="50" width="104" height="32" rx="6" fill="' + body + '" stroke="' + K + '" stroke-width="3"/><rect x="118" y="8" width="16" height="78" rx="3" fill="' + dark + '" stroke="' + K + '" stroke-width="3"/>' +
+        '<rect x="106" y="14" width="40" height="14" rx="3" fill="' + bump + '" stroke="' + K + '" stroke-width="3"/><circle cx="52" cy="66" r="9" fill="' + dark + '" opacity=".75"/>';
+    } else {
+      s += '<rect x="26" y="40" width="108" height="42" rx="10" fill="' + body + '" stroke="' + K + '" stroke-width="3"/><circle cx="62" cy="61" r="12" fill="' + dark + '" opacity=".75"/><circle cx="102" cy="61" r="12" fill="' + dark + '" opacity=".75"/>' +
+        '<path d="M134 56 L176 56 L176 76 L134 76 Z" fill="' + bump + '" stroke="' + K + '" stroke-width="3" stroke-linejoin="round"/><rect x="150" y="46" width="10" height="34" rx="2" fill="' + dark + '" stroke="' + K + '" stroke-width="3"/>';
+    }
+    s += '<circle cx="46" cy="110" r="14" fill="#16262d" stroke="' + K + '" stroke-width="3"/><circle cx="46" cy="110" r="5" fill="#9fb0c0"/><circle cx="154" cy="110" r="14" fill="#16262d" stroke="' + K + '" stroke-width="3"/><circle cx="154" cy="110" r="5" fill="#9fb0c0"/></svg>';
+    return s;
+  }
+  function pct(rank) { var p = rank / TOTAL * 100; return (p < 1 ? p.toFixed(2) : p.toFixed(1)) + "%"; }
+  function nameScale(n) { var l = n.length; return l <= 11 ? 1 : l <= 15 ? .82 : l <= 20 ? .66 : l <= 26 ? .54 : .46; }
+  function attachTilt(slot) {
+    var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
+    slot.addEventListener("pointermove", function (e) {
+      var r = slot.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      tilt.classList.remove("rest");
+      tilt.style.setProperty("--ry", ((px - .5) * 26) + "deg"); tilt.style.setProperty("--rx", ((.5 - py) * 22) + "deg");
+      inner.style.setProperty("--mx", (px * 100).toFixed(1)); inner.style.setProperty("--my", (py * 100).toFixed(1));
+    });
+    function leave() { tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
+    slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave);
+  }
+  /* c = { num, tier, serial, isNew, copy } */
+  function cardEl(c, opts) {
+    opts = opts || {}; var t = BY_NUM[c.num], T = TIERS[c.tier];
+    var slot = document.createElement("div");
+    slot.className = "slot" + (opts.faceUp ? " flipped" : " in") + (!opts.faceUp && c.tier !== "common" ? " tease" : "") + (opts.button ? " btn" : "");
+    slot.style.setProperty("--tc", T.color);
+    if (opts.button) { slot.setAttribute("role", "button"); slot.tabIndex = 0; }
+    slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
+    slot.innerHTML =
+      '<div class="float"><div class="tilt rest"><div class="flip card" data-tier="' + c.tier + '">' +
+      '<div class="face back"><span>FRC<br>PACKS</span></div>' +
+      '<div class="face front"><div class="inner" style="--nl:' + nameScale(t.name) + '">' +
+      '<div class="row"><span class="num">' + t.num + '</span><span class="tier">' + T.label + '</span></div>' +
+      '<div class="name">' + esc(t.name) + '</div>' +
+      '<div class="art"><span class="year">2026</span>' + robot(t.num, c.tier === "mythic") + '<span class="ph">Photo soon</span></div>' +
+      '<div class="where">' + esc(t.loc) + ' · Top ' + pct(t.rank) + '</div>' +
+      '<div class="stats"><div class="stat"><small>EPA</small><b>' + t.epa.toFixed(1) + '</b></div><div class="stat"><small>Rank</small><b>#' + t.rank + '</b></div><div class="stat"><small>W-L</small><b>' + esc(t.wl) + '</b></div></div>' +
+      '<div class="foot"><span>No. ' + esc(c.serial || "------") + '</span><span>Statbotics 2026</span></div>' +
+      '<div class="foil"></div><div class="glare"></div></div></div></div></div></div>';
+    if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
+    if (opts.count > 1) { var b = document.createElement("div"); b.className = "count-badge"; b.textContent = "×" + opts.count; slot.appendChild(b); }
+    attachTilt(slot);
+    return slot;
+  }
+
+  /* ---------- status bar, timer, claim ---------- */
+  var packCount = $("#packCount"), timerEl = $("#timer"), claimBtn = $("#claim");
+  function fmt(ms) { var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0"); }
+  function clampClock() { var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS; }
+  function paintStatus() {
+    clampClock();
+    packCount.textContent = S.packs;
+    var left = S.nextClaimAt - Date.now();
+    if (left <= 0) { timerEl.textContent = "A free pack is ready"; claimBtn.hidden = false; }
+    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(left) + "</b>"; claimBtn.hidden = true; }
+    var e = $("#emptyText"); if (e) e.textContent = left <= 0 ? "Claim your free pack above." : "Next free pack in " + fmt(left) + ".";
+  }
+  setInterval(function () { paintStatus(); if (state === "idle") paintIdle(); }, 1000);
+  claimBtn.addEventListener("click", function () {
+    if (Date.now() < S.nextClaimAt) return; actx();
+    S.packs++; S.nextClaimAt = Date.now() + CLAIM_MS; save(); paintStatus(); sfx.claim();
+    var r = claimBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 18, "#27d3c3", 5);
+    if (state === "idle") { paintIdle(true); }
+  });
+
+  /* ---------- open flow ---------- */
+  var packWrap = $("#packWrap"), pack = $("#pack"), activeBox = $("#active"), pullBox = $("#pull"), hint = $("#hint"), sub = $("#sub");
+  var nextBtn = $("#next"), againBtn = $("#again"), tearFill = $("#tearFill"), emptyPack = $("#emptyPack");
+  var state = "idle", deck = [], idx = -1, cur = null;
+  function setHud(h, s) { hint.textContent = h; sub.textContent = s; }
+  function paintIdle(arrive) {
+    if (state !== "idle") return;
+    if (S.packs > 0) {
+      var was = packWrap.classList.contains("hidden");
+      packWrap.classList.remove("hidden", "tear"); tearFill.style.width = "0"; emptyPack.hidden = true;
+      if (was && arrive) { packWrap.classList.remove("arrive"); void packWrap.offsetWidth; packWrap.classList.add("arrive"); }
+      setHud("Drag across the top to tear it open", "2026 Season pack · 5 cards");
+    } else {
+      packWrap.classList.add("hidden"); emptyPack.hidden = false;
+      setHud("", "Come back when your next pack is ready");
+    }
+    paintStatus();
+  }
+  function commitRip() {
+    var latest = readSave(); if (latest && !latest.pending) S = latest;
+    if (S.packs < 1) return false;
+    var rolled = rollPack(S.demo), cards = rolled.map(function (c) {
+      var arr = S.inv[c.num] || (S.inv[c.num] = []);
+      var serial = newSerial(arr), isNew = arr.length === 0; arr.push(serial);
+      return { num: c.num, tier: c.tier, serial: serial, isNew: isNew, copy: arr.length };
+    });
+    S.packs--; S.opened++; S.pending = { cards: cards, revealed: 0 }; save();
+    return true;
+  }
+  function openPack() {
+    if (state !== "idle" || S.packs < 1) return; actx(); state = "ripping";
+    if (!commitRip()) { state = "idle"; return; }
+    tearFill.style.width = "92%"; sfx.rip(); shake(false); paintStatus();
+    packWrap.classList.add("tear");
+    var r = packWrap.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .16, 30, "#d6fffa", 6);
+    setHud("", "Dealing");
+    setTimeout(function () { packWrap.classList.add("hidden"); beginReveal(0); }, 650);
+  }
+  function beginReveal(from) {
+    deck = S.pending.cards; idx = from - 1; activeBox.innerHTML = ""; pullBox.innerHTML = "";
+    for (var i = 0; i < from; i++) pullBox.appendChild(cardEl(deck[i], { faceUp: true, ribbon: false }));
+    deal();
+  }
+  function deal() {
+    idx++; cur = cardEl(deck[idx], { button: true, ribbon: true }); activeBox.appendChild(cur); sfx.deal();
+    state = "await-flip"; nextBtn.hidden = true; againBtn.hidden = true;
+    try { cur.focus({ preventScroll: true }); } catch (e) {}
+    setHud("Tap the card to flip it", "Card " + (idx + 1) + " of 5");
+  }
+  function flipCard() {
+    if (state !== "await-flip") return; state = "flipping";
+    var c = deck[idx], T = TIERS[c.tier], last = idx === 4, t = BY_NUM[c.num];
+    cur.classList.add("flipped"); cur.classList.remove("tease"); sfx.flip(c.tier);
+    S.pending.revealed = idx + 1; save();
+    setTimeout(function () {
+      if (cur._ribbon) cur._ribbon.hidden = false;
+      var r = cur.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (c.tier === "common" || c.tier === "uncommon") burst(x, y, T.parts, T.color, T.pow);
+      else if (c.tier === "rare") { burst(x, y, T.parts, T.color, T.pow); shake(false); }
+      else if (c.tier === "legendary") { burst(x, y, T.parts, T.color, T.pow); burst(x, y, 60, null, 9, true); shake(true); flash(); document.body.classList.add("takeover"); say("LEGENDARY · " + t.name + " (" + t.num + ")", 3000); }
+      else {
+        document.body.classList.add("takeover"); flash(); shake(true); burst(x, y, 120, null, 14, true);
+        setTimeout(function () { burst(x - 60, y - 40, 90, null, 11, true); burst(x + 60, y - 40, 90, null, 11, true); sfx.deal(); }, 350);
+        setTimeout(function () { burst(x, y - 80, 140, null, 12, true); }, 800);
+        say("MYTHIC PULL · " + t.name + " (" + t.num + ") · No. " + c.serial, 5200);
+      }
+    }, 380);
+    setTimeout(function () {
+      if (last) finish(c, t);
+      else { state = "await-next"; setHud(T.label, "Card " + (idx + 1) + " of 5"); nextBtn.hidden = false; }
+    }, 800);
+  }
+  function finish(c, t) {
+    state = "done"; S.pending = null; save();
+    var best = deck.slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier); })[0];
+    var bt = BY_NUM[best.num];
+    setHud(best.tier === "mythic" ? bt.name + ". Mythic." : "Best pull: " + bt.name, TIERS[best.tier].label + (best.tier === "mythic" ? " · unlimited copies, each numbered" : ""));
+    againBtn.textContent = S.packs > 0 ? "Open another pack" : "Back to the table"; againBtn.hidden = false; nextBtn.hidden = true;
+    try { againBtn.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function advance() {
+    if (state !== "await-next") return; state = "moving";
+    nextBtn.hidden = true; pullBox.appendChild(cardEl(deck[idx], { faceUp: true })); cur.remove();
+    document.body.classList.remove("takeover"); deal();
+  }
+  function again() {
+    activeBox.innerHTML = ""; pullBox.innerHTML = ""; againBtn.hidden = true; nextBtn.hidden = true;
+    document.body.classList.remove("takeover"); banner.classList.remove("show");
+    state = "idle"; deck = []; idx = -1; cur = null; paintIdle(true);
+    try { if (S.packs > 0) pack.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function onCard() { if (state === "await-flip") flipCard(); else if (state === "await-next") advance(); }
+  activeBox.addEventListener("click", onCard);
+  activeBox.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCard(); } });
+  nextBtn.addEventListener("click", advance);
+  againBtn.addEventListener("click", again);
+
+  var drag = null;
+  pack.addEventListener("pointerdown", function (e) { if (state !== "idle") return; actx(); drag = { x: e.clientX, moved: false }; try { pack.setPointerCapture(e.pointerId); } catch (er) {} });
+  pack.addEventListener("pointermove", function (e) {
+    var r = pack.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+    pack.style.setProperty("--pry", ((px - .5) * 20) + "deg"); pack.style.setProperty("--prx", ((.5 - py) * 16) + "deg"); pack.style.setProperty("--sheen", (px * 160 - 20) + "%");
+    if (drag && state === "idle") {
+      var p = Math.max(0, Math.min(1, (e.clientX - drag.x) / (r.width * .85)));
+      if (Math.abs(e.clientX - drag.x) > 6) drag.moved = true;
+      tearFill.style.width = (p * 92) + "%";
+      if (p >= 1) { drag = null; openPack(); }
+    }
+  });
+  pack.addEventListener("pointerup", function () { if (drag && state === "idle") { var m = drag.moved; drag = null; if (!m) openPack(); else tearFill.style.width = "0"; } });
+  pack.addEventListener("pointerleave", function () { pack.style.setProperty("--pry", "0deg"); pack.style.setProperty("--prx", "0deg"); });
+  pack.addEventListener("pointercancel", function () { drag = null; tearFill.style.width = "0"; });
+  pack.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPack(); } });
+
+  /* ---------- binder ---------- */
+  var gridEl = $("#grid"), tiersEl = $("#tiers"), moreBtn = $("#more"), missingBtn = $("#missingBtn"), filter = "all", shown = 48, showMissing = false;
+  missingBtn.addEventListener("click", function () { showMissing = !showMissing; shown = 48; paintBinder(); });
+  function ownedList() {
+    var out = [];
+    Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length) out.push(t); });
+    out.sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    return out;
+  }
+  function paintBinder() {
+    var owned = ownedList(), counts = {}; ORDER.forEach(function (t) { counts[t] = 0; });
+    owned.forEach(function (t) { counts[t.tier]++; });
+    var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
+    $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
+    tiersEl.innerHTML = "";
+    var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
+    all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
+    all.onclick = function () { filter = "all"; shown = 48; paintBinder(); }; tiersEl.appendChild(all);
+    ORDER.forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (filter === t ? " on" : ""); b.setAttribute("aria-pressed", String(filter === t));
+      b.style.setProperty("--tc", TIERS[t].color);
+      b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b><em>' + counts[t] + '/' + POOL[t].length + '</em><span class="bar"><i style="width:' + (POOL[t].length ? counts[t] / POOL[t].length * 100 : 0) + '%"></i></span>';
+      b.onclick = function () { filter = t; shown = 48; paintBinder(); }; tiersEl.appendChild(b);
+    });
+    missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
+    var list = (showMissing && filter !== "all") ? POOL[filter] : owned.filter(function (t) { return filter === "all" || t.tier === filter; });
+    gridEl.innerHTML = "";
+    if (!list.length) {
+      var e = document.createElement("div"); e.className = "empty-binder"; e.style.gridColumn = "1 / -1";
+      e.innerHTML = owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
+      gridEl.appendChild(e);
+    }
+    list.slice(0, shown).forEach(function (t) {
+      var serials = S.inv[t.num] || [];
+      if (!serials.length) { var g = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); g.classList.remove("in"); g.classList.add("ghost"); gridEl.appendChild(g); return; }
+      var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true, button: true, count: serials.length });
+      el.classList.remove("in");
+      el.addEventListener("click", function () { inspect(t); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(t); } });
+      gridEl.appendChild(el);
+    });
+    moreBtn.hidden = list.length <= shown;
+  }
+  moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
+
+  var modal = $("#modal"), modalIn = $("#modalIn"), lastFocus = null;
+  function inspect(t) {
+    var serials = S.inv[t.num] || [];
+    modalIn.innerHTML = "";
+    var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true }); el.classList.remove("in"); modalIn.appendChild(el);
+    var info = document.createElement("div"); info.className = "serials";
+    info.innerHTML = "<b>" + serials.length + (serials.length === 1 ? " copy" : " copies") + "</b> owned<br>Serials: " + serials.map(function (s) { return "No. " + esc(s); }).join(" · ");
+    modalIn.appendChild(info);
+    var row = document.createElement("div"); row.className = "cta-row";
+    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    if (t.tier === "mythic" || t.tier === "legendary") {
+      var cp = document.createElement("button"); cp.type = "button"; cp.className = "cta ghost"; cp.textContent = "Copy brag text";
+      cp.onclick = function () {
+        var txt = "I own " + t.name + " (team " + t.num + "), a " + TIERS[t.tier].label + " 2026 card, No. " + serials[0] + ", on FRC Packs.";
+        try { navigator.clipboard.writeText(txt).then(function () { cp.textContent = "Copied"; }, function () { cp.textContent = txt; }); } catch (e) { cp.textContent = txt; }
+      };
+      row.appendChild(cp);
+    }
+    modalIn.appendChild(row);
+    lastFocus = document.activeElement; modal.hidden = false; close.focus();
+  }
+  function closeModal() { modal.hidden = true; modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) closeModal(); });
+
+  /* ---------- tabs and settings ---------- */
+  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder");
+  function show(which) {
+    var b = which === "binder";
+    vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
+    $("#status").hidden = b;
+    if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} } else { try { history.replaceState(null, "", "#open"); } catch (e) {} }
+  }
+  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); };
+  var gear = $("#gear"), settings = $("#settings");
+  gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
+  var muteBtn = $("#mute"), demoBtn = $("#demoLuck");
+  function paintToggles() { muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); }
+  muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
+  demoBtn.onclick = function () { S.demo = !S.demo; save(); paintToggles(); };
+  $("#demoPack").onclick = function () { S.packs++; save(); paintStatus(); if (state === "idle") paintIdle(true); };
+  $("#skipTimer").onclick = function () { S.nextClaimAt = 0; save(); paintStatus(); };
+  var resetBtn = $("#reset"), armed = 0;
+  resetBtn.onclick = function () {
+    if (!armed) { armed = 1; resetBtn.textContent = "Tap again to delete"; setTimeout(function () { armed = 0; resetBtn.textContent = "Reset collection"; }, 3500); return; }
+    armed = 0; resetBtn.textContent = "Reset collection"; var d = S.demo, m = S.muted; S = fresh(); S.demo = d; S.muted = m; save();
+    state = "idle"; activeBox.innerHTML = ""; pullBox.innerHTML = ""; againBtn.hidden = true; nextBtn.hidden = true; document.body.classList.remove("takeover");
+    paintIdle(true); if (!vBinder.hidden) paintBinder();
+  };
+  paintToggles();
+
+  /* ---------- boot ---------- */
+  function boot() {
+    var hash = (location.hash || "").replace("#", "");
+    if (S.pending) {
+      state = "revealing"; packWrap.classList.add("hidden"); emptyPack.hidden = true;
+      say("Picking up your last pack", 2400); beginReveal(Math.min(S.pending.revealed || 0, 4));
+    } else { paintIdle(false); }
+    paintStatus(); show(hash === "binder" ? "binder" : "open");
+  }
+  window.__frc = { S: function () { return S; }, rollPack: rollPack, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, state: function () { return state; } };
+  boot();
+})();
+</script>

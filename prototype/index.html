@@ -1,0 +1,1587 @@
+<title>FRC Packs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Chakra+Petch:wght@500;600;700&display=swap">
+<style>
+/* Layout: a dark teal card table. Open tab: status bar, one pack in the middle, cards deal out one at a time into a row. Binder tab: tier chips and a grid of everything you own. */
+:root {
+  color-scheme: dark;
+  --bg: #06161d;
+  --bg-2: #0b2b36;
+  --ink: #e8f6f4;
+  --ink-dim: #7fa5aa;
+  --tide: #27d3c3;
+  --foam: #f5fbfa;
+  --line: #1f4650;
+  --panel: #0a222b;
+  --display: "Lilita One", "Arial Rounded MT Bold", system-ui, sans-serif;
+  --body: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --cw: clamp(150px, min(72vw, 270px, calc((100svh - 360px) / 1.4)), 270px);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { min-height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; overflow-x: hidden; }
+button { font: inherit; color: inherit; }
+.bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; background: radial-gradient(120% 90% at 50% 0%, var(--bg-2), var(--bg) 70%); }
+.bg i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; filter: blur(60px); opacity: .35; animation: drift 26s ease-in-out infinite alternate; }
+.bg i:nth-child(1) { background: #0f6b73; left: -25vmax; top: -20vmax; }
+.bg i:nth-child(2) { background: #14396b; right: -30vmax; bottom: -25vmax; animation-duration: 34s; animation-direction: alternate-reverse; }
+.bg i:nth-child(3) { background: #0c5a4a; left: 20vmax; top: 30vh; width: 40vmax; height: 40vmax; opacity: .22; animation-duration: 42s; }
+@keyframes drift { from { transform: translate(0,0) rotate(0deg) scale(1); } to { transform: translate(8vmax, 5vmax) rotate(40deg) scale(1.15); } }
+.rays { position: fixed; inset: -50vmax; z-index: 1; pointer-events: none; opacity: 0; transition: opacity .6s; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0 8deg, rgba(120,255,240,.14) 8deg 12deg); animation: spin 30s linear infinite; mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 38%); -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 38%); }
+body.takeover .rays { opacity: 1; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.dim { position: fixed; inset: 0; z-index: 2; background: rgba(2,8,12,.62); opacity: 0; pointer-events: none; transition: opacity .5s; }
+body.takeover .dim { opacity: 1; }
+.flash { position: fixed; inset: 0; z-index: 60; background: #fff; opacity: 0; pointer-events: none; }
+.flash.go { animation: flash .55s ease-out; }
+@keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+#fx { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 50; pointer-events: none; }
+
+.app { position: relative; z-index: 3; min-height: 100svh; display: flex; flex-direction: column; padding-inline: 16px; padding-block: 12px 22px; max-width: 760px; margin-inline: auto; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.brand { font-family: var(--display); font-size: 22px; letter-spacing: .02em; color: var(--foam); }
+.brand b { color: var(--tide); font-weight: inherit; }
+.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.seg button { background: none; border: 0; padding: 8px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); cursor: pointer; }
+.seg button[aria-pressed="true"], .seg button[aria-selected="true"] { background: #14414c; color: var(--foam); }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); cursor: pointer; }
+.chip[aria-pressed="true"], .chip.on { color: var(--foam); border-color: #2f7a86; }
+button:focus-visible, [role="button"]:focus-visible, .pack:focus-visible { outline: 2px solid var(--tide); outline-offset: 3px; }
+.settings { margin-top: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
+.settings[hidden] { display: none; }
+.settings .line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.settings small { color: var(--ink-dim); display: block; font-size: 12px; line-height: 1.4; max-width: 34ch; }
+.settings .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.warn { color: #ffb4a2; }
+
+.status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 14px; min-height: 52px; flex-wrap: wrap; }
+.status .packs { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: var(--ink-dim); }
+.status .packs b { font-family: var(--display); font-size: 24px; color: var(--foam); letter-spacing: 0; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.status .timer { font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; font-weight: 600; }
+.status .timer b { color: var(--foam); }
+.claim { background: var(--tide); color: #02211d; border: 0; border-radius: 10px; padding: 9px 16px; font-family: var(--display); font-size: 18px; cursor: pointer; box-shadow: 0 4px 0 #138a80; animation: pulse 1.6s ease-in-out infinite; }
+.claim:active { transform: translateY(3px); box-shadow: 0 1px 0 #138a80; }
+.claim[hidden] { display: none; }
+@keyframes pulse { 0%,100% { box-shadow: 0 4px 0 #138a80, 0 0 0 0 rgba(39,211,195,.5); } 50% { box-shadow: 0 4px 0 #138a80, 0 0 0 9px rgba(39,211,195,0); } }
+
+.view[hidden] { display: none; }
+.stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding-block: 14px 4px; position: relative; }
+.stage.shake { animation: shake .5s cubic-bezier(.36,.07,.19,.97); }
+.stage.shake-big { animation: shake .8s cubic-bezier(.36,.07,.19,.97); }
+@keyframes shake { 10%,90% { transform: translate(-1px,1px); } 20%,80% { transform: translate(3px,-2px); } 30%,50%,70% { transform: translate(-6px,3px) rotate(-.4deg); } 40%,60% { transform: translate(6px,-3px) rotate(.4deg); } }
+.hud { min-height: 46px; text-align: center; display: grid; gap: 2px; justify-items: center; }
+.hint { font-family: var(--display); font-size: 21px; letter-spacing: .02em; color: var(--foam); }
+.sub { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.pack-wrap { width: calc(var(--cw) * .82); aspect-ratio: 5 / 7.4; position: relative; perspective: 900px; touch-action: none; }
+.pack-wrap.hidden { display: none; }
+.pack-wrap.arrive .pack-bob { animation: arrive .6s cubic-bezier(.2,1.3,.4,1), bob 4.6s ease-in-out .6s infinite; }
+@keyframes arrive { from { transform: translateY(40px) scale(.7); opacity: 0; } to { transform: none; opacity: 1; } }
+.pack-bob { width: 100%; height: 100%; animation: bob 4.6s ease-in-out infinite; }
+@keyframes bob { 0%,100% { transform: translateY(0) rotate(-.6deg); } 50% { transform: translateY(-8px) rotate(.6deg); } }
+.pack { position: absolute; inset: 0; border: 0; padding: 0; background: none; cursor: grab; transform: rotateX(var(--prx,0deg)) rotateY(var(--pry,0deg)); transition: transform .15s ease-out; -webkit-tap-highlight-color: transparent; }
+.pack:active { cursor: grabbing; }
+.pack-body, .pack-top { position: absolute; left: 0; right: 0; background: linear-gradient(115deg, rgba(255,255,255,0) 30%, rgba(255,255,255,.28) 46%, rgba(255,255,255,0) 60%) 0 0 / 260% 100%, repeating-linear-gradient(90deg, rgba(255,255,255,.07) 0 2px, rgba(0,0,0,0) 2px 9px), linear-gradient(170deg, #1fc3b8, #0d6f86 55%, #0a3e66); background-position: var(--sheen, 140%) 0, 0 0, 0 0; }
+.pack-top { top: 0; height: 17%; border-radius: 14px 14px 0 0; clip-path: polygon(0 0,100% 0,100% 82%,95% 100%,90% 84%,85% 100%,80% 84%,75% 100%,70% 84%,65% 100%,60% 84%,55% 100%,50% 84%,45% 100%,40% 84%,35% 100%,30% 84%,25% 100%,20% 84%,15% 100%,10% 84%,5% 100%,0 84%); transform-origin: 0 100%; transition: transform .6s cubic-bezier(.3,.7,.2,1), opacity .6s; z-index: 2; }
+.pack-body { top: 12%; bottom: 0; border-radius: 0 0 16px 16px; display: grid; place-items: center; box-shadow: 0 24px 50px rgba(0,0,0,.55), inset 0 0 0 3px rgba(255,255,255,.18); transition: transform .5s ease-in, opacity .5s; }
+.pack-art { display: grid; gap: 6px; justify-items: center; text-align: center; padding: 18% 10% 10%; width: 100%; }
+.pack-art .logo { font-family: var(--display); font-size: calc(var(--cw) * .15); line-height: .95; color: var(--foam); text-shadow: 0 3px 0 #08455a, 0 6px 12px rgba(0,0,0,.35); }
+.pack-art .set { font-weight: 700; letter-spacing: .22em; font-size: calc(var(--cw) * .043); color: #d6fffa; text-transform: uppercase; }
+.pack-art .count { margin-top: 4px; font-weight: 700; letter-spacing: .16em; font-size: calc(var(--cw) * .04); background: #08455a; color: var(--foam); padding: 5px 12px; border-radius: 99px; text-transform: uppercase; }
+.pack-art svg { width: 62%; margin-top: 2px; opacity: .9; }
+.pack-wrap.tear .pack-top { transform: translate(14%, -22%) rotate(16deg); opacity: 0; }
+.pack-wrap.tear .pack-body { transform: translateY(8%) scale(.96); opacity: 0; }
+.tear-guide { position: absolute; left: 4%; right: 4%; top: 15%; height: 0; border-top: 2px dashed rgba(255,255,255,.55); pointer-events: none; z-index: 3; }
+.tear-fill { position: absolute; left: 4%; top: 15%; height: 3px; width: 0; background: var(--foam); box-shadow: 0 0 10px var(--tide); z-index: 3; pointer-events: none; }
+.pack-wrap.tear .tear-guide, .pack-wrap.tear .tear-fill { opacity: 0; }
+.empty { width: calc(var(--cw) * .82); aspect-ratio: 5 / 7.4; border: 2px dashed #2b6470; border-radius: 16px; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--ink-dim); }
+.empty[hidden] { display: none; }
+.empty b { display: block; font-family: var(--display); font-weight: inherit; font-size: 22px; color: var(--foam); margin-bottom: 6px; }
+
+.slot { width: var(--cw); aspect-ratio: 5 / 7; perspective: 1100px; position: relative; }
+.slot.btn { cursor: pointer; }
+.slot.in { animation: dealin .55s cubic-bezier(.2,1.3,.4,1) both; }
+@keyframes dealin { from { transform: translateY(70px) scale(.55) rotate(-8deg); opacity: 0; } to { transform: none; opacity: 1; } }
+.float { width: 100%; height: 100%; animation: floaty 5.5s ease-in-out infinite; }
+@keyframes floaty { 0%,100% { transform: translateY(0) rotate(-.5deg); } 50% { transform: translateY(-6px) rotate(.5deg); } }
+.tilt { width: 100%; height: 100%; transform: rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)); transition: transform .12s ease-out; transform-style: preserve-3d; }
+.tilt.rest { transition: transform .6s cubic-bezier(.2,1.2,.3,1); }
+.flip { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform .75s cubic-bezier(.25,1.15,.35,1); }
+.flipped .flip { transform: rotateY(180deg); }
+.face { position: absolute; inset: 0; border-radius: calc(var(--cw) * .06); backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: hidden; }
+.back { background: radial-gradient(circle at 50% 50%, rgba(255,255,255,.15), rgba(255,255,255,0) 55%), repeating-linear-gradient(45deg, rgba(255,255,255,.07) 0 6px, rgba(0,0,0,0) 6px 14px), linear-gradient(160deg, #11818b, #0a3e66); border: calc(var(--cw) * .025) solid #d6fffa; display: grid; place-items: center; box-shadow: 0 14px 30px rgba(0,0,0,.5); }
+.back span { font-family: var(--display); font-size: calc(var(--cw) * .2); color: var(--foam); text-shadow: 0 3px 0 #08455a; transform: rotate(-8deg); line-height: .9; text-align: center; }
+.tease .back { animation: tease 1.4s ease-in-out infinite; }
+@keyframes tease { 0%,100% { box-shadow: 0 14px 30px rgba(0,0,0,.5), 0 0 0 0 var(--tc); } 50% { box-shadow: 0 14px 30px rgba(0,0,0,.5), 0 0 34px 8px var(--tc); } }
+.ribbon { position: absolute; z-index: 3; top: -6px; left: -6px; background: #ff3d6e; color: #fff; font-weight: 700; font-size: calc(var(--cw) * .05); letter-spacing: .1em; padding: .2em .7em; border-radius: 8px; transform: rotate(-6deg); box-shadow: 0 3px 8px rgba(0,0,0,.4); pointer-events: none; animation: popin .4s cubic-bezier(.2,1.6,.4,1) both; }
+.ribbon.dupe { background: #2b6470; }
+.ribbon[hidden] { display: none; }
+.count-badge { position: absolute; z-index: 3; top: -6px; right: -4px; background: var(--tide); color: #02211d; font-weight: 700; font-size: 12px; min-width: 24px; height: 24px; border-radius: 99px; display: grid; place-items: center; padding-inline: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.4); pointer-events: none; }
+@keyframes popin { from { transform: scale(0) rotate(-20deg); } to { transform: scale(1) rotate(-6deg); } }
+
+.front { transform: rotateY(180deg); padding: calc(var(--cw) * .028); background: var(--frame); box-shadow: 0 18px 40px rgba(0,0,0,.55), 0 0 28px -6px var(--glow); color: #0a1a20; font-size: calc(var(--cw) * .05); }
+.inner { position: relative; height: 100%; border-radius: calc(var(--cw) * .04); background: var(--paper); display: flex; flex-direction: column; padding: calc(var(--cw) * .04); gap: calc(var(--cw) * .022); overflow: hidden; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.num { font-weight: 700; font-size: calc(var(--cw) * .05); background: #0a1a20; color: var(--foam); border-radius: 99px; padding: .15em .7em; font-variant-numeric: tabular-nums; }
+.tier { font-weight: 700; letter-spacing: .14em; text-transform: uppercase; font-size: calc(var(--cw) * .04); color: var(--tier-ink); }
+.name { font-family: var(--display); font-size: calc(var(--cw) * .125 * var(--nl, 1)); line-height: 1.1; letter-spacing: .01em; color: #071318; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.art { position: relative; flex: 1; min-height: 0; border-radius: calc(var(--cw) * .03); overflow: hidden; background: var(--art); display: grid; place-items: end center; border: 2px solid rgba(7,19,24,.85); }
+.art svg { width: 82%; max-height: 92%; margin-bottom: 4%; }
+.art .year { position: absolute; top: 6px; left: 6px; font-family: var(--display); font-size: calc(var(--cw) * .06); background: #071318; color: var(--foam); padding: 0 .55em; border-radius: 6px; }
+.art .ph { position: absolute; right: 6px; bottom: 5px; font-size: calc(var(--cw) * .03); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; color: rgba(7,19,24,.7); }
+.where { font-weight: 600; font-size: calc(var(--cw) * .042); color: #1d3a43; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--cw) * .02); }
+.stat { background: rgba(7,19,24,.9); color: var(--foam); border-radius: calc(var(--cw) * .025); padding: calc(var(--cw) * .018) calc(var(--cw) * .01); text-align: center; }
+.stat small { display: block; font-size: calc(var(--cw) * .03); letter-spacing: .14em; text-transform: uppercase; color: #8fd8d1; font-weight: 700; }
+.stat b { font-size: calc(var(--cw) * .06); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.foot { display: flex; justify-content: space-between; align-items: baseline; font-size: calc(var(--cw) * .036); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #1d3a43; font-variant-numeric: tabular-nums; }
+.foil, .glare { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
+.foil { opacity: var(--foilop, 0); mix-blend-mode: color-dodge; background: linear-gradient(115deg, rgba(0,0,0,0) 12%, rgba(255,40,160,.55) 30%, rgba(0,255,220,.55) 45%, rgba(255,235,0,.55) 60%, rgba(120,80,255,.55) 75%, rgba(0,0,0,0) 90%); background-size: 260% 260%; background-position: calc(var(--mx,50) * 1%) calc(var(--my,50) * 1%); filter: saturate(1.2); }
+.glare { background: radial-gradient(circle at calc(var(--mx,50) * 1%) calc(var(--my,50) * 1%), rgba(255,255,255,.55), rgba(255,255,255,0) 45%); mix-blend-mode: soft-light; opacity: .8; }
+
+.card[data-tier="common"] { --frame: linear-gradient(150deg, #aab8c4, #738391); --paper: #e9eff3; --glow: rgba(160,176,190,0); --tier-ink: #54656f; --art: linear-gradient(160deg, #cfe0ea, #9fb7c7); --foilop: 0; --tc: rgba(170,184,196,.55); }
+.card[data-tier="uncommon"] { --frame: linear-gradient(150deg, #f4f8fb, #9aabb8 50%, #e6eef3); --paper: #eef6f7; --glow: rgba(210,225,235,.45); --tier-ink: #3f6070; --art: linear-gradient(160deg, #cdf1ee, #8fc7cf); --foilop: .12; --tc: rgba(220,235,245,.75); }
+.card[data-tier="rare"] { --frame: linear-gradient(150deg, #ffe08a, #c4871a 50%, #ffd36a); --paper: #fff7e0; --glow: rgba(255,200,80,.6); --tier-ink: #8a5a00; --art: linear-gradient(160deg, #ffe9a8, #f2b24a); --foilop: .3; --tc: rgba(255,200,80,.9); }
+.card[data-tier="legendary"] { --frame: linear-gradient(150deg, #ff9bd2, #7b4dff 50%, #4de1ff); --paper: #f4ecff; --glow: rgba(170,110,255,.8); --tier-ink: #5a2bd0; --art: linear-gradient(160deg, #e6d4ff, #a58bff); --foilop: .55; --tc: rgba(180,120,255,1); }
+.card[data-tier="mythic"] { --frame: conic-gradient(from var(--spin,0deg), #ff3d9a, #ffe14a, #38ffd2, #4d7bff, #c04dff, #ff3d9a); --paper: #07181f; --glow: rgba(60,255,220,.85); --tier-ink: #5cffe9; --art: linear-gradient(160deg, #0d4a5c, #05202b); --foilop: .75; --tc: rgba(60,255,220,1); }
+.card[data-tier="mythic"] .front { animation: spinframe 6s linear infinite; }
+@property --spin { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+@keyframes spinframe { to { --spin: 360deg; } }
+.card[data-tier="mythic"] .name, .card[data-tier="mythic"] .where { color: var(--foam); }
+.card[data-tier="mythic"] .foot { color: #8fd8d1; }
+.card[data-tier="mythic"] .art { border-color: rgba(92,255,233,.6); }
+.card[data-tier="mythic"] .art .ph { color: rgba(220,255,250,.7); }
+.card[data-tier="mythic"] .num { background: #5cffe9; color: #04141a; }
+
+.pull { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; --cw: min(17vw, 88px); }
+.pull .float, .grid .float { animation: none; }
+.cta-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; min-height: 52px; align-items: center; }
+.cta { background: var(--tide); color: #02211d; border: 0; border-radius: 12px; padding: 12px 22px; font-family: var(--display); font-size: 20px; letter-spacing: .02em; cursor: pointer; box-shadow: 0 5px 0 #138a80; transition: transform .1s, box-shadow .1s; }
+.cta:active { transform: translateY(4px); box-shadow: 0 1px 0 #138a80; }
+.cta.ghost { background: transparent; color: var(--foam); box-shadow: inset 0 0 0 2px #2b6470; }
+.cta.small { font-size: 15px; padding: 8px 14px; box-shadow: 0 3px 0 #138a80; }
+.cta.small.ghost { box-shadow: inset 0 0 0 2px #2b6470; }
+.cta[hidden] { display: none; }
+.banner { position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 66px); transform: translate(-50%, -30px); z-index: 70; background: linear-gradient(90deg, #ff3d9a, #ffb44a, #38ffd2, #4d7bff); color: #04141a; border-radius: 14px; padding: 10px 18px; font-weight: 700; font-size: 14px; letter-spacing: .04em; text-align: center; width: max-content; max-width: calc(100vw - 32px); box-shadow: 0 10px 30px rgba(0,0,0,.5); opacity: 0; transition: transform .6s cubic-bezier(.2,1.3,.4,1), opacity .3s; }
+.banner.show { transform: translate(-50%, 0); opacity: 1; }
+
+.binder-head { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.binder-sum { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.binder-sum h2 { margin: 0; font-family: var(--display); font-weight: inherit; font-size: 24px; color: var(--foam); }
+.binder-sum span { color: var(--ink-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.tiers { display: flex; gap: 8px; flex-wrap: wrap; }
+.tiers .chip { display: flex; flex-direction: column; gap: 4px; min-width: 76px; align-items: flex-start; text-transform: none; letter-spacing: .02em; }
+.tiers .chip b { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.tiers .chip em { font-style: normal; font-variant-numeric: tabular-nums; color: var(--foam); font-size: 13px; }
+.tiers .bar { width: 100%; height: 4px; background: #14323b; border-radius: 4px; overflow: hidden; }
+.tiers .bar i { display: block; height: 100%; background: var(--tc, var(--tide)); border-radius: 4px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, var(--cw)); justify-content: center; gap: 18px 12px; margin-top: 16px; --cw: min(29vw, 124px); padding-block: 8px; }
+.grid .slot.btn { cursor: pointer; transition: transform .15s; }
+.grid .slot.btn:hover { transform: translateY(-4px); }
+.slot.ghost { filter: grayscale(1) brightness(.36); opacity: .9; pointer-events: none; }
+.slot.ghost .count-badge { display: none; }
+.empty-binder { text-align: center; color: var(--ink-dim); padding: 36px 8px; line-height: 1.5; }
+.empty-binder b { display: block; font-family: var(--display); font-weight: inherit; font-size: 22px; color: var(--foam); margin-bottom: 6px; }
+.more { display: flex; justify-content: center; margin-top: 12px; }
+
+.modal { position: fixed; inset: 0; z-index: 80; background: rgba(2,8,12,.82); display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.modal[hidden] { display: none; }
+.modal-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 420px; width: 100%; --cw: clamp(190px, min(76vw, 300px, calc((100svh - 220px) / 1.4)), 300px); }
+.serials { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; font-size: 13px; color: var(--ink-dim); text-align: center; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.serials b { color: var(--foam); }
+
+.note { font-size: 12px; line-height: 1.5; color: var(--ink-dim); text-align: center; max-width: 560px; margin: 10px auto 0; }
+.note b { color: var(--ink); font-weight: 600; }
+@media (max-width: 460px) { .brand { font-size: 19px; } .seg button { padding: 7px 10px; font-size: 11px; } }
+@media (prefers-reduced-motion: reduce) {
+  .bg i, .rays, .pack-bob, .float, .tease .back, .card[data-tier="mythic"] .front, .claim { animation: none !important; }
+  .flip { transition-duration: .01s; }
+  .slot.in, .pack-wrap.arrive .pack-bob, .ribbon { animation: none; }
+  .stage.shake, .stage.shake-big, .flash.go { animation: none; }
+}
+</style>
+
+<div class="bg"><i></i><i></i><i></i></div>
+<div class="rays"></div>
+<div class="dim"></div>
+<div class="flash" id="flash"></div>
+<canvas id="fx"></canvas>
+<div class="banner" id="banner" role="status" aria-live="polite"></div>
+
+<div class="app">
+  <div class="top">
+    <div class="brand">FRC <b>PACKS</b></div>
+    <div class="tools">
+      <div class="seg" role="tablist" aria-label="Screens">
+        <button type="button" role="tab" id="tabOpen" aria-selected="true">Open</button>
+        <button type="button" role="tab" id="tabBinder" aria-selected="false">Binder</button>
+      </div>
+      <button type="button" class="chip" id="gear" aria-expanded="false" aria-controls="settings">Settings</button>
+    </div>
+  </div>
+
+  <div class="settings" id="settings" hidden>
+    <div class="line"><span>Sound<small>Chimes, rip and reveal stings. Off by default on some phones until you tap.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
+    <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 20,000.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
+    <div class="line"><span>Extra packs<small>Testing only. Real packs come from the 5-hour claim.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
+    <div class="line"><span>Start over<small id="resetNote">Deletes your collection on this device.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
+    <div class="line warn" id="storageWarn" hidden>This browser is blocking storage, so progress will be lost when you close the page.</div>
+  </div>
+
+  <div class="status" id="status">
+    <div class="packs">Packs<b id="packCount">0</b></div>
+    <div class="timer" id="timer"></div>
+    <button type="button" class="claim" id="claim" hidden>Claim pack</button>
+  </div>
+
+  <section class="view" id="viewOpen">
+    <main class="stage" id="stage">
+      <div class="hud"><div class="hint" id="hint" aria-live="polite"></div><div class="sub" id="sub"></div></div>
+      <div class="pack-wrap" id="packWrap">
+        <div class="pack-bob">
+          <button class="pack" id="pack" type="button" aria-label="Open a 2026 Season pack. Drag across the top to tear it, or press Enter.">
+            <div class="pack-top"></div>
+            <div class="pack-body"><div class="pack-art">
+              <div class="set">2026 Season</div><div class="logo">FRC<br>PACKS</div>
+              <svg viewBox="0 0 120 40" aria-hidden="true"><path d="M0 24 Q15 8 30 24 T60 24 T90 24 T120 24" fill="none" stroke="#f5fbfa" stroke-width="4" stroke-linecap="round"/><path d="M0 34 Q15 18 30 34 T60 34 T90 34 T120 34" fill="none" stroke="#f5fbfa" stroke-width="3" stroke-linecap="round" opacity=".5"/></svg>
+              <div class="count">5 cards</div>
+            </div></div>
+          </button>
+          <div class="tear-guide"></div><div class="tear-fill" id="tearFill"></div>
+        </div>
+      </div>
+      <div class="empty" id="emptyPack" hidden><div><b>Out of packs</b><span id="emptyText"></span></div></div>
+      <div id="active"></div>
+      <div class="pull" id="pull" aria-label="Cards you have revealed"></div>
+      <div class="cta-row"><button class="cta" id="next" type="button" hidden>Next card</button><button class="cta ghost" id="again" type="button" hidden>Open another pack</button></div>
+    </main>
+  </section>
+
+  <section class="view" id="viewBinder" hidden>
+    <div class="binder-head">
+      <div class="binder-sum"><h2>Binder</h2><span id="binderSum"></span></div>
+      <div class="tiers" id="tiers" role="group" aria-label="Filter by rarity"></div>
+      <div><button type="button" class="chip" id="missingBtn" aria-pressed="false" hidden>Show cards I'm missing</button></div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="more"><button type="button" class="cta small ghost" id="more" hidden>Show more</button></div>
+  </section>
+
+  <p class="note"><b>Prototype.</b> Team stats are 2026 Statbotics EPA for a sample of <span id="poolN">about 850</span> of 3,724 ranked teams (top 613 in full, plus slices lower down). Robots are drawings, not photos yet. Packs, serials and the claim timer live in this browser only, so a real build needs a server to make them cheat-proof.</p>
+</div>
+
+<div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-label="Card details"><div class="modal-in" id="modalIn"></div></div>
+
+<script>
+(function () {
+  "use strict";
+  var RAW = `# FRC 2026 team sample for the FRC Packs prototype.
+# Source: Statbotics API v3 team_years (year=2026, ordered by EPA), fetched through a summarizing fetch tool on 2026-10-06.
+# Format: overall EPA rank | team number | name | total EPA | wins-losses | state or country
+# This is a SAMPLE: ranks 1-613 in full, plus short slices lower down. 3,724 teams ranked in total.
+# Values may contain small transcription errors. The real pipeline will pull every team straight from the API.
+1|4414|HighTide|356.94|70-2|CA
+2|254|The Cheesy Poofs|327.82|65-6|CA
+3|1323|MadTown Robotics|309.96|69-4|CA
+4|7769|The CREW|309.28|70-5|MI
+5|1690|Orbit|302.61|16-4|Israel
+6|2056|OP Robotics|302.17|63-10|ON
+7|27|Team RUSH|295.15|83-6|MI
+8|2481|Roboteers|288.12|44-8|IL
+9|1114|Simbotics|287.57|62-7|ON
+10|125|NUTRONs|283.42|68-17|MA
+11|5687|The Outliers|282.69|62-12|ME
+12|2910|Jack in the Bot|281.69|53-23|WA
+13|1678|Citrus Circuits|279.67|61-9|CA
+14|9470|Ctrl-Alt-Defeat|278.91|60-13|CA
+15|7558|ALT-F4|278.87|51-17|ON
+16|6369|Mercenary Robotics|274.16|77-9|TX
+17|6800|Valor|267.50|62-10|TX
+18|3467|Windham Windup|266.45|75-10|NH
+19|9128|ITKAN Robotics|265.56|60-7|TX
+20|1796|RoboTigers|263.45|48-7|NY
+21|9483|Overcharge|261.31|38-6|Türkiye
+22|6329|The Bucks' Wrath|260.03|61-15|ME
+23|2046|Bear Metal|259.76|78-16|WA
+24|1768|Nashoba Robotics|259.43|70-17|MA
+25|1987|Broncobots|257.92|54-6|MO
+26|8044|Denham Venom|256.51|50-9|LA
+27|1706|Ratchet Rockers|256.00|45-2|MO
+28|9496|LYNK|253.19|70-13|NC
+29|5460|Strike Zone|252.77|57-11|MI
+30|581|Blazing Bulldogs|251.27|47-19|CA
+31|1325|Inverse Paradox|245.67|56-27|ON
+32|498|The Cobra Commanders|242.83|39-8|AZ
+33|4522|Team SCREAM|241.76|47-12|MO
+34|5000|HAMMERHEADS|235.75|41-23|MA
+35|359|Hawaiian Kids|234.75|69-11|HI
+36|1833|Team BEAN|233.52|60-8|GA
+37|4499|The Highlanders|231.05|55-10|CO
+38|9785|Alectrona|230.66|53-18|ON
+39|694|StuyPulse|230.56|46-13|NY
+40|973|Greybots|229.32|45-21|CA
+41|1241|THEORY6|228.64|52-15|ON
+42|2702|Rebels|227.23|35-14|ON
+43|2122|Team Tators|226.54|50-10|ID
+44|4678|CyberCavs|224.37|47-18|ON
+45|5907|CC Shambots|223.75|48-19|MI
+46|604|Quixilver|222.47|47-16|CA
+47|5736|Kingsmen Robotics|222.38|28-10|NY
+48|4469|R.A.I.D.|221.14|39-20|WA
+49|4476|W.A.F.F.L.E.S.|219.88|45-20|ON
+50|8214|Cyber Unicorn|217.08|16-8|China
+51|4481|Team Rembrandts|215.89|37-15|Netherlands
+52|695|Bison Robotics|215.75|44-19|OH
+53|9023|Future Martians|215.36|57-22|WA
+54|4946|The Alpha Dogs|214.74|62-12|ON
+55|7457|suPURDUEper Robotics|214.68|68-15|IN
+56|2468|Team Appreciate|214.43|51-14|TX
+57|3045|Gear Gremlins|213.71|43-20|CA
+58|316|LUNATECS|213.69|59-7|NJ
+59|1732|Hilltopper Robotics|213.39|54-13|WI
+60|5193|Pantheon|212.05|51-15|MI
+61|3476|Code Orange|211.99|54-9|CA
+62|6002|ZooBOTix|211.86|63-23|MI
+63|8513|Sisters 1st|210.27|50-13|NJ
+64|4400|Cerbotics - Peñoles|209.43|35-8|Mexico
+65|6090|Wayland Wildcats|207.48|51-15|MI
+66|1540|Flaming Chickens|206.5|63-20|OR
+67|6459|AG Robotik|206.43|32-13|Türkiye
+68|195|CyberKnights|206.01|45-21|CT
+69|3015|Ranger Robotics|205.35|43-11|NY
+70|5813|Morpheus|204.91|41-20|NH
+71|7426|PAIR OF DICE ROBOTICS|204.83|46-12|NV
+72|2231|OnyxTronix|204.43|8-5|Israel
+73|4089|Stealth Robotics|204.14|43-21|WA
+74|1918|Newaygo County GEARS|204.01|38-11|MI
+75|4028|The Beak Squad|203.94|31-11|OH
+76|6328|Mechanical Advantage|203.81|51-13|MA
+77|67|The HOT Team|202.97|47-17|MI
+78|4237|Team Lance-A-Bot|202.59|52-16|MI
+79|4698|Raider Robotics|202.52|36-25|CA
+80|3255|SuperNURDs|202.25|37-23|CA
+81|5940|BREAD|202.08|57-13|CA
+82|2813|Gear Heads|200.67|38-22|CA
+83|3538|RoboJackets|200.3|53-17|MI
+84|10131|Royal Turtles|199.85|36-13|China
+85|176|Aces High|199.19|49-15|CT
+86|2106|The Junkyard Dogs|198.48|49-13|VA
+87|1156|Under Control|197.83|48-12|Brazil
+88|5895|Peddie Robotics|197.75|43-16|NJ
+89|1868|Space Cookies|197.01|30-29|CA
+90|4646|Wildcard Robotics|196.86|30-12|IA
+91|948|NRG (Newport Robotics Group)|196.63|44-20|WA
+92|6036|Peninsula Robotics|196.46|46-19|CA
+93|5406|Celt-X|196.45|45-15|ON
+94|180|S.P.A.M.|196.26|35-10|FL
+95|341|Miss Daisy|196.07|52-9|PA
+96|610|Crescent Coyotes|196.01|45-20|ON
+97|10021|Guerin Catholic Golden Gears|195.91|48-21|IN
+98|971|Spartan Robotics|195.61|36-28|CA
+99|870|TEAM R. I. C. E.|195.37|30-11|NY
+100|2539|Krypton Cougars|195.34|43-20|PA
+101|3256|WarriorBorgs|195.14|42-24|CA
+102|117|Steel Dragons|194.9|23-15|PA
+103|1296|Full Metal Jackets|194.57|40-21|TX
+104|6647|PrepaTec - VOLTEC|194.03|40-19|Mexico
+105|599|The Robodox|193.41|41-18|CA
+106|449|The Blair Robot Project|192.36|49-15|MD
+107|8749|Farmersville Robotics|191.46|37-26|TX
+108|3128|The Aluminum Narwhals|191.08|49-15|CA
+109|841|The BioMechs|190.52|28-19|CA
+110|2200|BCR Blackout|190.42|44-23|ON
+111|1002|CircuitRunners Robotics|190.39|50-18|GA
+112|5026|Iron Panthers|190.28|38-25|CA
+113|238|Crusaders|189.71|49-15|NH
+114|484|Roboforce|189.33|44-18|PA
+115|10254|Regal Seagulls|188.99|39-21|MA
+116|5468|Chaos Theory|188.43|50-12|OR
+117|4174|Mustang Robotics|187.27|31-10|MN
+118|8608|Alpha Bots|187.2|48-15|MI
+119|8159|Golden Horn|186.73|28-12|Türkiye
+120|2767|Stryke Force|186.22|55-12|MI
+121|9072|TigerBots|185.99|52-18|MD
+122|7220|Steel Falcons|185.91|44-22|MI
+123|360|The Revolution|185.82|40-20|WA
+124|33|Killer Bees|185.69|44-18|MI
+125|2905|Sultans of Turkiye|185.62|32-11|Türkiye
+126|133|B.E.R.T.|185.46|34-17|ME
+127|1771|North Gwinnett Robotics|185.41|51-13|GA
+128|1701|Robocubs|185.34|52-19|MI
+129|9408|Warren Warbots|184.85|50-10|CA
+130|2052|KnightKrawler|184.73|36-9|MN
+131|7166|Red Thunder Robotics|183.66|55-15|MI
+132|9032|RoboWhales|183.57|53-11|NC
+133|148|Robowranglers|183.13|52-14|TX
+134|3414|Hackbots|182.99|45-18|MI
+135|3197|HexHounds|182.91|44-21|WI
+136|3937|Breakaway|182.56|26-18|AR
+137|1922|Oz-Ram|182.48|35-26|NH
+138|118|Robonauts|182.35|118-14|TX
+139|9068|The Chargers|181.64|32-14|CO
+140|2992|The S.S. Prometheus|181.47|30-17|LA
+141|5660|Symmetrical Chaos|181.33|33-18|MI
+142|4391|BraveBots|180.6|49-15|MI
+143|3641|The Flying Toasters|179.6|41-24|MI
+144|2877|LigerBots|179.51|41-20|MA
+145|4635|PrepaTec - Botbusters|178.75|48-6|Mexico
+146|7520|Team MineKee|178.34|35-25|ON
+147|5913|Patriotics|178.31|34-13|MN
+148|10340|ITKAN Girls|177.88|52-15|TX
+149|3683|Team DAVE|177.66|43-19|ON
+150|503|Frog Force|177.09|51-28|MI
+151|9609|Paraducks|176.88|37-11|India
+152|103|Cybersonics|176.7|42-16|PA
+153|7415|Jaguar Robotics|176.45|49-17|CA
+154|346|RoboHawks|176.32|41-20|VA
+155|2491|NoMythic|176.05|34-11|MN
+156|190|Gompei and the HERD|175.82|78-26|MA
+157|3006|Red Rock Robotics|175.67|32-10|UT
+158|8046|LakerBots|174.27|33-25|NH
+159|3478|PrepaTec - LamBot|173.95|28-13|Mexico
+160|3620|Average Joes|173.76|39-18|MI
+161|340|G.R.R. (Greater Rochester Robotics)|172.51|31-9|NY
+162|111|WildStang|172.03|30-15|IL
+163|1986|Team Titanium|171.78|34-10|MO
+164|5199|Robot Dolphins From Outer Space|171.75|46-16|CA
+165|9401|Midas' Mayhem|171.44|30-12|MO
+166|2137|The Oxford RoboCats|171.42|48-16|MI
+167|4020|Cyber Tribe|171.40|28-12|TN
+168|7407|Wired Boars|171.19|46-24|CT
+169|836|The RoboBees|170.99|56-13|MD
+170|6324|The Blue Devils|170.49|45-22|NH
+171|2935|NACI Robotics|170.04|29-19|ON
+172|4143|MARS/WARS|170.01|40-10|IL
+173|1710|The Ravonics Revolution|169.68|25-17|KS
+174|2337|EngiNERDs|169.56|62-12|MI
+175|2659|RoboWarriors|169.15|38-22|CA
+176|1261|Robo Lions Team1261|168.98|35-27|GA
+177|2073|EagleForce|168.75|36-25|CA
+178|7028|Binary Battalion|168.73|32-10|MN
+179|8267|Riptide Robotics 8267|168.52|23-17|NY
+180|687|The Nerd Herd|168.41|42-21|CA
+181|8|Paly Robotics|168.21|44-14|CA
+182|1189|Gearheads|167.09|36-21|MI
+183|1360|Orbit Robotics|167.07|32-19|ON
+184|2960|Automation Nation|167.01|35-22|MI
+185|4322|Clockwork|166.89|36-27|CA
+186|9098|FireHawks|166.75|31-17|ON
+187|2630|Thunderbolts|166.09|7-5|Israel
+188|1699|Robocats|165.04|31-19|CT
+189|1391|The Metal Moose|164.82|40-18|PA
+190|2067|Apple Pi|164.72|41-19|CT
+191|2996|Cougars Gone Wired|164.32|27-15|CO
+192|1787|The Flying Circuits|164.07|28-12|OH
+193|11415|Storm Surge|164.07|26-19|VA
+194|571|Paragon Robotics|163.93|40-17|CT
+195|469|Las Guerrillas|163.75|42-20|MI
+196|201|The FEDS|163.71|35-26|MI
+197|494|Martians|163.50|36-22|MI
+198|3656|Dexter Dreadbots|163.28|37-24|MI
+199|1506|Metal Muscle|163.07|32-29|MI
+200|846|The Funky Monkeys|162.58|42-21|CA
+201|2194|Fondy Fire|162.11|40-20|WI
+202|5987|Galaxia|161.92|6-6|Israel
+203|4362|Gems|161.53|44-18|MI
+204|68|Truck Town Thunder|161.25|36-23|MI
+205|9597|Luban Robotics|161.16|13-10|China
+206|2338|Gear It Forward|160.49|28-13|IL
+207|1306|BadgerBOTS|160.41|46-15|WI
+208|7183|W.A.R.|160.25|26-13|NV
+209|987|HIGHROLLERS|160.17|21-16|NV
+210|2054|Tech Vikes|159.88|36-23|MI
+211|3181|Pittsford Panthers|159.50|25-15|NY
+212|1619|Up-A-Creek Robotics|159.13|25-17|CO
+213|4915|Spartronics|159.11|45-23|WA
+214|6941|IronPulse Robotics|158.95|28-13|China
+215|1388|Eagle Robotics|158.88|25-21|CA
+216|9572|CC Shambytes|158.71|34-25|MI
+217|4611|OZone|158.6|28-13|OH
+218|3966|Gryphon Command|158.58|25-14|TN
+219|3501|Firebots|158.39|32-25|CA
+220|4206|Robo Vikes|158.13|47-28|TX
+221|5584|ICRobotics|157.91|15-0|Australia
+223|955|Ctrl C|157.43|42-21|OR
+225|8373|The Flying Octopi|156.8|32-23|MI
+226|11270|Nova|156.53|35-27|ON
+227|1498|The Polar Pilots|155.8|40-20|MI
+228|4421|FORGE Robotics|155.56|25-15|AB
+229|294|Beach Cities Robotics|155.34|43-16|CA
+230|3707|TechnoDogs|154.37|34-29|MI
+231|1756|Argos|153.97|32-17|IL
+232|3276|TOOLCATS|153.89|25-15|MN
+233|3035|Droid Rage|153.81|41-18|TX
+234|6152|Robo-Falcons|153.73|31-28|MI
+235|3512|Spartatroniks|153.61|34-22|CA
+236|108|SigmaC@T Robotics Team|153.55|21-9|FL
+237|2240|Brute Force|153.28|15-10|CO
+238|11216|FLAZIA ROBOTICS|153.18|19-10|Türkiye
+239|4403|PrepaTec - ROULT|152.38|30-12|Mexico
+240|5216|E-Ville Empire|152.33|38-24|MI
+241|1058|PVC Pirates|152.22|36-23|NH
+242|236|Techno-Ticks|152.15|35-16|CT
+243|287|Floyd Robotics|151.98|25-13|NY
+244|2370|IBOTS|151.76|37-22|VT
+245|2974|Walton Robotics|151.67|45-15|GA
+246|8595|This Is How We Play|151.6|25-11|Chinese Taipei
+247|5549|Gryphon Robotics|150.73|40-19|VA
+248|2713|Red Hawk Robotics|150.41|34-24|MA
+249|4593|Rapid Acceleration|150.3|22-15|SD
+250|6919|The Commodores|150.05|47-18|GA
+251|1640|Sab-BOT-age|149.79|37-23|PA
+252|1714|MORE Robotics|149.72|43-20|WI
+253|6517|So-Kno Robo|149.65|25-15|TN
+254|5937|MI Robotics|149.3|37-24|WA
+255|5847|Ironclad|149.25|31-13|IL
+256|1023|Bedford Express|149.12|33-24|MI
+257|3161|Tronic Titans|148.97|34-14|ON
+258|2851|Crevolution|148.52|40-20|MI
+259|1792|Round Table Robotics|148.49|46-22|WI
+260|3572|Wavelength|148.49|33-23|MI
+261|2783|Engineers of Tomorrow|148.44|31-10|KY
+262|1425|Error Code Xero|147.91|33-16|OR
+263|3928|Team Neutrino|147.28|26-16|IA
+264|4451|ROBOTZ Garage|147.18|51-13|SC
+265|166|Chop Shop|146.72|39-25|NH
+266|930|Mukwonago BEARs|146.58|39-28|WI
+267|179|Children of the Swamp|146.46|29-14|FL
+268|272|Cyber Crusaders|146.42|41-19|PA
+269|2383|Ninjineers|146.24|25-14|FL
+270|5114|Titanium Tigers|145.98|39-12|MI
+271|4655|Stateline Robotics|145.97|30-11|IL
+272|6773|Max Throttle Mavericks|145.9|36-24|TX
+273|4561|TerrorBytes|145.63|46-17|NC
+274|6436|NARBULUT PARS ROBOTICS|145.03|28-14|Türkiye
+275|6995|NOMAD|144.77|31-19|CA
+276|2724|Avalanche Robotics|144.75|44-17|NC
+277|686|Bovine Intervention|144.36|42-19|MD
+278|5951|Makers Assemble|144.17|3-7|Israel
+279|2075|Enigma Robotics|144.05|41-19|MI
+280|2582|PantherBots|143.64|37-20|TX
+281|8517|Bounty Hunters|143.41|33-17|MI
+282|2848|Rangers|143.36|49-16|TX
+283|9245|Laker Dreadnoughts|142.95|35-24|MI
+284|3339|BumbleB|142.48|6-7|Israel
+285|4272|Maverick Robotics|142.04|44-17|IN
+286|10213|BALTA|141.61|34-10|Türkiye
+287|11|MORT|141.59|42-24|NJ
+288|1024|Kil-A-Bytes|141.56|42-20|IN
+289|4039|MakeShift Robotics|141.06|32-15|ON
+290|131|CHAOS|140.81|26-31|NH
+291|2102|Team Paradox|140.75|37-21|CA
+292|3674|CloverBots|140.29|29-19|WA
+293|4099|The Falcons|140.16|44-17|MD
+294|6017|PrepaTec - Cyberius|140.16|31-16|Mexico
+295|1538|The Holy Cows|140.04|39-22|CA
+296|401|Copperhead Robotics|140.01|35-30|VA
+297|1073|The Force Team|139.54|33-24|NH
+298|865|WARP7|138.87|19-24|ON
+299|548|Robostangs|138.16|34-27|MI
+300|422|The Mech Tech Dragons|137.89|43-19|VA
+301|5086|Cadillac Connectors|137.88|36-21|MI
+302|51|Wings of Fire|137.83|29-27|MI
+303|4069|Lo-Ellen Robotics|137.81|28-19|ON
+304|2590|Nemesis|137.54|35-26|NJ
+305|2583|Orange Dynamite|137.5|38-22|TX
+306|9094|The Earthquakers|137.46|46-17|PA
+307|3931|Cockadoodle Dominators|136.96|31-9|OK
+308|972|Iron Claw|136.59|42-18|CA
+309|1908|ShoreBots|136.45|39-22|VA
+310|8119|TigerBotics|136.08|29-26|CA
+311|4512|Otter Chaos|135.96|22-21|WA
+312|3354|PrepaTec - TecDroid|135.82|22-15|Mexico
+313|167|Children of the Corn|135.75|19-16|IA
+314|1403|Cougar Robotics|135.73|40-18|NJ
+315|7539|Elev8|135.21|35-11|India
+316|4450|Olympia Robotics Federation|135.17|23-30|WA
+317|6045|Sabre Robotics|135.02|29-9|MN
+318|8229|Balikbayan Bots|134.95|22-18|NV
+319|5990|TRIGON|134.89|0-0|Israel
+320|761|TechPUPS|134.52|37-24|IN
+321|4909|Bionics|134.50|66-34|MA
+322|78|AIR STRIKE|134.49|22-23|RI
+323|1778|Chill Out|134.09|25-19|WA
+324|2472|Centurions|133.94|26-17|MN
+325|5066|Singularity|133.68|32-28|MI
+326|9406|TechJunior|133.67|26-12|QC
+327|3257|Vortechs|133.67|26-20|CA
+328|59|RamTech|133.64|26-11|FL
+329|5675|WiredCats|133.57|25-24|MI
+330|9084|Octobots|133.50|32-25|CA
+331|6907|The G.O.A.T|133.11|27-10|China
+333|4201|The Vitruvian Bots|132.79|40-20|CA
+334|4907|Thunderstamps|132.59|31-28|ON
+335|2611|Jacktown Vectors|132.34|25-19|MI
+336|3494|The Quadrangles|132.25|32-24|IN
+337|6672|Fusion Corps|132.11|19-26|TX
+338|9140|The Robobots|131.88|39-26|TX
+339|5809|The Jesubots 5809|131.87|17-10|MO
+340|5010|Tiger Dynasty|131.77|36-28|IN
+341|5507|Robotic Eagles|131.41|30-14|CA
+342|4766|Team SCREAM Jr.|131.39|39-21|MO
+343|6696|Cardinal Dynamics|131.07|42-18|OR
+344|9025|Mechameleons|130.33|23-15|Türkiye
+345|3940|CyberTooth|130.17|34-17|IN
+346|8612|Calvin Christian Robotics|129.96|39-19|MI
+347|6366|RAM Rodz Robotics|129.94|39-22|SC
+348|4795|Eastbots|129.87|54-10|NC
+349|2252|The Mavericks|129.67|20-17|OH
+350|3314|Mechanical Mustangs|129.43|40-17|NJ
+351|6528|Terror Bytes|129.29|31-25|MI
+352|4188|Columbus Space Program|129.28|49-12|GA
+353|8048|East Palo Alto ChurroBots|129.28|27-19|CA
+354|5572|Rosbots|129.14|38-21|TX
+355|6615|Bellevillains|129.14|37-22|MI
+356|868|TechHOUNDS|129.05|49-21|IN
+358|7160|Ludington O-Bots|128.71|39-19|MI
+359|4590|GreenBlitz|128.55|6-4|Israel
+360|6238|Popcorn Penguins|128.53|38-21|CA
+361|3044|Team 0xBE4|128.46|22-10|NY
+362|6497|Pymble P-Platers|128.33|26-15|Australia
+363|48|Team E.L.I.T.E.|128.18|29-23|OH
+364|2412|Robototes|127.86|46-22|WA
+365|9430|CTEC Robotics|127.67|20-23|OR
+366|1086|Blue Cheese|127.62|28-18|VA
+367|1625|Winnovation|127.62|23-18|IL
+368|1153|Timberwolves|127.51|25-23|MA
+369|3005|RoboChargers|127.42|35-25|TX
+370|7632|An Kang Robotics Maker|126.64|32-16|Chinese Taipei
+371|4096|Ctrl-Z|126.43|31-17|IL
+372|10980|The Deadbolts|126.33|24-15|CO
+373|461|Westside Boiler Invasion|126.21|26-20|IN
+374|5474|Clairemonster|126.2|27-17|CA
+375|4122|Ossining OBOTS|126.02|30-19|NY
+376|11141|AlphaZ|125.97|23-18|Romania
+377|4189|Chargers|125.73|39-20|GA
+378|8005|Mega MeadowBots|125.7|37-24|NV
+379|7915|Ripon Robotics|125.61|37-21|WI
+380|7419|TECH Support|125.54|25-20|CA
+381|1481|The Riveters|125.18|21-25|MI
+382|70|More Martians|125.12|33-23|MI
+383|3875|Red Storm Robotics|124.9|28-16|MI
+385|8858|Beast from the East|124.53|34-23|TX
+386|9692|Sigma|124.43|17-20|India
+388|2040|DERT|124.38|31-15|IL
+389|188|Blizzard|124.35|35-25|Canada
+390|7421|PrepaTec - OVERTURE|124.29|19-18|Mexico
+391|3100|The Lightning Turtles|124.2|27-14|MN
+392|2881|Lady Cans|124.17|37-19|TX
+393|5948|PrepaTec - Lebotics|123.79|21-6|Mexico
+394|1218|SCH Robotics|123.78|39-19|PA
+395|424|Rust Belt Robotics|123.52|20-14|NY
+396|4607|C.I.S.|123.34|16-16|MN
+397|3173|IgKnighters|123.28|20-15|NY
+398|5104|BreakerBots|123.19|25-19|CA
+399|3175|Knight Vision|123.15|33-24|MI
+400|6989|KAISER|123.1|31-17|Türkiye
+401|8393|BrainSTEM Robotics|123.09|19-21|PA
+402|818|The Steel Armadillos|122.9|26-27|MI
+403|8884|Knight Owls|122.86|36-22|Canada
+404|1676|The Pascack PI-oneers|122.85|35-24|NJ
+405|3061|Huskie Robotics|122.64|24-14|IL
+406|10633|BeeBotics|122.43|37-21|MI
+407|7565|SESI SENAI ROBONÁTICOS|122.41|31-13|Brazil
+408|9635|Cyber Rabbit|122.32|13-10|China
+409|319|Big Bad Bob|122.23|27-22|NH
+410|3536|Electro Eagles|122.13|33-24|MI
+411|4488|Shockwave|122.12|26-21|OR
+412|2556|RadioActive Roaches|122.07|20-16|FL
+413|2471|Team Mean Machine|121.97|29-19|WA
+414|234|Cyber Blue|121.92|35-29|IN
+415|5712|Hemlock's Gray Matter|121.91|44-20|MI
+416|6431|NoktaParantez|121.68|26-18|Türkiye
+417|2883|F.R.E.D|121.6|23-15|MN
+418|2079|4H ALARM Robotics|121.54|26-20|MA
+419|6417|Fridolins|121.39|30-13|Switzerland
+420|2486|CocoNuts|121.19|30-20|AZ
+421|1259|Paradigm Shift|121.12|41-19|WI
+422|888|Robotiators|121.03|31-16|MD
+423|3293|OtterBots|120.95|23-7|MN
+424|2638|Rebel Robotics|120.91|24-16|NY
+425|7563|SESI SENAI MEGAZORD|120.69|31-7|Brazil
+426|1671|Buchanan Bird Brains|120.66|21-29|CA
+427|1108|Panther Robotics|120.6|22-15|KS
+428|8011|Wayi Guangzhou|120.53|16-10|China
+429|5614|Team Sycamore|120.37|0-0|Israel
+430|1089|Team Mercury|120.29|23-22|NJ
+431|5338|RoboLoCo|120.13|39-25|VA
+432|2399|The Fighting Unicorns|120.11|24-16|OH
+433|3604|Goon Squad|119.93|30-24|MI
+434|2846|FireBears|119.85|24-14|MN
+435|3075|Ha-Dream Team|119.64|4-6|Israel
+436|6413|Degrees of Freedom|119.3|21-19|AZ
+437|122|NASA Knights|119.08|25-23|VA
+438|3970|Duncan Dynamics|119.02|31-18|CA
+439|5653|Iron Mosquitos|118.9|18-18|MN
+441|3243|Amperes|118.75|22-15|UT
+442|1501|Team THRUST|118.7|45-15|IN
+443|1720|PhyXTGears|118.52|31-24|IN
+444|10435|IRS|118.38|13-11|IL
+445|1507|Warlocks|118.33|20-11|NY
+446|2230|General Angels|118.2|0-0|Israel
+447|4270|Crusaders|118.2|38-23|HI
+448|193|MORT Beta|117.5|29-17|NJ
+449|8808|SWLA Tech Pirates|117.45|20-17|LA
+450|4398|Gladiators|117.22|31-17|MI
+451|1405|Finney Falcons|117.01|15-8|NY
+452|876|Thunder Robotics|117.0|13-12|ND
+453|9452|LHS Steel Stingers|116.98|26-20|CA
+454|6985|ENKA TECH|116.94|18-16|Türkiye
+455|2393|Robotichauns|116.91|20-18|TN
+456|8725|MistyPanther|116.71|36-9|Chinese Taipei
+457|8613|Barker Greybacks|116.46|24-9|Australia
+458|5454|Obsidian|116.22|25-16|AR
+459|6978|QuickStrike Niagara|116.11|21-26|Canada
+460|4728|ROCORI Robotics|116.07|22-18|MN
+461|2522|Royal Robotics|116.06|40-20|WA
+462|6237|Martin Motion|115.85|15-12|IL
+463|8706|MXS Bulldog Bots|115.6|24-20|NJ
+464|3136|O.R.C.A.|115.58|22-23|VA
+465|324|Chips|115.41|22-25|TX
+466|10349|Pontiac Firebirds|115.38|31-26|MI
+467|3637|The Daleks|115.36|38-23|NJ
+468|3297|Full Metal Jackets|115.26|29-15|MN
+469|1731|Fresta Valley Robotics Club|114.93|40-21|VA
+470|8429|Valence Robotics|114.92|36-27|NC
+471|3132|Thunder Down Under|113.99|11-3|Australia
+472|6121|RoboVikes|113.93|34-22|MI
+473|2872|CyberCats|113.91|16-7|NY
+474|4065|Nerds of Prey|113.91|40-26|FL
+475|696|Circuit Breakers|113.82|26-20|CA
+476|1305|Ice Cubed|113.82|26-22|Canada
+477|4027|Centre Punch|113.82|19-18|PA
+478|6500|GearCats|113.71|33-18|NC
+479|6377|Howdy Bots|113.50|27-20|TX
+480|5462|2Paw Robotics|113.12|35-23|MI
+481|1511|Rolling Thunder|113.05|24-11|NY
+482|8839|Shoshone Robotics|112.91|7-6|ID
+483|3539|Byting Bulldogs|112.89|41-17|MI
+484|7444|MOON STAR ROBOTICS|112.74|9-3|Türkiye
+485|4063|TriKzR4Kidz|112.62|25-21|TX
+486|4123|Tribe Robotics|112.62|31-15|CA
+487|10554|Team VIPER|112.47|23-22|Canada
+488|8013|Boston Lions|112.45|27-21|MA
+489|4467|Titanium Titans|112.27|11-10|PA
+490|386|Team Voltage|111.90|15-20|FL
+491|3986|Express-O|111.87|11-7|Canada
+492|4152|Hoya Robotics|111.75|28-19|Canada
+493|2847|The MegaHertz|111.63|29-15|MN
+494|3753|BulahBots!|111.60|23-13|LA
+495|6766|AtomStorm|111.53|18-21|China
+496|6721|Tindley Trailblazers|111.41|22-24|IN
+497|10079|Arrowdynamics|111.40|26-21|WA
+498|5740|Trojanators|111.39|14-11|PA
+499|619|Cavalier Robotics|111.26|37-22|VA
+500|8744|Leviathans|110.91|27-20|WI
+501|10014|REBELLION|110.62|33-30|TX
+502|5422|Stormgears|110.54|21-22|MA
+503|364|Team Fusion 364|110.34|26-20|MS
+504|829|The Digital Goats|110.22|23-22|IN
+505|1025|Impi Warriors|110.01|23-20|MI
+506|8085|MOJO|110.01|22-21|CT
+507|5427|Steel Talons|110.00|24-24|TX
+508|2135|Presentation Invasion|109.94|22-19|CA
+510|1477|Texas Torque|109.88|26-30|TX
+511|1939|THE KUHNIGHTS|109.86|26-13|MO
+512|418|Purple Haze|109.78|25-23|TX
+513|45|TechnoKats Robotics Team|109.65|26-22|IN
+514|2584|Flame of The West|109.31|22-18|CA
+515|4087|Voodoo Voltage|109.31|21-16|LA
+516|910|The Foley Freeze|109.27|35-22|MI
+517|9757|Mecha Marauders|109.17|38-22|MI
+518|8255|Robodogs|109.12|12-11|ND
+520|95|Grasshoppers|109.03|32-16|VT
+521|10385|Cycle-Breakers|108.85|23-23|TX
+522|744|Shark Attack|108.55|18-15|FL
+523|2373|The Crickets|108.55|13-13|OK
+524|840|Aragon Robotics Team|108.2|24-19|CA
+525|8576|Golden Warriors Robotics|108.13|27-19|TX
+526|9301|PrepaTec - MechRams|107.98|16-11|Mexico
+527|8841|OTTER|107.96|17-8|FL
+528|5046|Jacked Up Jackets|107.94|26-17|MI
+529|5409|Chargers|107.86|23-22|ON
+530|9029|Team NF|107.51|26-18|Türkiye
+531|8592|Newton Squared|107.15|25-20|VA
+532|4392|The Deceivers|106.76|24-20|MI
+533|6574|Ferradermis|106.52|24-20|WI
+534|1339|Angelbotics|106.42|17-12|CO
+535|7890|SeQuEnCe|106.36|38-23|NC
+536|247|Da Bears|106.15|22-23|MI
+537|4285|Camo-Bots|106.1|24-19|PA
+538|16|Bomb Squad|105.98|21-18|AR
+539|9400|BagelBytes|105.9|26-19|CA
+540|6962|Antares|105.53|27-20|CA
+541|3990|Tech for Kids|105.11|28-23|QC
+542|5505|V2 - Volts Squared|104.87|23-26|MI
+543|4415|EPIC Robotz|104.68|25-21|CA
+544|5829|Awtybots|104.63|35-26|TX
+545|7712|ACCN UMOJA|104.63|34-26|ON
+546|6419|Kernel Chaos|104.4|14-13|IA
+547|11118|The Baybies|104.2|13-9|China
+548|4|Team 4 ELEMENT|104.03|21-19|CA
+549|1727|REX|104.02|32-29|MD
+550|1188|The Ravens|103.78|26-24|MI
+551|5934|Crowbotics|103.78|10-6|IL
+552|3277|ProDigi|103.75|24-18|MN
+553|9726|Notus Pirates|103.63|13-15|ID
+554|1577|Steampunk|103.49|5-5|Israel
+555|957|SWARM|103.44|19-21|OR
+556|7902|Markham FireBirds|103.26|29-20|ON
+557|5024|Raider Robotics|103.23|23-23|ON
+558|9001|Delta Force|103.1|15-14|Romania
+559|1038|Lakota Robotics|103.05|12-12|OH
+560|226|Hammerheads|102.85|28-18|MI
+561|3158|PrepaTec - TECBOT|102.81|18-10|Mexico
+562|9545|Caracal Robotics|102.77|22-16|Türkiye
+563|6986|PPT Bots|102.76|6-5|China
+564|3176|Purple Precision|102.72|29-20|IN
+565|3310|Black Hawk Robotics|102.66|31-18|TX
+566|6948|EAGLES|102.3|15-13|Türkiye
+567|2506|Saber Robotics|102.11|20-22|WI
+568|9569|Milliken Mills Silver Knights|102.03|17-24|ON
+569|1810|CATATRONICS|101.97|12-12|KS
+570|6706|Golem|101.87|7-5|China
+571|1493|Falcons|101.8|4-6|NY
+572|4674|RoboJacks|101.68|22-15|MN
+573|4145|WorBots|101.64|15-12|OH
+574|6147|Tonkabots|101.61|24-16|MN
+575|1629|Garrett Coalition (GaCo)|101.53|33-23|MD
+576|2990|Hotwire|101.26|11-18|OR
+577|8724|Mayhem|101.24|33-21|NH
+578|7312|T3|101.03|22-22|TX
+579|3506|YETI Robotics|101.01|51-18|NC
+580|230|Gaelhawks|100.98|28-18|CT
+581|3882|Lunas|100.98|18-12|HI
+582|6487|Clockwork Knights|100.92|19-15|China
+583|4311|Swampscott Currents|100.86|19-20|MA
+584|2357|System Meltdown|100.5|19-19|MO
+585|3932|The Dirty Mechanics|100.3|21-17|FL
+586|233|The Pink Team|100.25|23-12|FL
+587|8051|TinkRex|100.16|23-19|WA
+588|1684|The Chimeras|99.87|31-24|MI
+589|624|CRyptonite|99.81|38-24|TX
+590|10416|Radical Raccoons|99.71|19-25|WA
+591|6352|LAUNCH TEAM|99.01|6-13|AZ
+592|5229|Heritage Hawkbots|98.99|24-19|MI
+593|5144|LISD TECHnicians|98.88|26-17|MI
+594|2199|Robo-Lions|98.79|39-18|MD
+595|3218|Panther Robotics|98.78|24-20|WA
+596|1512|The Big Red|98.75|21-24|NH
+597|5843|Flurb|98.74|26-19|MI
+598|3602|RoboMos|98.43|25-21|MI
+599|10291|MUTUM-X|98.4|12-11|Brazil
+600|1942|Cinderella Tel-Nof|98.32|0-0|Israel
+601|4920|Belle River Boltheads|98.11|31-15|ON
+602|5885|Villanova WiredCats|97.97|27-20|ON
+603|753|High Desert Droids|97.79|22-20|OR
+604|573|Mech Warriors|97.64|27-27|MI
+605|3668|TroBots|97.59|35-18|MI
+606|9418|Pastabots|97.51|26-23|TX
+607|3603|Cyber Coyotes|97.51|35-24|MI
+608|3322|Eagle Evolution|97.33|22-22|MI
+609|6829|Ignite Robotics|97.33|35-23|GA
+610|492|Titan Robotics Club|96.95|30-14|WA
+611|10224|MAV MECHANICS|96.9|27-19|VA
+612|263|Aftershock|96.88|19-16|NY
+613|8079|River Robotics Team|96.68|20-10|Türkiye
+701|5823|ACE|87.98|14-11|China
+702|7674|RaiderBots|87.59|21-23|NH
+703|1880|Warriors of East Harlem|87.39|26-20|NY
+704|4738|Patribots|87.38|21-21|CA
+705|2521|SERT|87.35|17-24|OR
+706|8806|Our Lady of Providence Dream League|87.21|15-14|Chinese Taipei
+707|8503|Raid One|87.13|14-10|Chinese Taipei
+708|3360|Hyperion|87.10|13-5|QC
+709|2654|Polar Rams|87.06|13-9|MN
+710|7840|EMONER ROBOTICS|86.96|19-16|Türkiye
+711|86|Team Resistance|86.87|13-9|FL
+712|8116|Hatchet Robotics|86.82|39-26|IN
+713|10973|Sea Raiders|86.76|23-20|MA
+714|894|The Power Chargers|86.67|24-19|MI
+715|7425|Green Valley Robotics|86.64|13-10|NV
+716|3735|VorTX|86.58|30-14|TX
+717|1076|PiHi Samurai|86.56|27-29|MI
+718|4855|Ramageddon|86.40|21-22|MI
+719|3959|Mech Tech|86.39|9-15|AL
+720|11242|Golden Eagle Mechanics|86.30|24-27|TX
+721|1014|Bad Robots|86.24|15-19|OH
+722|228|GUS|86.22|21-25|CT
+723|8852|Drew Robotics|86.12|14-16|CA
+724|2403|Plasma Robotics|86.11|23-18|AZ
+725|9067|The Goonies|86.03|17-22|AR
+726|8032|SAASquatch Robotics|85.79|16-13|WA
+727|8515|Photon|85.75|18-17|TX
+728|8152|Escouade|85.69|9-5|QC
+729|8817|Buccaneer Robotics|85.52|18-18|FL
+730|6502|DARC SIDE|85.49|23-20|NC
+1001|5665|FENERBAHÇE DOGUS SPARC|67.05|30-24|Türkiye
+1002|6081|Digital Dislocators|66.89|13-16|MI
+1003|303|The T.E.S.T. Team|66.85|19-32|NJ
+1004|555|Montclair Robotics|66.81|24-25|NJ
+1005|2175|The Fighting Calculators|66.73|6-6|MN
+1006|1056|Hot Rocks|66.68|11-12|HI
+1007|7692|Beach Bums 7692|66.64|15-14|MI
+1008|620|Warbots|66.54|19-23|VA
+1009|8088|Bionic Panthers|66.54|20-23|TX
+1010|6868|Cadet Robotics|66.52|4-7|NY
+1011|4192|Jaguar Robotics|66.50|20-24|TX
+1012|2876|DevilBotz|66.42|20-24|MA
+1013|757|Crazy Train|66.41|15-10|KS
+1014|5472|The Wyld Stallyns|66.38|17-21|FL
+1015|5499|Bearium|66.23|15-13|CA
+1016|6083|Overlooking|66.14|9-4|Chinese Taipei
+1017|4198|RoboCats|66.05|7-15|MN
+1018|223|Xtreme Heat|66.01|21-21|NJ
+1019|2016|Mighty Monkey Wrenches|65.98|21-22|NJ
+1020|7501|Golden Gears|65.87|12-18|MI
+1021|5554|The Poros Robotics|65.79|0-0|Israel
+1022|4125|Confidential|65.72|20-31|OR
+1023|2443|Blue Thunder|65.70|25-15|HI
+1024|7111|RAD Robotics|65.67|17-11|AL
+1025|25|Raider Robotix|65.61|23-20|NJ
+1026|7858|Warriors|65.53|11-8|MN
+1027|7541|Maple River|65.51|6-7|MN
+1028|9110|SESI SENAI ATOMIIC|65.45|13-13|Brazil
+1029|1250|Gator-Bots|65.31|10-18|MI
+1030|3492|Putnam Area Robotics Team|65.26|24-13|WV
+1401|10114|Phantom Talons|48.79|17-21|Chinese Taipei
+1402|8410|Oyster River Overdrive|48.77|11-16|NH
+1403|10423|CB Tech|48.68|14-13|WA
+1404|2626|Evolution|48.66|7-6|Canada
+1405|3424|Corax|48.66|10-12|UT
+1406|8421|CRUSADERS|48.63|10-16|NH
+1407|1168|Malvern Robotics|48.62|23-20|PA
+1408|6358|The Buhlean Operators|48.62|10-19|ID
+1409|5314|Ice Bots|48.61|13-13|MI
+1410|5436|Cyber Cats|48.58|12-17|MI
+1411|6569|Gladiators|48.54|11-16|MI
+1412|9773|Cardinal Robotics|48.53|17-11|MI
+1413|10622|Gwinn ModelBots|48.44|16-15|MI
+1414|1884|Griffins|48.39|8-16|United Kingdom
+1415|10991|PioBytes|48.39|22-34|OR
+1416|2875|CyberHawks|48.36|9-13|NY
+1417|9021|uSELESScASE|48.28|5-8|Türkiye
+1418|2204|Rambots|48.14|17-25|CA
+1419|1891|Bullbots|48.11|14-17|ID
+1420|1197|TorBots|48.09|14-30|CA
+1421|8179|Robo Falcons|48.04|20-24|MI
+1422|8151|Wildfire|47.99|15-13|Türkiye
+1423|9480|The Gear Bears|47.96|19-20|GA
+1424|2643|Dark Matter|47.93|12-16|CA
+1425|9586|Denbot|47.92|10-16|CO
+1426|3550|Robotronix|47.87|7-6|Canada
+1427|11318|Freedom Robotics|47.83|27-26|VA
+1428|8577|Georgia Cyber Academy Champions|47.81|16-24|GA
+1429|5274|Wolverine Robotics|47.80|12-17|CA
+1430|8544|Reinforcement|47.77|18-25|MA
+1800|5113|Combustible Lemons|38.49|17-24|NJ
+1802|8387|MECH Mavericks|38.46|5-5|NV
+1803|2977|Sir LancerBots|38.45|11-12|MN
+1804|4085|Technical Difficulties|38.44|8-15|OH
+1805|3623|The Robomingos|38.41|20-23|MA
+1806|9233|Luminous Robotics Team|38.35|12-15|Türkiye
+1807|5025|Pacific Steel|38.35|13-14|CA
+1808|5822|WolfByte|38.35|9-14|IL
+1809|4173|Bark Bots|38.33|8-18|WA
+1810|8056|Laissez Faire|38.33|11-13|Türkiye
+1811|11483|Red Line Robotics|38.32|22-20|MA
+1812|4384|Benzene Bots|38.31|13-15|MI
+1813|8334|Titan Robotics|38.26|12-15|CO
+1814|8331|Carson Graham Secondary|38.24|6-7|Canada
+1815|7659|HNMCS Robotics|38.21|15-25|Canada
+1816|677|Murphy's Outlaws|38.2|5-12|OH
+1817|4731|MONARCH-E|38.19|13-11|Mexico
+1818|5424|Rogue Robots|38.18|14-20|MI
+1819|8145|Tech Warriors|38.16|15-11|OH
+1820|9661|Huskie STEAM|38.15|14-18|MI
+1821|10298|LUVER CONTROL|38.15|7-6|Brazil
+1822|5347|Gryphons|38.15|12-16|MA
+1823|4809|Black Knight Robotics|38.14|5-5|MO
+1824|4219|RED!|38.12|13-17|TX
+1825|11131|Brainstorm|38.1|20-21|ME
+1826|10143|Northeast Vikings|38.09|11-18|PA
+1827|11037|Clarksville Cyber Storm|38.08|3-7|TN
+1828|2853|Hot Spot Robotics|38.06|8-6|HI
+1829|3205|Patriots|38.04|9-17|MA
+2200|5298|E-TECH CHARGERS|30.62|11-12|NY
+2202|8084|ALFA ROBOTICS|30.62|13-16|Türkiye
+2203|11157|Winnacunnet|30.61|12-13|NH
+2204|8349|Newbotics|30.6|24-33|ON
+2205|6243|Energy NERDs|30.59|11-18|TX
+2206|9578|Player One|30.55|12-15|WI
+2207|5902|The Wire Clippers|30.53|14-17|NH
+2208|7497|MARAHO|30.52|7-7|Chinese Taipei
+2209|4328|Furious Falcons|30.5|13-14|TX
+2210|10231|Midnight Circuits|30.47|14-28|SC
+2211|11022|RISING STAR ROBOTIC TEAM|30.46|6-7|Türkiye
+2212|5212|TAMSformers Robotics|30.46|4-8|TX
+2213|5689|CK Cyber Pack|30.46|15-27|ON
+2214|9180|Ursa Major Robotics|30.42|8-7|BC
+2215|6343|Steel Ridge|30.41|11-20|WA
+2216|5530|Greenhills Lawnmowers|30.39|12-19|MI
+2217|1329|The ViPrs|30.38|7-7|MO
+2218|6122|Potential Energy|30.37|10-20|MI
+2219|2667|Knights of the Valley|30.36|7-13|MN
+2220|451|Cat Attack Robotics|30.35|7-14|OH
+2221|3042|Cobalt Catalysts|30.35|11-13|MN
+2222|1635|TECHNOTICS|30.32|4-4|NY
+2223|8590|Cavbotics|30.31|19-25|VA
+2224|691|Project 691 Robotics|30.31|8-16|CA
+2225|7414|Retrobotics|30.3|14-16|PA
+2226|3958|Schrodinger's Cat|30.29|14-27|MA
+2227|1828|BoxerBots|30.27|7-14|AZ
+2228|10606|The Foley Flare|30.27|9-17|MI
+2229|4964|Roosevelt Robotics|30.26|15-10|CA
+2601|10522|Sun Prairie Robotics (SPR)|24.69|11-13|WI
+2602|10576|ASHINA|24.68|5-7|Türkiye
+2603|10651|Gear Cats|24.68|15-14|MI
+2604|9137|Bionic Vipers|24.67|8-19|TX
+2605|3142|Aperture|24.67|10-18|NJ
+2606|3341|Option 16|24.67|12-13|CA
+2607|1775|Tigerbytes|24.65|10-14|MO
+2608|9212|Infinity|24.63|11-15|MI
+2609|9719|ThunderTech Robotics|24.62|6-6|Canada
+2610|60|Kingman Bionic Bulldogs|24.6|9-11|AZ
+2611|3140|Flagship|24.6|6-14|TN
+2612|5866|Fe Iron Tigers|24.59|10-16|TX
+2613|10947|Antioch Rising|24.58|3-8|Türkiye
+2614|9037|HHS Black Ops|24.57|10-10|UT
+2615|9751|OIA PantherBots|24.56|13-15|MI
+2616|11252|1st ACT|24.56|7-18|VA
+2617|5538|Vikingbots|24.56|13-17|MI
+2618|4735|Prepa Tecmilenio - DEROF|24.55|6-8|Mexico
+2619|527|Red Dragons|24.54|4-5|NY
+2620|11362|RoBumpers|24.54|11-20|Canada
+2621|3871|THE Trojan Robotics|24.51|4-5|MN
+2622|4835|Junkyard Dawgs|24.51|11-15|MI
+2623|10497|Bayou Bots|24.5|3-5|LA
+2625|5525|Alcona Tool Cats|24.47|9-15|MI
+2626|10999|Cezeri Robotics|24.46|3-6|Türkiye
+2627|5205|FullMetal-Jackets|24.46|11-15|MI
+2628|7104|The Bot Brothers|24.46|9-17|GA
+2629|10961|Hyper Wave|24.39|5-13|AL
+2630|9993|Off-Season Demo Team 9993|24.37|1-4|NH
+3001|2969|Aftermath|19.64|12-26|TX
+3002|9478|Robo-Colts HSISL|19.62|8-17|TX
+3003|7818|Williamston High School Vespidae|19.55|6-18|MI
+3004|7298|TOROS|19.53|6-4|Türkiye
+3005|10583|Stampede|19.52|5-19|NC
+3006|9709|Isotope Robotics|19.51|8-17|VA
+3007|9176|Greenspire Steel Sturgeons|19.50|9-17|MI
+3008|4998|TESLA|19.49|10-17|MI
+3009|10512|Beyond Grad Greyhounds|19.48|3-5|PA
+3010|2988|RoboRiot|19.47|9-15|VA
+3011|3610|Islanders|19.41|7-15|MN
+3012|10454|UPC Raptors|19.40|5-3|NY
+3013|5878|The Great Lakers|19.39|8-16|MI
+3014|6489|Bronco Bolts|19.39|2-6|LA
+3015|6895|Mechanical Madness 4-H|19.37|9-15|NH
+3016|10958|SWing|19.35|5-5|South Korea
+3017|5060|IgKnight|19.35|6-7|MO
+3018|3340|Union City EagleX Robotics|19.34|8-18|NJ
+3019|9735|Electric Dragons|19.32|7-17|MI
+3020|1763|Paséliens|19.24|5-15|MO
+3021|9698|Zipbombs of BGCNF|19.23|5-4|FL
+3022|4332|RoboCats|19.23|12-19|TX
+3023|9468|Team Sirius|19.22|9-12|Türkiye
+3024|9542|Technodogs|19.22|10-14|MI
+3025|3944|All Knights|19.21|4-5|AZ
+3026|6463|Robotic Reapers|19.20|6-12|NY
+3027|6805|Quack Attack|19.19|3-5|NE
+3028|10424|ANKA ROBOTICS|19.17|4-6|Türkiye
+3029|4156|Ninjaneers|19.17|4-8|IL
+3030|5648|Melbourne RoboCats 5648|19.15|3-10|Australia
+3401|8588|Tech Devils|12.79|10-16|NJ
+3402|11176|RoboRabbits|12.77|3-6|AZ
+3403|10642|Comstock Colts|12.76|17-13|MI
+3404|9193|Short-Circuited Eagles|12.72|9-15|CT
+3405|5876|ARTEMIS|12.68|4-8|Australia
+3406|2410|Blue Valley CAPS Metal Mustangs|12.58|8-13|KS
+3407|11331|TarryBots|12.58|6-4|NY
+3408|8140|RoboManiacs|12.58|1-10|OH
+3409|9555|TEAM HELIOS|12.54|1-6|Türkiye
+3410|4664|Butler Bots|12.53|3-6|MN
+3411|5872|Wiredcats|12.51|7-8|FL
+3412|11241|PRAIRIE|12.42|1-7|IA
+3413|8573|Rogue-Rangers LEGACY|12.39|15-16|TX
+3414|7864|The Bear Bots|12.35|5-6|MN
+3415|9622|GRIDLOCK|12.3|4-6|OH
+3416|6132|Iron Rangers|12.27|3-8|MN
+3417|4630|Robodragons|12.26|3-7|TN
+3418|6032|Pirate Robotics|12.26|3-5|OH
+3419|10452|RoboLions|12.24|5-13|NY
+3420|9247|SainTech Robotics|12.23|11-12|Türkiye
+3421|4973|Gator Gears|12.2|8-16|CA
+3422|5143|Raw Steel|12.19|4-5|MN
+3423|9479|CREDENTIS|12.18|3-8|Türkiye
+3424|11366|Red Devil's Redemption|12.18|10-16|PA
+3425|7190|Vancouver Rainstorms|12.16|7-7|Canada
+3426|854|Iron Bears|12.11|14-29|Canada
+3427|8105|Apollo Black Cat|12.09|3-7|Mexico
+3428|6155|ElektraBots|12.08|2-10|TX
+3429|10444|Ursa Major|12.06|11-17|OR
+3430|3807|Overland BlazerBots|12.06|8-14|CO`;
+  var TOTAL = 3724, CLAIM_MS = 5 * 60 * 60 * 1000;
+  var $ = function (s) { return document.querySelector(s); };
+  var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- data ---------- */
+  var CA_PROV = { ON: 1, QC: 1, AB: 1, BC: 1, MB: 1, SK: 1, NS: 1, NB: 1 };
+  function place(loc) {
+    if (/^[A-Z]{2}$/.test(loc)) return CA_PROV[loc] ? loc + ", Canada" : loc + ", USA";
+    return loc;
+  }
+  var TEAMS = [], BY_NUM = {};
+  RAW.split("\n").forEach(function (line) {
+    line = line.trim(); if (!line || line.charAt(0) === "#") return;
+    var p = line.split("|"); if (p.length < 6) return;
+    var rank = +p[0], num = +p[1], epa = +p[3];
+    if (!rank || !num || !(epa >= 0) || BY_NUM[num]) return;
+    var t = { rank: rank, num: num, name: p[2], epa: epa, wl: p[4], loc: place(p[5]), tier: tierOf(rank) };
+    TEAMS.push(t); BY_NUM[num] = t;
+  });
+  function tierOf(rank) {
+    if (rank <= 50) return "mythic";
+    if (rank <= 112) return "legendary";
+    if (rank <= 559) return "rare";
+    if (rank <= 1490) return "uncommon";
+    return "common";
+  }
+  var ORDER = ["mythic", "legendary", "rare", "uncommon", "common"];
+  var TIERS = {
+    common: { label: "Common", color: "#aab8c4", parts: 10, pow: 4 },
+    uncommon: { label: "Uncommon", color: "#e6eef3", parts: 26, pow: 6 },
+    rare: { label: "Rare", color: "#ffc850", parts: 60, pow: 8 },
+    legendary: { label: "Legendary", color: "#b478ff", parts: 140, pow: 11 },
+    mythic: { label: "Mythic", color: "#3cffdc", parts: 260, pow: 13 }
+  };
+  var POOL = {}; ORDER.forEach(function (t) { POOL[t] = []; });
+  TEAMS.forEach(function (t) { POOL[t.tier].push(t); });
+  $("#poolN").textContent = "about " + (Math.round(TEAMS.length / 50) * 50).toLocaleString("en-US");
+
+  /* ---------- random + rolls ---------- */
+  function rand() {
+    try { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; } catch (e) { return Math.random(); }
+  }
+  function pick(arr) { return arr[Math.floor(rand() * arr.length)]; }
+  function weighted(w) { var r = rand(), s = 0, k; for (k in w) { s += w[k]; if (r < s) return k; } return k; }
+  var SLOT_ODDS = { common: .70, uncommon: .22, rare: .07, legendary: .01 };
+  var LAST_ODDS = { rare: .85, legendary: .15 };
+  function rollPack(demo, rng) {
+    var saved = rand; if (rng) rand = rng;
+    try {
+      var cards = [], used = {};
+      for (var i = 0; i < 5; i++) {
+        var tier;
+        if (i < 4) tier = weighted(SLOT_ODDS);
+        else {
+          var mythicChance = demo ? .2 : 1 / 20000;
+          if (rand() < mythicChance) tier = "mythic";
+          else tier = weighted(demo ? { rare: .6, legendary: .4 } : LAST_ODDS);
+        }
+        var team, tries = 0;
+        do { team = pick(POOL[tier]); tries++; } while (used[team.num] && tries < 12);
+        used[team.num] = 1;
+        cards.push({ num: team.num, tier: tier });
+      }
+      return cards;
+    } finally { rand = saved; }
+  }
+  function newSerial(owned) {
+    var s, tries = 0;
+    do { s = String(1 + Math.floor(rand() * 999999)).padStart(6, "0"); tries++; } while (owned.indexOf(s) >= 0 && tries < 20);
+    return s;
+  }
+
+  /* ---------- storage ---------- */
+  var KEY = "frcpacks.v1", storageOk = true, S;
+  function fresh() { return { v: 1, packs: 2, nextClaimAt: 0, inv: {}, pending: null, opened: 0, muted: false, demo: true }; }
+  function readSave() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) { var o = JSON.parse(raw); if (o && o.v === 1 && isFinite(o.packs) && o.packs >= 0 && o.packs < 10000 && isFinite(o.nextClaimAt) && o.inv && typeof o.inv === "object" && !Array.isArray(o.inv)) { o.packs = Math.floor(o.packs); o.opened = isFinite(o.opened) ? o.opened : 0; Object.keys(o.inv).forEach(function (k) { if (!Array.isArray(o.inv[k])) delete o.inv[k]; else o.inv[k] = o.inv[k].filter(function (x) { return /^\d{1,6}$/.test(x); }); }); return o; } }
+    } catch (e) { storageOk = false; }
+    return null;
+  }
+  function load() { return readSave() || fresh(); }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); storageOk = true; } catch (e) { storageOk = false; } $("#storageWarn").hidden = storageOk; }
+  S = load();
+  try { localStorage.setItem(KEY + ".probe", "1"); localStorage.removeItem(KEY + ".probe"); } catch (e) { storageOk = false; }
+  $("#storageWarn").hidden = storageOk;
+  if (S.pending && (!S.pending.cards || !S.pending.cards.length || S.pending.cards.some(function (c) { return !BY_NUM[c.num]; }))) { S.pending = null; }
+
+  /* Two tabs share one save. Re-read it whenever this tab is idle, so a stale tab can't overwrite the other one's cards. */
+  function sync() {
+    if (state !== "idle" && state !== "done") return;
+    var other = readSave(); if (!other || other.pending) return;
+    S = other; paintStatus(); paintToggles(); if (!vBinder.hidden) paintBinder(); if (state === "idle") paintIdle();
+  }
+  addEventListener("storage", function (e) { if (e.key === KEY) sync(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
+  addEventListener("focus", sync);
+
+  /* ---------- sound ---------- */
+  var ac = null;
+  function actx() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = false; } } if (ac && ac.state === "suspended") ac.resume(); return ac; }
+  function blip(f, d, type, v, when) {
+    if (S.muted) return; var a = actx(); if (!a) return;
+    var t = a.currentTime + (when || 0), o = a.createOscillator(), g = a.createGain();
+    o.type = type || "sine"; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v || .1, t + .01); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + d + .02);
+  }
+  function noise(d, v, lo) {
+    if (S.muted) return; var a = actx(); if (!a) return;
+    var n = Math.floor(a.sampleRate * d), buf = a.createBuffer(1, n, a.sampleRate), data = buf.getChannelData(0);
+    for (var i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    var s = a.createBufferSource(); s.buffer = buf;
+    var bp = a.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = lo; bp.Q.value = .7;
+    var g = a.createGain(); g.gain.value = v; s.connect(bp); bp.connect(g); g.connect(a.destination); s.start();
+  }
+  function chord(freqs, step, type, v) { freqs.forEach(function (f, i) { blip(f, .5, type, v, i * step); }); }
+  function buzz(ms) { try { if (!S.muted && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+  var sfx = {
+    rip: function () { noise(.35, .5, 2200); blip(180, .15, "sawtooth", .05); buzz([20, 30, 40]); },
+    deal: function () { blip(320, .07, "triangle", .07); },
+    claim: function () { chord([392, 523, 659], .08, "triangle", .09); },
+    flip: function (tier) {
+      if (tier === "common") blip(440, .09, "triangle", .08);
+      else if (tier === "uncommon") chord([523, 659], .07, "triangle", .08);
+      else if (tier === "rare") { chord([523, 659, 784], .07, "triangle", .1); buzz(30); }
+      else if (tier === "legendary") { chord([392, 523, 659, 784, 988], .08, "square", .06); noise(.6, .25, 3000); buzz([30, 40, 60]); }
+      else { chord([261, 392, 523, 659, 784, 1046, 1318], .09, "square", .06); blip(65, 1.2, "sine", .3); noise(1.1, .3, 1800); buzz([40, 60, 40, 60, 120]); }
+    }
+  };
+
+  /* ---------- particles ---------- */
+  var cv = $("#fx"), cx = cv.getContext("2d"), parts = [], raf = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function size() { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; }
+  size(); addEventListener("resize", size);
+  var PALETTE = ["#ff3d9a", "#ffe14a", "#38ffd2", "#4d7bff", "#c04dff", "#ffffff"];
+  function burst(x, y, n, color, pow, rainbow) {
+    if (RM) n = Math.min(n, 12);
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, s = (.3 + Math.random()) * pow;
+      parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - pow * .35, life: 1, dec: .008 + Math.random() * .014, sz: 3 + Math.random() * 6, c: rainbow ? PALETTE[i % PALETTE.length] : color, rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
+    }
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+  function tick() {
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, innerWidth, innerHeight);
+    for (var i = parts.length - 1; i >= 0; i--) {
+      var p = parts[i]; p.x += p.vx; p.y += p.vy; p.vy += .22; p.vx *= .985; p.life -= p.dec; p.rot += p.vr;
+      if (p.life <= 0) { parts.splice(i, 1); continue; }
+      cx.save(); cx.globalAlpha = Math.max(p.life, 0); cx.translate(p.x, p.y); cx.rotate(p.rot); cx.fillStyle = p.c; cx.fillRect(-p.sz / 2, -p.sz / 3, p.sz, p.sz * .66); cx.restore();
+    }
+    raf = parts.length ? requestAnimationFrame(tick) : 0;
+    if (!raf) cx.clearRect(0, 0, innerWidth, innerHeight);
+  }
+  var stage = $("#stage"), flashEl = $("#flash"), banner = $("#banner");
+  function shake(big) { if (RM) return; var c = big ? "shake-big" : "shake"; stage.classList.remove("shake", "shake-big"); void stage.offsetWidth; stage.classList.add(c); setTimeout(function () { stage.classList.remove(c); }, big ? 850 : 550); }
+  function flash() { if (RM) return; flashEl.classList.remove("go"); void flashEl.offsetWidth; flashEl.classList.add("go"); }
+  function say(msg, ms) { banner.textContent = msg; banner.classList.add("show"); clearTimeout(say.t); say.t = setTimeout(function () { banner.classList.remove("show"); }, ms || 3200); }
+
+  /* ---------- card markup ---------- */
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function robot(num, mythic) {
+    var hue = (num * 137) % 360, v = num % 3;
+    var body = mythic ? "#27d3c3" : "hsl(" + hue + ",65%,48%)", dark = mythic ? "#0b4a52" : "hsl(" + hue + ",60%,26%)", bump = mythic ? "#f5fbfa" : "hsl(" + hue + ",75%,70%)";
+    var K = "#071318", s = '<svg viewBox="0 0 200 130" aria-hidden="true"><ellipse cx="100" cy="122" rx="82" ry="6" fill="rgba(0,0,0,.28)"/>';
+    s += '<rect x="14" y="78" width="172" height="30" rx="8" fill="' + bump + '" stroke="' + K + '" stroke-width="3"/>';
+    if (v === 0) {
+      s += '<rect x="28" y="44" width="120" height="38" rx="6" fill="' + body + '" stroke="' + K + '" stroke-width="3"/><rect x="40" y="52" width="38" height="22" rx="3" fill="' + dark + '" opacity=".75"/>' +
+        '<path d="M138 50 L168 18 L182 28 L152 62 Z" fill="' + dark + '" stroke="' + K + '" stroke-width="3" stroke-linejoin="round"/><circle cx="175" cy="23" r="8" fill="' + bump + '" stroke="' + K + '" stroke-width="3"/>';
+    } else if (v === 1) {
+      s += '<rect x="30" y="50" width="104" height="32" rx="6" fill="' + body + '" stroke="' + K + '" stroke-width="3"/><rect x="118" y="8" width="16" height="78" rx="3" fill="' + dark + '" stroke="' + K + '" stroke-width="3"/>' +
+        '<rect x="106" y="14" width="40" height="14" rx="3" fill="' + bump + '" stroke="' + K + '" stroke-width="3"/><circle cx="52" cy="66" r="9" fill="' + dark + '" opacity=".75"/>';
+    } else {
+      s += '<rect x="26" y="40" width="108" height="42" rx="10" fill="' + body + '" stroke="' + K + '" stroke-width="3"/><circle cx="62" cy="61" r="12" fill="' + dark + '" opacity=".75"/><circle cx="102" cy="61" r="12" fill="' + dark + '" opacity=".75"/>' +
+        '<path d="M134 56 L176 56 L176 76 L134 76 Z" fill="' + bump + '" stroke="' + K + '" stroke-width="3" stroke-linejoin="round"/><rect x="150" y="46" width="10" height="34" rx="2" fill="' + dark + '" stroke="' + K + '" stroke-width="3"/>';
+    }
+    s += '<circle cx="46" cy="110" r="14" fill="#16262d" stroke="' + K + '" stroke-width="3"/><circle cx="46" cy="110" r="5" fill="#9fb0c0"/><circle cx="154" cy="110" r="14" fill="#16262d" stroke="' + K + '" stroke-width="3"/><circle cx="154" cy="110" r="5" fill="#9fb0c0"/></svg>';
+    return s;
+  }
+  function pct(rank) { var p = rank / TOTAL * 100; return (p < 1 ? p.toFixed(2) : p.toFixed(1)) + "%"; }
+  function nameScale(n) { var l = n.length; return l <= 11 ? 1 : l <= 15 ? .82 : l <= 20 ? .66 : l <= 26 ? .54 : .46; }
+  function attachTilt(slot) {
+    var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
+    slot.addEventListener("pointermove", function (e) {
+      var r = slot.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      tilt.classList.remove("rest");
+      tilt.style.setProperty("--ry", ((px - .5) * 26) + "deg"); tilt.style.setProperty("--rx", ((.5 - py) * 22) + "deg");
+      inner.style.setProperty("--mx", (px * 100).toFixed(1)); inner.style.setProperty("--my", (py * 100).toFixed(1));
+    });
+    function leave() { tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
+    slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave);
+  }
+  /* c = { num, tier, serial, isNew, copy } */
+  function cardEl(c, opts) {
+    opts = opts || {}; var t = BY_NUM[c.num], T = TIERS[c.tier];
+    var slot = document.createElement("div");
+    slot.className = "slot" + (opts.faceUp ? " flipped" : " in") + (!opts.faceUp && c.tier !== "common" ? " tease" : "") + (opts.button ? " btn" : "");
+    slot.style.setProperty("--tc", T.color);
+    if (opts.button) { slot.setAttribute("role", "button"); slot.tabIndex = 0; }
+    slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
+    slot.innerHTML =
+      '<div class="float"><div class="tilt rest"><div class="flip card" data-tier="' + c.tier + '">' +
+      '<div class="face back"><span>FRC<br>PACKS</span></div>' +
+      '<div class="face front"><div class="inner" style="--nl:' + nameScale(t.name) + '">' +
+      '<div class="row"><span class="num">' + t.num + '</span><span class="tier">' + T.label + '</span></div>' +
+      '<div class="name">' + esc(t.name) + '</div>' +
+      '<div class="art"><span class="year">2026</span>' + robot(t.num, c.tier === "mythic") + '<span class="ph">Photo soon</span></div>' +
+      '<div class="where">' + esc(t.loc) + ' · Top ' + pct(t.rank) + '</div>' +
+      '<div class="stats"><div class="stat"><small>EPA</small><b>' + t.epa.toFixed(1) + '</b></div><div class="stat"><small>Rank</small><b>#' + t.rank + '</b></div><div class="stat"><small>W-L</small><b>' + esc(t.wl) + '</b></div></div>' +
+      '<div class="foot"><span>No. ' + esc(c.serial || "------") + '</span><span>Statbotics 2026</span></div>' +
+      '<div class="foil"></div><div class="glare"></div></div></div></div></div></div>';
+    if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
+    if (opts.count > 1) { var b = document.createElement("div"); b.className = "count-badge"; b.textContent = "×" + opts.count; slot.appendChild(b); }
+    attachTilt(slot);
+    return slot;
+  }
+
+  /* ---------- status bar, timer, claim ---------- */
+  var packCount = $("#packCount"), timerEl = $("#timer"), claimBtn = $("#claim");
+  function fmt(ms) { var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0"); }
+  function clampClock() { var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS; }
+  function paintStatus() {
+    clampClock();
+    packCount.textContent = S.packs;
+    var left = S.nextClaimAt - Date.now();
+    if (left <= 0) { timerEl.textContent = "A free pack is ready"; claimBtn.hidden = false; }
+    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(left) + "</b>"; claimBtn.hidden = true; }
+    var e = $("#emptyText"); if (e) e.textContent = left <= 0 ? "Claim your free pack above." : "Next free pack in " + fmt(left) + ".";
+  }
+  setInterval(function () { paintStatus(); if (state === "idle") paintIdle(); }, 1000);
+  claimBtn.addEventListener("click", function () {
+    if (Date.now() < S.nextClaimAt) return; actx();
+    S.packs++; S.nextClaimAt = Date.now() + CLAIM_MS; save(); paintStatus(); sfx.claim();
+    var r = claimBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 18, "#27d3c3", 5);
+    if (state === "idle") { paintIdle(true); }
+  });
+
+  /* ---------- open flow ---------- */
+  var packWrap = $("#packWrap"), pack = $("#pack"), activeBox = $("#active"), pullBox = $("#pull"), hint = $("#hint"), sub = $("#sub");
+  var nextBtn = $("#next"), againBtn = $("#again"), tearFill = $("#tearFill"), emptyPack = $("#emptyPack");
+  var state = "idle", deck = [], idx = -1, cur = null;
+  function setHud(h, s) { hint.textContent = h; sub.textContent = s; }
+  function paintIdle(arrive) {
+    if (state !== "idle") return;
+    if (S.packs > 0) {
+      var was = packWrap.classList.contains("hidden");
+      packWrap.classList.remove("hidden", "tear"); tearFill.style.width = "0"; emptyPack.hidden = true;
+      if (was && arrive) { packWrap.classList.remove("arrive"); void packWrap.offsetWidth; packWrap.classList.add("arrive"); }
+      setHud("Drag across the top to tear it open", "2026 Season pack · 5 cards");
+    } else {
+      packWrap.classList.add("hidden"); emptyPack.hidden = false;
+      setHud("", "Come back when your next pack is ready");
+    }
+    paintStatus();
+  }
+  function commitRip() {
+    var latest = readSave(); if (latest && !latest.pending) S = latest;
+    if (S.packs < 1) return false;
+    var rolled = rollPack(S.demo), cards = rolled.map(function (c) {
+      var arr = S.inv[c.num] || (S.inv[c.num] = []);
+      var serial = newSerial(arr), isNew = arr.length === 0; arr.push(serial);
+      return { num: c.num, tier: c.tier, serial: serial, isNew: isNew, copy: arr.length };
+    });
+    S.packs--; S.opened++; S.pending = { cards: cards, revealed: 0 }; save();
+    return true;
+  }
+  function openPack() {
+    if (state !== "idle" || S.packs < 1) return; actx(); state = "ripping";
+    if (!commitRip()) { state = "idle"; return; }
+    tearFill.style.width = "92%"; sfx.rip(); shake(false); paintStatus();
+    packWrap.classList.add("tear");
+    var r = packWrap.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .16, 30, "#d6fffa", 6);
+    setHud("", "Dealing");
+    setTimeout(function () { packWrap.classList.add("hidden"); beginReveal(0); }, 650);
+  }
+  function beginReveal(from) {
+    deck = S.pending.cards; idx = from - 1; activeBox.innerHTML = ""; pullBox.innerHTML = "";
+    for (var i = 0; i < from; i++) pullBox.appendChild(cardEl(deck[i], { faceUp: true, ribbon: false }));
+    deal();
+  }
+  function deal() {
+    idx++; cur = cardEl(deck[idx], { button: true, ribbon: true }); activeBox.appendChild(cur); sfx.deal();
+    state = "await-flip"; nextBtn.hidden = true; againBtn.hidden = true;
+    try { cur.focus({ preventScroll: true }); } catch (e) {}
+    setHud("Tap the card to flip it", "Card " + (idx + 1) + " of 5");
+  }
+  function flipCard() {
+    if (state !== "await-flip") return; state = "flipping";
+    var c = deck[idx], T = TIERS[c.tier], last = idx === 4, t = BY_NUM[c.num];
+    cur.classList.add("flipped"); cur.classList.remove("tease"); sfx.flip(c.tier);
+    S.pending.revealed = idx + 1; save();
+    setTimeout(function () {
+      if (cur._ribbon) cur._ribbon.hidden = false;
+      var r = cur.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (c.tier === "common" || c.tier === "uncommon") burst(x, y, T.parts, T.color, T.pow);
+      else if (c.tier === "rare") { burst(x, y, T.parts, T.color, T.pow); shake(false); }
+      else if (c.tier === "legendary") { burst(x, y, T.parts, T.color, T.pow); burst(x, y, 60, null, 9, true); shake(true); flash(); document.body.classList.add("takeover"); say("LEGENDARY · " + t.name + " (" + t.num + ")", 3000); }
+      else {
+        document.body.classList.add("takeover"); flash(); shake(true); burst(x, y, 120, null, 14, true);
+        setTimeout(function () { burst(x - 60, y - 40, 90, null, 11, true); burst(x + 60, y - 40, 90, null, 11, true); sfx.deal(); }, 350);
+        setTimeout(function () { burst(x, y - 80, 140, null, 12, true); }, 800);
+        say("MYTHIC PULL · " + t.name + " (" + t.num + ") · No. " + c.serial, 5200);
+      }
+    }, 380);
+    setTimeout(function () {
+      if (last) finish(c, t);
+      else { state = "await-next"; setHud(T.label, "Card " + (idx + 1) + " of 5"); nextBtn.hidden = false; }
+    }, 800);
+  }
+  function finish(c, t) {
+    state = "done"; S.pending = null; save();
+    var best = deck.slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier); })[0];
+    var bt = BY_NUM[best.num];
+    setHud(best.tier === "mythic" ? bt.name + ". Mythic." : "Best pull: " + bt.name, TIERS[best.tier].label + (best.tier === "mythic" ? " · unlimited copies, each numbered" : ""));
+    againBtn.textContent = S.packs > 0 ? "Open another pack" : "Back to the table"; againBtn.hidden = false; nextBtn.hidden = true;
+    try { againBtn.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function advance() {
+    if (state !== "await-next") return; state = "moving";
+    nextBtn.hidden = true; pullBox.appendChild(cardEl(deck[idx], { faceUp: true })); cur.remove();
+    document.body.classList.remove("takeover"); deal();
+  }
+  function again() {
+    activeBox.innerHTML = ""; pullBox.innerHTML = ""; againBtn.hidden = true; nextBtn.hidden = true;
+    document.body.classList.remove("takeover"); banner.classList.remove("show");
+    state = "idle"; deck = []; idx = -1; cur = null; paintIdle(true);
+    try { if (S.packs > 0) pack.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function onCard() { if (state === "await-flip") flipCard(); else if (state === "await-next") advance(); }
+  activeBox.addEventListener("click", onCard);
+  activeBox.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCard(); } });
+  nextBtn.addEventListener("click", advance);
+  againBtn.addEventListener("click", again);
+
+  var drag = null;
+  pack.addEventListener("pointerdown", function (e) { if (state !== "idle") return; actx(); drag = { x: e.clientX, moved: false }; try { pack.setPointerCapture(e.pointerId); } catch (er) {} });
+  pack.addEventListener("pointermove", function (e) {
+    var r = pack.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+    pack.style.setProperty("--pry", ((px - .5) * 20) + "deg"); pack.style.setProperty("--prx", ((.5 - py) * 16) + "deg"); pack.style.setProperty("--sheen", (px * 160 - 20) + "%");
+    if (drag && state === "idle") {
+      var p = Math.max(0, Math.min(1, (e.clientX - drag.x) / (r.width * .85)));
+      if (Math.abs(e.clientX - drag.x) > 6) drag.moved = true;
+      tearFill.style.width = (p * 92) + "%";
+      if (p >= 1) { drag = null; openPack(); }
+    }
+  });
+  pack.addEventListener("pointerup", function () { if (drag && state === "idle") { var m = drag.moved; drag = null; if (!m) openPack(); else tearFill.style.width = "0"; } });
+  pack.addEventListener("pointerleave", function () { pack.style.setProperty("--pry", "0deg"); pack.style.setProperty("--prx", "0deg"); });
+  pack.addEventListener("pointercancel", function () { drag = null; tearFill.style.width = "0"; });
+  pack.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPack(); } });
+
+  /* ---------- binder ---------- */
+  var gridEl = $("#grid"), tiersEl = $("#tiers"), moreBtn = $("#more"), missingBtn = $("#missingBtn"), filter = "all", shown = 48, showMissing = false;
+  missingBtn.addEventListener("click", function () { showMissing = !showMissing; shown = 48; paintBinder(); });
+  function ownedList() {
+    var out = [];
+    Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length) out.push(t); });
+    out.sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    return out;
+  }
+  function paintBinder() {
+    var owned = ownedList(), counts = {}; ORDER.forEach(function (t) { counts[t] = 0; });
+    owned.forEach(function (t) { counts[t.tier]++; });
+    var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
+    $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
+    tiersEl.innerHTML = "";
+    var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
+    all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
+    all.onclick = function () { filter = "all"; shown = 48; paintBinder(); }; tiersEl.appendChild(all);
+    ORDER.forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (filter === t ? " on" : ""); b.setAttribute("aria-pressed", String(filter === t));
+      b.style.setProperty("--tc", TIERS[t].color);
+      b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b><em>' + counts[t] + '/' + POOL[t].length + '</em><span class="bar"><i style="width:' + (POOL[t].length ? counts[t] / POOL[t].length * 100 : 0) + '%"></i></span>';
+      b.onclick = function () { filter = t; shown = 48; paintBinder(); }; tiersEl.appendChild(b);
+    });
+    missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
+    var list = (showMissing && filter !== "all") ? POOL[filter] : owned.filter(function (t) { return filter === "all" || t.tier === filter; });
+    gridEl.innerHTML = "";
+    if (!list.length) {
+      var e = document.createElement("div"); e.className = "empty-binder"; e.style.gridColumn = "1 / -1";
+      e.innerHTML = owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
+      gridEl.appendChild(e);
+    }
+    list.slice(0, shown).forEach(function (t) {
+      var serials = S.inv[t.num] || [];
+      if (!serials.length) { var g = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); g.classList.remove("in"); g.classList.add("ghost"); gridEl.appendChild(g); return; }
+      var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true, button: true, count: serials.length });
+      el.classList.remove("in");
+      el.addEventListener("click", function () { inspect(t); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(t); } });
+      gridEl.appendChild(el);
+    });
+    moreBtn.hidden = list.length <= shown;
+  }
+  moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
+
+  var modal = $("#modal"), modalIn = $("#modalIn"), lastFocus = null;
+  function inspect(t) {
+    var serials = S.inv[t.num] || [];
+    modalIn.innerHTML = "";
+    var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true }); el.classList.remove("in"); modalIn.appendChild(el);
+    var info = document.createElement("div"); info.className = "serials";
+    info.innerHTML = "<b>" + serials.length + (serials.length === 1 ? " copy" : " copies") + "</b> owned<br>Serials: " + serials.map(function (s) { return "No. " + esc(s); }).join(" · ");
+    modalIn.appendChild(info);
+    var row = document.createElement("div"); row.className = "cta-row";
+    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    if (t.tier === "mythic" || t.tier === "legendary") {
+      var cp = document.createElement("button"); cp.type = "button"; cp.className = "cta ghost"; cp.textContent = "Copy brag text";
+      cp.onclick = function () {
+        var txt = "I own " + t.name + " (team " + t.num + "), a " + TIERS[t.tier].label + " 2026 card, No. " + serials[0] + ", on FRC Packs.";
+        try { navigator.clipboard.writeText(txt).then(function () { cp.textContent = "Copied"; }, function () { cp.textContent = txt; }); } catch (e) { cp.textContent = txt; }
+      };
+      row.appendChild(cp);
+    }
+    modalIn.appendChild(row);
+    lastFocus = document.activeElement; modal.hidden = false; close.focus();
+  }
+  function closeModal() { modal.hidden = true; modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) closeModal(); });
+
+  /* ---------- tabs and settings ---------- */
+  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder");
+  function show(which) {
+    var b = which === "binder";
+    vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
+    $("#status").hidden = b;
+    if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} } else { try { history.replaceState(null, "", "#open"); } catch (e) {} }
+  }
+  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); };
+  var gear = $("#gear"), settings = $("#settings");
+  gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
+  var muteBtn = $("#mute"), demoBtn = $("#demoLuck");
+  function paintToggles() { muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); }
+  muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
+  demoBtn.onclick = function () { S.demo = !S.demo; save(); paintToggles(); };
+  $("#demoPack").onclick = function () { S.packs++; save(); paintStatus(); if (state === "idle") paintIdle(true); };
+  $("#skipTimer").onclick = function () { S.nextClaimAt = 0; save(); paintStatus(); };
+  var resetBtn = $("#reset"), armed = 0;
+  resetBtn.onclick = function () {
+    if (!armed) { armed = 1; resetBtn.textContent = "Tap again to delete"; setTimeout(function () { armed = 0; resetBtn.textContent = "Reset collection"; }, 3500); return; }
+    armed = 0; resetBtn.textContent = "Reset collection"; var d = S.demo, m = S.muted; S = fresh(); S.demo = d; S.muted = m; save();
+    state = "idle"; activeBox.innerHTML = ""; pullBox.innerHTML = ""; againBtn.hidden = true; nextBtn.hidden = true; document.body.classList.remove("takeover");
+    paintIdle(true); if (!vBinder.hidden) paintBinder();
+  };
+  paintToggles();
+
+  /* ---------- boot ---------- */
+  function boot() {
+    var hash = (location.hash || "").replace("#", "");
+    if (S.pending) {
+      state = "revealing"; packWrap.classList.add("hidden"); emptyPack.hidden = true;
+      say("Picking up your last pack", 2400); beginReveal(Math.min(S.pending.revealed || 0, 4));
+    } else { paintIdle(false); }
+    paintStatus(); show(hash === "binder" ? "binder" : "open");
+  }
+  window.__frc = { S: function () { return S; }, rollPack: rollPack, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, state: function () { return state; } };
+  boot();
+})();
+</script>
