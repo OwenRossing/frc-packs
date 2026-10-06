@@ -1,27 +1,10 @@
 // Play-test bot for the FRC Packs prototype. Run: NODE_PATH=$(npm root -g) node test/play.js
 const { chromium } = require('playwright');
 const path = require('path');
-const url = 'file://' + path.resolve(__dirname, '..', 'index.html');
-const out = path.resolve(__dirname, 'out');
+const { url, out, openOne, waitState } = require('./lib');
 require('fs').mkdirSync(out, { recursive: true });
 const fails = [];
 const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg); } else console.log('ok  ', msg); };
-
-async function openOne(p, { drag = false } = {}) {
-  if (drag) {
-    const b = await p.locator('#pack').boundingBox();
-    await p.mouse.move(b.x + 10, b.y + b.height * .1); await p.mouse.down();
-    await p.mouse.move(b.x + b.width * .5, b.y + b.height * .1, { steps: 6 });
-    await p.mouse.move(b.x + b.width * 1.0, b.y + b.height * .1, { steps: 6 });
-    await p.mouse.up();
-  } else await p.click('#pack', { force: true });
-  await p.waitForFunction(() => window.__frc.state() === 'await-flip', null, { timeout: 5000 });
-  for (let i = 0; i < 5; i++) {
-    await p.click('#active', { force: true });
-    await p.waitForFunction(i => ['await-next', 'done'].includes(window.__frc.state()), i, { timeout: 5000 });
-    if (i < 4) { await p.click('#active', { force: true }); await p.waitForFunction(() => window.__frc.state() === 'await-flip', null, { timeout: 5000 }); }
-  }
-}
 
 (async () => {
   const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
@@ -60,16 +43,30 @@ async function openOne(p, { drag = false } = {}) {
   await p.click('#claim', { force: true }).catch(() => {});
   check(await p.locator('#packCount').textContent() === '3', 'double claim does nothing');
 
-  // 3. play three packs through the UI (click, drag, click), demo luck on
-  await openOne(p); await p.screenshot({ path: out + '/02-pack1-done.png' });
+  // 3. play three packs through the UI (button, swipe-cut + swipe cards, button), demo luck on
+  check((await p.locator('.pick').count()) === 10, 'shelf shows 10 packs');
+  await p.screenshot({ path: out + '/01b-shelf.png' });
+  await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.waitForTimeout(600);
+  await p.screenshot({ path: out + '/01c-inspect.png' });
+  { const b = await p.locator('#inspect').boundingBox();
+    await p.mouse.move(b.x + b.width / 2, b.y + b.height * .6); await p.mouse.down();
+    await p.mouse.move(b.x + b.width / 2 + 280, b.y + b.height * .6, { steps: 10 }); await p.mouse.up(); await p.waitForTimeout(600);
+    check(await p.evaluate(() => document.querySelector('#inspect').classList.contains('away')), 'dragging the pack turns it to the back');
+    await p.screenshot({ path: out + '/01d-pack-back.png' });
+    check((await p.locator('#packCount').textContent()) === '3', 'turning the pack over spends nothing');
+    await p.click('#backBtn'); await waitState(p, 'select'); }
+  await openOne(p); await p.waitForTimeout(700); await p.screenshot({ path: out + '/02-pack1-done.png' });
+  check((await p.locator('#summary .slot').count()) === 5, 'summary shows all 5 cards');
   check(await p.locator('#packCount').textContent() === '2', 'opening a pack uses one');
-  await p.click('#again'); await p.waitForTimeout(300);
-  await openOne(p, { drag: true });
-  await p.click('#again'); await p.waitForTimeout(300);
+  await p.click('#again'); await waitState(p, 'select');
+  await openOne(p, { swipe: true, swipeCards: true, shelfIndex: 2 });
+  await p.click('#again'); await waitState(p, 'select');
   await openOne(p);
-  check(await p.locator('#again').textContent() === 'Back to the table', 'last pack offers back-to-table');
+  check(await p.locator('#again').textContent() === 'Back to the packs', 'last pack offers back to the packs');
   await p.click('#again'); await p.waitForTimeout(300);
-  check(await p.locator('#emptyPack').isVisible(), 'empty state shows when out of packs');
+  check((await p.locator('#hint').textContent()) === 'Out of packs', 'shelf says out of packs');
+  await p.locator('.pick').nth(5).click({ force: true }); await p.waitForTimeout(200);
+  check((await p.evaluate(() => window.__frc.state())) === 'select', 'an empty shelf will not open');
   await p.screenshot({ path: out + '/03-empty.png' });
   check((await p.evaluate(() => window.__frc.S().opened)) === 3, 'opened counter is 3');
 
@@ -90,13 +87,13 @@ async function openOne(p, { drag = false } = {}) {
 
   // 5. resume mid-reveal after reload
   await p.click('#tabOpen'); await p.click('#gear'); await p.click('#demoPack'); await p.click('#gear');
-  await p.click('#pack', { force: true }); await p.waitForFunction(() => window.__frc.state() === 'await-flip');
-  await p.click('#active', { force: true }); await p.waitForFunction(() => window.__frc.state() === 'await-next');
+  await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.click('#openBtn'); await waitState(p, 'stack');
+  await p.click('#stack', { force: true }); await p.waitForTimeout(600); await waitState(p, 'stack');
   const before = await p.evaluate(() => JSON.stringify(window.__frc.S().pending.cards.map(c => c.num)));
   await p.reload(); await p.waitForTimeout(500);
-  const after = await p.evaluate(() => { const s = window.__frc.S(); return { st: window.__frc.state(), cards: s.pending && JSON.stringify(s.pending.cards.map(c => c.num)), rev: s.pending && s.pending.revealed }; });
-  check(after.cards === before && after.rev === 1, 'closing mid-pack resumes the same cards at card 2');
-  check(after.st === 'await-flip', 'resumed pack waits for a flip');
+  const after = await p.evaluate(() => { const s = window.__frc.S(); return { st: window.__frc.state(), cards: s.pending && JSON.stringify(s.pending.cards.map(c => c.num)), rev: s.pending && s.pending.revealed, left: document.querySelectorAll('#stack .slot').length }; });
+  check(after.cards === before && after.rev === 1 && after.left === 4, 'closing mid-pack resumes the same cards at card 2 ' + JSON.stringify(after));
+  check(after.st === 'stack', 'resumed pack shows the stack');
   await p.screenshot({ path: out + '/06-resume.png' });
 
   // 6. corrupt storage, blocked storage
@@ -128,13 +125,17 @@ async function openOne(p, { drag = false } = {}) {
     const ov1 = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     await q.screenshot({ path: out + `/07-open-${vp.w}.png` });
     await q.evaluate(() => { const s = window.__frc.S(); s.packs = 5; });
-    await openOne(q); await q.waitForTimeout(1500);
+    await q.screenshot({ path: out + `/07b-shelf-${vp.w}.png` });
+    await q.locator('.pick').nth(5).click({ force: true }); await waitState(q, 'inspect'); await q.waitForTimeout(600);
+    const ovI = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    await q.screenshot({ path: out + `/07c-inspect-${vp.w}.png` }); await q.click('#backBtn'); await waitState(q, 'select');
+    await openOne(q); await q.waitForTimeout(1200);
     const ov2 = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     await q.screenshot({ path: out + `/08-done-${vp.w}.png` });
     await q.click('#tabBinder'); await q.waitForTimeout(300);
     const ov3 = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     await q.screenshot({ path: out + `/09-binder-${vp.w}.png` });
-    check(ov1 <= 0 && ov2 <= 0 && ov3 <= 0, `no horizontal scroll at ${vp.w}px (${ov1},${ov2},${ov3})`);
+    check(ov1 <= 0 && ovI <= 0 && ov2 <= 0 && ov3 <= 0, `no horizontal scroll at ${vp.w}px (${ov1},${ovI},${ov2},${ov3})`);
     await c.close();
   }
   await b.close();
