@@ -4,7 +4,7 @@ const path = require('path');
 const { url, out, openOne, waitState } = require('./lib');
 const fails = [];
 const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg); } else console.log('ok  ', msg); };
-const seed = (p, o) => p.evaluate(o => localStorage.setItem('frcpacks.v1', JSON.stringify(o)), o);
+const seed = (p, o) => p.evaluate(o => localStorage.setItem('frcpacks.cmp26', JSON.stringify(o)), o);
 const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now() + 3e6, inv: {}, pending: null, opened: 0, muted: true, demo: true }, x);
 
 (async () => {
@@ -47,7 +47,7 @@ const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now()
     const cardsA = await a.evaluate(() => Object.values(window.__frc.S().inv).reduce((x, y) => x + y.length, 0));
     await t2.bringToFront(); await t2.waitForTimeout(200);
     await t2.locator('.pick').nth(5).click({ force: true }); await waitState(t2, 'inspect'); await t2.click('#openBtn'); await waitState(t2, 'stack');
-    const st = await t2.evaluate(() => { const s = JSON.parse(localStorage.getItem('frcpacks.v1')); return { packs: s.packs, cards: Object.values(s.inv).reduce((x, y) => x + y.length, 0) }; });
+    const st = await t2.evaluate(() => { const s = JSON.parse(localStorage.getItem('frcpacks.cmp26')); return { packs: s.packs, cards: Object.values(s.inv).reduce((x, y) => x + y.length, 0) }; });
     check(cardsA === 5 && st.cards === 10 && st.packs === 1, `second tab adds to the first tab's cards (5 then ${st.cards}, packs left ${st.packs})`); await c.close(); }
 
   // reduced motion

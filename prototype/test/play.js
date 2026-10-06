@@ -97,10 +97,10 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   await p.screenshot({ path: out + '/06-resume.png' });
 
   // 6. corrupt storage, blocked storage
-  await p.evaluate(() => localStorage.setItem('frcpacks.v1', '{not json'));
+  await p.evaluate(() => localStorage.setItem('frcpacks.cmp26', '{not json'));
   await p.reload(); await p.waitForTimeout(300);
   check(await p.locator('#packCount').textContent() === '2', 'corrupt save falls back to a fresh start');
-  await p.evaluate(() => localStorage.setItem('frcpacks.v1', JSON.stringify({ v: 1, packs: 1, nextClaimAt: Date.now() + 99 * 3600e3, inv: {}, pending: { cards: [{ num: 99999999, tier: 'rare' }], revealed: 0 }, muted: false, demo: true })));
+  await p.evaluate(() => localStorage.setItem('frcpacks.cmp26', JSON.stringify({ v: 1, packs: 1, nextClaimAt: Date.now() + 99 * 3600e3, inv: {}, pending: { cards: [{ num: 99999999, tier: 'rare' }], revealed: 0 }, muted: false, demo: true })));
   await p.reload(); await p.waitForTimeout(300);
   check((await p.evaluate(() => window.__frc.S().pending)) === null, 'pending with unknown team is dropped');
   check((await p.evaluate(() => window.__frc.S().nextClaimAt - Date.now())) <= 5 * 3600e3 + 2000, 'clock set far ahead is clamped to 5h');

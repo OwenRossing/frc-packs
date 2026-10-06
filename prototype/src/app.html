@@ -331,7 +331,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     <div class="more"><button type="button" class="cta small ghost" id="more" hidden>Show more</button></div>
   </section>
 
-  <p class="note"><b>Prototype.</b> Team stats are 2026 Statbotics EPA for a sample of <span id="poolN">about 850</span> of 3,724 ranked teams (top 613 in full, plus slices lower down). Robots are drawings, not photos yet. Packs, serials and the claim timer live in this browser only, so a real build needs a server to make them cheat-proof.</p>
+  <p class="note"><b>Prototype.</b> The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robots are drawings until photos are hooked up. Packs, serials and the claim timer live in this browser only, so a real build needs a server to make them cheat-proof.</p>
 </div>
 
 <div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-label="Card details"><div class="modal-in" id="modalIn"></div></div>
@@ -340,23 +340,33 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 (function () {
   "use strict";
   var RAW = `/*TEAMS*/`;
-  var TOTAL = 3724, CLAIM_MS = 5 * 60 * 60 * 1000, SHELF_N = 10;
+  var TOTAL = 0, CLAIM_MS = 5 * 60 * 60 * 1000, SHELF_N = 10;
   var $ = function (s) { return document.querySelector(s); };
   var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /* ---------- data ---------- */
   var CA_PROV = { ON: 1, QC: 1, AB: 1, BC: 1, MB: 1, SK: 1, NS: 1, NB: 1 };
   function place(loc) { if (/^[A-Z]{2}$/.test(loc)) return CA_PROV[loc] ? loc + ", Canada" : loc + ", USA"; return loc; }
-  function tierOf(rank) { if (rank <= 50) return "mythic"; if (rank <= 112) return "legendary"; if (rank <= 559) return "rare"; if (rank <= 1490) return "uncommon"; return "common"; }
+  /* Data: team|name|champs EPA|champs W-L|division|season EPA rank|location. Mythic is the season's top 50 who came to Houston;
+     everyone else is ranked by EPA at Champs and split into Legendary, Rare, Uncommon and Common. */
   var TEAMS = [], BY_NUM = {};
   RAW.split("\n").forEach(function (line) {
     line = line.trim(); if (!line || line.charAt(0) === "#") return;
-    var p = line.split("|"); if (p.length < 6) return;
-    var rank = +p[0], num = +p[1], epa = +p[3];
-    if (!rank || !num || !(epa >= 0) || BY_NUM[num]) return;
-    var t = { rank: rank, num: num, name: p[2], epa: epa, wl: p[4], loc: place(p[5]), tier: tierOf(rank) };
+    var p = line.split("|"); if (p.length < 7) return;
+    var num = +p[0]; if (!num || BY_NUM[num]) return;
+    var epa = parseFloat(p[2]), srank = parseInt(p[5], 10);
+    var t = { num: num, name: p[1], epa: isFinite(epa) ? epa : null, wl: /^\d+-\d+$/.test(p[3]) ? p[3] : "–", div: p[4], srank: isFinite(srank) ? srank : 0, loc: p[6] === "-" ? "" : place(p[6]) };
     TEAMS.push(t); BY_NUM[num] = t;
   });
+  TOTAL = TEAMS.length;
+  TEAMS.sort(function (a, b) { return (b.epa == null ? -1 : b.epa) - (a.epa == null ? -1 : a.epa) || a.num - b.num; });
+  var below = 0;
+  TEAMS.forEach(function (t, i) {
+    t.rank = i + 1;
+    if (t.srank && t.srank <= 50) t.tier = "mythic";
+    else { below++; t.tier = below <= 50 ? "legendary" : below <= 170 ? "rare" : below <= 320 ? "uncommon" : "common"; }
+  });
+  function tierOf(num) { return BY_NUM[num] && BY_NUM[num].tier; }
   var ORDER = ["mythic", "legendary", "rare", "uncommon", "common"];
   var TIERS = {
     common: { label: "Common", color: "#aab8c4", parts: 10, pow: 4, gems: "◆" },
@@ -367,7 +377,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
   };
   var POOL = {}; ORDER.forEach(function (t) { POOL[t] = []; });
   TEAMS.forEach(function (t) { POOL[t.tier].push(t); });
-  $("#poolN").textContent = "about " + (Math.round(TEAMS.length / 50) * 50).toLocaleString("en-US");
+  $("#poolN").textContent = TEAMS.length;
 
   /* ---------- random + rolls ---------- */
   function rand() { try { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; } catch (e) { return Math.random(); } }
@@ -395,7 +405,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
   function newSerial(owned) { var s, n = 0; do { s = String(1 + Math.floor(rand() * 999999)).padStart(6, "0"); n++; } while (owned.indexOf(s) >= 0 && n < 20); return s; }
 
   /* ---------- storage ---------- */
-  var KEY = "frcpacks.v1", storageOk = true, S;
+  var KEY = "frcpacks.cmp26", storageOk = true, S;
   function fresh() { return { v: 1, packs: 2, nextClaimAt: 0, inv: {}, pending: null, opened: 0, muted: false, demo: true }; }
   function readSave() {
     try {
@@ -547,7 +557,6 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     }
     return s + "</svg>";
   }
-  function pct(rank) { var p = rank / TOTAL * 100; return (p < 1 ? p.toFixed(2) : p.toFixed(1)) + "%"; }
   function nameScale(n) { var l = n.length; return l <= 10 ? 1 : l <= 13 ? .84 : l <= 17 ? .7 : l <= 22 ? .58 : .5; }
   function attachTilt(slot) {
     var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
@@ -575,12 +584,12 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
       '<div class="face back">' + BACK_SVG + '</div>' +
       '<div class="face front"><div class="inner' + (full ? " full" : "") + '" style="--nl:' + nameScale(t.name) + '">' +
       (full ? art : "") +
-      '<div class="hdr"><span class="nm">' + esc(t.name) + '</span><span class="hp"><small>EPA</small>' + Math.round(t.epa) + '</span></div>' +
+      '<div class="hdr"><span class="nm">' + esc(t.name) + '</span><span class="hp"><small>EPA</small>' + (t.epa == null ? "–" : Math.round(t.epa)) + '</span></div>' +
       (full ? "" : art) +
-      '<div class="sub-l"><span>Team ' + t.num + ' · ' + esc(t.loc) + '</span><span>2026</span></div>' +
+      '<div class="sub-l"><span>Team ' + t.num + ' · ' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span>CMP 2026</span></div>' +
       '<div class="moves">' +
-        '<div class="mv"><i></i><span>Season record</span><b>' + esc(t.wl) + '</b></div>' +
-        '<div class="mv"><i></i><span>World rank · top ' + pct(t.rank) + '</span><b>#' + t.rank + '</b></div>' +
+        '<div class="mv"><i></i><span>Champs record</span><b>' + esc(t.wl) + '</b></div>' +
+        '<div class="mv"><i></i><span>Champs EPA rank</span><b>#' + t.rank + '</b></div>' +
       '</div>' +
       '<div class="ft"><span class="rar">' + T.gems + '</span><span>No. ' + esc(c.serial || "------") + '</span><span>' + T.label + '</span></div>' +
       '<div class="foil"></div><div class="spark"></div><div class="glare"></div></div></div></div></div></div>';
@@ -591,17 +600,24 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
   }
 
   /* ---------- packs ---------- */
-  var PACK_HUES = [175, 205, 260, 320, 20, 140, 230, 0, 290, 45];
-  function packHTML(feat, hue, back) {
+  var TROPHY = '<svg viewBox="0 0 180 130" aria-hidden="true"><g stroke="#3a2600" stroke-width="2.5" stroke-linejoin="round">' +
+    '<path d="M62 26 Q40 26 42 44 Q44 60 64 62 M118 26 Q140 26 138 44 Q136 60 116 62" fill="none" stroke-width="8"/>' +
+    '<path d="M62 18 H118 V44 Q118 78 90 84 Q62 78 62 44 Z" fill="#ffd34d"/>' +
+    '<rect x="82" y="84" width="16" height="14" fill="#e9b52f"/><rect x="66" y="98" width="48" height="14" rx="3" fill="#ffd34d"/><rect x="58" y="112" width="64" height="10" rx="3" fill="#e9b52f"/></g>' +
+    '<path d="M62 26 Q40 26 42 44 Q44 60 64 62 M118 26 Q140 26 138 44 Q136 60 116 62" fill="none" stroke="#ffd34d" stroke-width="3"/>' +
+    '<path d="M70 26 Q72 56 86 70" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round" opacity=".55"/>' +
+    '<text x="90" y="56" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="20" fill="#3a2600">2026</text></svg>';
+  var PACK_HUE = 222;
+  function packHTML(back) {
     var front = '<div class="pk-face pk-front"><div class="pk-top"></div><div class="pk-body"><div class="pk-cover">' +
-      '<div class="pk-set">2026 Season</div><div class="pk-logo">FRC<br>PACKS</div>' +
-      '<div class="pk-hero"><div class="burst"></div><svg viewBox="0 0 180 130" aria-hidden="true">' + robotSVG(feat.num) + '</svg></div>' +
-      '<div class="pk-feat">Featuring ' + feat.num + '</div></div></div></div>';
-    var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Season</h3>' +
-      '<div>5 cards. The last card is always Rare or better.</div>' +
+      '<div class="pk-set">2026 Championship</div><div class="pk-logo">FRC<br>PACKS</div>' +
+      '<div class="pk-hero"><div class="burst"></div>' + TROPHY + '</div>' +
+      '<div class="pk-feat">Houston · 8 divisions</div></div></div></div>';
+    var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Championship</h3>' +
+      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better.</div>' +
       '<div class="odds"><span>Common</span><b>70%</b><span>Uncommon</span><b>22%</b><span>Rare</span><b>7%</b><span>Legendary</span><b>1%</b><span>Mythic</span><b>' + (S.demo ? "1 in 5*" : "1 in 20,000") + '</b></div>' +
-      '<small>Per card in slots 1 to 4, Mythic per pack. Every pack on the shelf has the same odds; the cover is just for luck.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
-    return '<div class="pk" style="--h:' + hue + '">' + front + b + '</div>';
+      '<small>Per card in slots 1 to 4, Mythic per pack. Every pack on the shelf is the same pack.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
+    return '<div class="pk" style="--h:' + PACK_HUE + '">' + front + b + '</div>';
   }
 
   /* ---------- status bar, timer, claim ---------- */
@@ -633,11 +649,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     stackView.hidden = which !== "stack"; counterEl.hidden = which !== "stack"; summaryEl.hidden = which !== "summary"; sumBtns.hidden = which !== "summary";
     document.body.classList.toggle("focus", which === "inspect");
   }
-  function newShelf() {
-    var mythics = POOL.mythic.slice(), out = [];
-    for (var i = 0; i < SHELF_N && mythics.length; i++) out.push({ feat: mythics.splice(Math.floor(rand() * mythics.length), 1)[0], hue: PACK_HUES[i % PACK_HUES.length] });
-    return out;
-  }
+  function newShelf() { var out = []; for (var i = 0; i < SHELF_N; i++) out.push({}); return out; }
   function paintSelectHud() {
     if (S.packs > 0) setHud("Pick a pack", S.packs === 1 ? "1 pack to open" : S.packs + " packs to open");
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
@@ -650,8 +662,8 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
       shelfPacks = newShelf(); shelf.innerHTML = ""; dots.innerHTML = ""; lastCenter = -1;
       shelfPacks.forEach(function (p, i) {
         var b = document.createElement("button"); b.type = "button"; b.className = "pick"; b.setAttribute("role", "listitem");
-        b.setAttribute("aria-label", "Pack " + (i + 1) + " of " + shelfPacks.length + ", featuring team " + p.feat.num);
-        b.innerHTML = packHTML(p.feat, p.hue, false);
+        b.setAttribute("aria-label", "2026 Championship pack " + (i + 1) + " of " + shelfPacks.length);
+        b.innerHTML = packHTML(false);
         b.addEventListener("click", function () { choose(i); });
         b.addEventListener("focus", function () { try { b.scrollIntoView({ inline: "center", block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} });
         shelf.appendChild(b); dots.appendChild(document.createElement("i"));
@@ -680,9 +692,8 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     if (state !== "select") return; actx();
     if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
-    var p = shelfPacks[i];
     inspectEl.className = "inspect"; rotY = 0; rotX = 0;
-    inspectEl.innerHTML = '<div class="lift"><div class="rot" id="rot">' + packHTML(p.feat, p.hue, true) + '</div></div><div class="cuthint"><span>Swipe to open</span></div><div class="cutline" id="cutline"></div>';
+    inspectEl.innerHTML = '<div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>Swipe to open</span></div><div class="cutline" id="cutline"></div>';
     showOnly("inspect");
     setHud("Swipe across the top to open", "Drag the pack to turn it over");
     try { $("#openBtn").focus({ preventScroll: true }); } catch (e) {}
@@ -902,7 +913,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     if (t.tier === "mythic" || t.tier === "legendary") {
       var cp = document.createElement("button"); cp.type = "button"; cp.className = "cta ghost"; cp.textContent = "Copy brag text";
       cp.onclick = function () {
-        var txt = "I own " + t.name + " (team " + t.num + "), a " + TIERS[t.tier].label + " 2026 card, No. " + serials[0] + ", on FRC Packs.";
+        var txt = "I own " + t.name + " (team " + t.num + "), a " + TIERS[t.tier].label + " 2026 Championship card, No. " + serials[0] + ", on FRC Packs.";
         try { navigator.clipboard.writeText(txt).then(function () { cp.textContent = "Copied"; }, function () { cp.textContent = txt; }); } catch (e) { cp.textContent = txt; }
       };
       row.appendChild(cp);
