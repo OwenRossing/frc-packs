@@ -6,9 +6,10 @@ const st = p => p.evaluate(() => window.__frc.state());
 exports.st = st;
 exports.waitState = (p, s, timeout = 5000) => p.waitForFunction(s => window.__frc.state() === s, s, { timeout });
 
-// Pick a pack from the shelf, open it (swipe the top or press the button), then deal through the stack to the summary.
+// Pick a pack from the shelf (unless one is already in hand), open it (swipe the top or press the button), then deal through the stack to the summary.
 exports.openOne = async (p, { swipe = false, shelfIndex = 5, swipeCards = false } = {}) => {
-  await p.locator('.pick').nth(shelfIndex).click({ force: true });
+  // "Open another pack" hands you a pack straight away, so only pick from the shelf when it is showing.
+  if ((await st(p)) === 'select') await p.locator('.pick').nth(shelfIndex).click({ force: true });
   await exports.waitState(p, 'inspect');
   if (swipe) {
     await p.waitForTimeout(550);

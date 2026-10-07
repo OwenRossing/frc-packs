@@ -58,10 +58,20 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   await openOne(p); await p.waitForTimeout(700); await p.screenshot({ path: out + '/02-pack1-done.png' });
   check((await p.locator('#summary .slot').count()) === 5, 'summary shows all 5 cards');
   check(await p.locator('#packCount').textContent() === '2', 'opening a pack uses one');
-  await p.click('#again'); await waitState(p, 'select');
-  await openOne(p, { swipe: true, swipeCards: true, shelfIndex: 2 });
-  await p.click('#again'); await waitState(p, 'select');
-  await openOne(p);
+  await p.click('#again'); await waitState(p, 'inspect');
+  check(true, 'open another pack goes straight to a pack in hand');
+  await p.click('#backBtn'); await waitState(p, 'select');
+  await openOne(p, { swipe: true, swipeCards: true });
+  await p.click('#again'); await waitState(p, 'inspect');
+  // reveal all: skip the rest of the stack and land on the summary with every card
+  await p.click('#openBtn'); await waitState(p, 'stack');
+  check(await p.locator('#skipBtn').isVisible(), 'reveal all is offered during the stack');
+  await p.click('#skipBtn'); await waitState(p, 'summary');
+  check((await p.locator('#summary .slot').count()) === 5 && !(await p.evaluate(() => window.__frc.S().pending)), 'reveal all lands on the summary and finishes the pack');
+  check(!(await p.locator('#skipBtn').isVisible()), 'reveal all hides on the summary');
+  check(/of 515 collected/.test(await p.locator('#sub').textContent()), 'summary shows collection progress');
+  const dotN = await p.evaluate(() => Object.keys(window.__frc.S().unseen).length);
+  check(dotN > 0 && (await p.locator('#tabDot').textContent()) === String(dotN), 'binder tab counts new teams (' + dotN + ')');
   check(await p.locator('#again').textContent() === 'Back to the packs', 'last pack offers back to the packs');
   await p.click('#again'); await p.waitForTimeout(300);
   check((await p.locator('#hint').textContent()) === 'Out of packs', 'shelf says out of packs');
@@ -76,6 +86,7 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check(inv === 15, 'collection survives reload (15 cards): ' + inv);
   await p.click('#tabBinder'); await p.waitForTimeout(300);
   await p.screenshot({ path: out + '/04-binder.png' });
+  check((await p.locator('#grid .ribbon:visible').count()) > 0, 'binder marks newly pulled teams');
   const cells = await p.locator('#grid .slot').count();
   check(cells > 0 && cells <= 15, 'binder shows owned cards: ' + cells);
   await p.locator('#grid .slot').first().click(); await p.waitForTimeout(300);
@@ -86,7 +97,8 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   await p.click('.tiers .chip:nth-child(2)'); await p.waitForTimeout(100);
 
   // 5. resume mid-reveal after reload
-  await p.click('#tabOpen'); await p.click('#gear'); await p.click('#demoPack'); await p.click('#gear');
+  await p.click('#tabOpen');
+  check((await p.evaluate(() => Object.keys(window.__frc.S().unseen).length)) === 0 && !(await p.locator('#tabDot').isVisible()), 'leaving the binder clears the new marks'); await p.click('#gear'); await p.click('#demoPack'); await p.click('#gear');
   await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.click('#openBtn'); await waitState(p, 'stack');
   await p.click('#stack', { force: true }); await p.waitForTimeout(600); await waitState(p, 'stack');
   const before = await p.evaluate(() => JSON.stringify(window.__frc.S().pending.cards.map(c => c.num)));
