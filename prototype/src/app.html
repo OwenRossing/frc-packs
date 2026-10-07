@@ -162,6 +162,8 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .hp small { font-family: var(--body); font-weight: 700; font-size: calc(var(--cw) * .036); letter-spacing: .06em; margin-right: .25em; color: var(--ink-card); opacity: .75; }
 .art { position: relative; flex: 0 0 auto; height: 47%; border-radius: calc(var(--cw) * .02); overflow: hidden; background: var(--art); box-shadow: inset 0 0 0 calc(var(--cw) * .012) var(--art-edge, #c9a33a), 0 2px 0 rgba(0,0,0,.15); }
 .art svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.art .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; }
+.inner.full .art .ph { inset: 17% 5% auto; width: 90%; height: 41%; border-radius: calc(var(--cw) * .03); box-shadow: 0 0 0 calc(var(--cw) * .012) var(--gem), 0 0 calc(var(--cw) * .08) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
 .sub-l { display: flex; justify-content: space-between; gap: 6px; font-size: calc(var(--cw) * .033); font-weight: 700; letter-spacing: .04em; color: var(--ink-card); opacity: .8; position: relative; z-index: 2; white-space: nowrap; overflow: hidden; }
 .sub-l span:first-child { overflow: hidden; text-overflow: ellipsis; }
 .moves { display: flex; flex-direction: column; gap: calc(var(--cw) * .012); position: relative; z-index: 2; flex: 1; justify-content: center; }
@@ -331,7 +333,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     <div class="more"><button type="button" class="cta small ghost" id="more" hidden>Show more</button></div>
   </section>
 
-  <p class="note"><b>Prototype.</b> The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robots are drawings until photos are hooked up. Packs, serials and the claim timer live in this browser only, so a real build needs a server to make them cheat-proof.</p>
+  <p class="note"><b>Prototype.</b> The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robot photos come from The Blue Alliance; the few teams without one get a drawing. Packs, serials and the claim timer live in this browser only, so a real build needs a server to make them cheat-proof.</p>
 </div>
 
 <div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-label="Card details"><div class="modal-in" id="modalIn"></div></div>
@@ -340,6 +342,8 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 (function () {
   "use strict";
   var RAW = `/*TEAMS*/`;
+  /* Robot photos from The Blue Alliance: team number -> base64 WebP thumbnail (240x180). Teams without one keep the drawing. */
+  var PHOTOS = /*PHOTOS*/{};
   var TOTAL = 0, CLAIM_MS = 5 * 60 * 60 * 1000, SHELF_N = 10;
   var $ = function (s) { return document.querySelector(s); };
   var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -543,19 +547,22 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     return s;
   }
   function artSVG(num, tier) {
-    var full = tier === "legendary" || tier === "mythic", s = '<svg viewBox="0 0 200 ' + (full ? 280 : 130) + '" preserveAspectRatio="xMidYMid slice" aria-hidden="true">';
+    var full = tier === "legendary" || tier === "mythic", photo = PHOTOS[num], s = '<svg viewBox="0 0 200 ' + (full ? 280 : 130) + '" preserveAspectRatio="xMidYMid slice" aria-hidden="true">';
     if (full) {
       var c = tier === "mythic" ? "#5cffe9" : "#d7b8ff", rays = "";
       for (var i = 0; i < 12; i++) { var a = i / 12 * Math.PI * 2; rays += '<path d="M100 110 L' + (100 + 260 * Math.cos(a)).toFixed(0) + ' ' + (110 + 260 * Math.sin(a)).toFixed(0) + ' L' + (100 + 260 * Math.cos(a + .18)).toFixed(0) + ' ' + (110 + 260 * Math.sin(a + .18)).toFixed(0) + 'Z" fill="' + c + '"/>'; }
       s += '<g opacity=".3">' + rays + '</g>';
       s += '<text x="100" y="128" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="78" fill="#fff" opacity=".1">' + num + '</text>';
       s += '<ellipse cx="100" cy="196" rx="118" ry="20" fill="rgba(0,0,0,.4)"/>';
-      s += '<g transform="translate(-12 46) scale(1.24)">' + robotSVG(num) + '</g>';
+      if (!photo) s += '<g transform="translate(-12 46) scale(1.24)">' + robotSVG(num) + '</g>';
+    } else if (photo) {
+      return '<img class="ph" alt="" draggable="false" decoding="async" src="data:image/webp;base64,' + photo + '">';
     } else {
       s += '<path d="M0 98 L200 98 L200 130 L0 130 Z" fill="rgba(0,0,0,.14)"/><path d="M0 104 L200 104 M0 116 L200 116" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>';
       s += '<g transform="translate(14 2) scale(.92)">' + robotSVG(num) + '</g>';
     }
-    return s + "</svg>";
+    s += "</svg>";
+    return photo ? s + '<img class="ph" alt="" draggable="false" decoding="async" src="data:image/webp;base64,' + photo + '">' : s;
   }
   function nameScale(n) { var l = n.length; return l <= 10 ? 1 : l <= 13 ? .84 : l <= 17 ? .7 : l <= 22 ? .58 : .5; }
   function attachTilt(slot) {
@@ -961,7 +968,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
     else paintSelect();
     paintStatus(); show(hash === "binder" ? "binder" : "open");
   }
-  window.__frc = { S: function () { return S; }, rollPack: rollPack, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, state: function () { return state; } };
+  window.__frc = { S: function () { return S; }, rollPack: rollPack, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, state: function () { return state; }, cardEl: cardEl };
   boot();
 })();
 </script>

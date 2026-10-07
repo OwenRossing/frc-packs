@@ -15,7 +15,7 @@ What it is not:
 
 - Not cheat-proof. Rolls, timers and serials run in the browser, so the real build needs a server (see the plan doc).
 - Data came from the Statbotics API through a summarizing fetch, so small transcription errors are possible. `data/cmp-2026.txt` is the Champs roster (division, Champs EPA and record); `data/teams-2026-sample.txt` holds season ranks for the top 613 teams and is used to find the top 50 and team locations.
-- Robots are drawings, not Blue Alliance photos. Legendary and Mythic cards use a full-art holo layout; every robot gets alliance bumpers with its number and one of four mechanisms.
+- Robot photos come from The Blue Alliance (504 of 515 teams), embedded as 240x180 WebP thumbnails so the page stays self-contained (about 5 MB). Each team gets its newest season's photo, preferring TBA's "preferred" picks; 429 are from 2026. The 11 teams with no photo on TBA keep a drawn robot. Legendary and Mythic cards use a full-art holo layout with the photo in a framed window.
 - "Demo luck" (on by default) boosts Mythic to about 1 pack in 5. Real odds are 1 in 20,000 packs.
 
 ## Files
@@ -23,7 +23,9 @@ What it is not:
 - `src/app.html`: the app (HTML, CSS and JS in one file, with a data placeholder)
 - `data/cmp-2026.txt`: the pack's teams, one `team|name|champs EPA|W-L|division|season rank|location` line per team
 - `data/teams-2026-sample.txt`: 2026 season data, one `rank|team|name|epa|W-L|place` line per team
-- `build.py`: inlines the data into `src/app.html` and writes `index.html`
+- `data/photos/<team>.webp` and `data/photos.txt`: robot thumbnails and where each came from (`team|season|source image`)
+- `fetch_photos.py`: downloads the photos (`TBA_KEY=... python3 fetch_photos.py`; skips teams it already has unless `--refresh`)
+- `build.py`: inlines the data and photos into `src/app.html` and writes `index.html`
 - `test/play.js`: bot that plays packs through the UI, simulates 200,000 packs for odds, and checks layouts
 - `test/edge.js`: failure-mode checks (two tabs, double click, mis-swipes, face-down cards, corrupt saves, keyboard, touch, reduced motion)
 - `test/lib.js`: shared helpers, including `openOne`, which plays a pack from shelf to summary
