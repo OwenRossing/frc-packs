@@ -82,13 +82,11 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .inspect .lift { filter: drop-shadow(0 0 calc(var(--tp, 0) * 26px) var(--tell, transparent)); }
 .inspect.told .tell { opacity: .95; }
 .inspect .lift { position: relative; z-index: 1; }
-.peek { position: absolute; left: 10%; right: 10%; top: 18%; aspect-ratio: 5 / 7; z-index: 0; pointer-events: none; transition: transform .38s cubic-bezier(.2,.9,.3,1.1); }
-.peek i { position: absolute; inset: 0; border-radius: 6%; background: radial-gradient(circle at 50% 45%, #1b6f7a, #0a2f45 60%, #061c2a); border: 3px solid #e9f6f4; box-shadow: 0 0 calc(var(--tp, 0) * 34px) var(--tell, transparent); }
-.peek i:nth-child(2) { transform: translate(4px, 4px) rotate(1.5deg); }
-.peek i:nth-child(1) { transform: translate(8px, 8px) rotate(3deg); }
-.inspect.out .peek { transform: translateY(-58%); }
-.stack.fresh { animation: settle .22s ease-out both; }
-@keyframes settle { from { transform: translateY(-4%) scale(.97); } to { transform: none; } }
+.ghostpack { position: fixed; z-index: 6; pointer-events: none; perspective: 1200px; }
+.ghostpack .pk-body, .ghostpack .pk-top { transition-duration: .55s; }
+.ghostpack.drop .pk-body { transform: translateY(115%) rotate(4deg); opacity: 0; }
+.ghostpack.drop .pk-top { transform: translate(18%, -60%) rotate(22deg); opacity: 0; }
+.summary.flow .slot { animation: none; }
 .inspect.rainbow .tell { background: radial-gradient(closest-side, #ff3d9a, transparent); opacity: .85; animation: hue 1.6s linear infinite; }
 @keyframes hue { to { filter: hue-rotate(360deg); } }
 .inspect .cutline { background: var(--tell); box-shadow: 0 0 14px var(--tell), 0 0 30px var(--tell); }
@@ -239,6 +237,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 @keyframes rise { from { transform: translateY(45%) scale(.8); opacity: 0; } to { transform: none; opacity: 1; } }
 .stack .slot { position: absolute; inset: 0; width: 100%; transform: translate(calc(var(--k) * 5px), calc(var(--k) * 5px)) rotate(calc(var(--k) * 1.2deg)); transition: transform .35s cubic-bezier(.2,1.2,.4,1); }
 .stack .slot.top { --k: 0; z-index: 10; }
+.stack.fan .slot { transform: translate(calc(var(--k) * 16px), calc(var(--k) * -10px)) rotate(calc(var(--k) * 5deg)); transition-duration: .45s; }
 .stack .slot.drag { transition: none; }
 .stack .slot.gone { transition: transform .45s cubic-bezier(.5,0,.9,.5), opacity .45s; opacity: 0; pointer-events: none; }
 .counter { display: flex; gap: 6px; justify-content: center; margin-top: 18px; }
@@ -308,8 +307,7 @@ body.playing .note { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .meter.hot .mbar i, .inspect.rainbow .tell, .bg i, .rays, .alive .float, .tease .back, .tease .tilt, .card[data-tier="mythic"] .front, .claim, .cuthint, .cuthint::before { animation: none !important; }
   .flip { transition-duration: .01s; }
-  .peek { transition: none; }
-  .inspect .lift, .stack.rise, .stack.fresh, .summary .slot, .ribbon { animation: none; }
+  .inspect .lift, .stack.rise, .summary .slot, .ribbon { animation: none; }
   .stage.shake, .stage.shake-big, .flash.go { animation: none; }
 }
 </style>
@@ -1340,10 +1338,23 @@ body.playing .note { visibility: hidden; }
     /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
     var best = bestTier(ensureNext()); promoted = false; nextBest = best;
     inspectEl.style.setProperty("--tell", TIERS[best === "mythic" ? "legendary" : best].color); inspectEl.style.setProperty("--tp", 0);
-    inspectEl.innerHTML = '<div class="tell"></div><div class="peek" aria-hidden="true"><i></i><i></i><i></i></div><div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div>';
+    var fromR = shelf.children[i] && shelf.children[i].getBoundingClientRect();
+    inspectEl.innerHTML = '<div class="tell"></div><div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div>';
     showOnly("inspect");
+    if (fromR && fromR.width) flyFrom(inspectEl.querySelector(".lift"), fromR, 460);
     setHud(SWIPE + " across the top to open", "Drag the pack to turn it over");
     try { $("#openBtn").focus({ preventScroll: true }); } catch (e) {}
+  }
+  /* FLIP helper: animate el from where `from` (a rect) was to where it sits now. */
+  function flyFrom(el, from, ms, delay, mid) {
+    if (RM || !el.animate) return null;
+    var to = el.getBoundingClientRect(); if (!to.width) return null;
+    el.style.animation = "none";
+    var dx = (from.left + from.width / 2) - (to.left + to.width / 2), dy = (from.top + from.height / 2) - (to.top + to.height / 2), sc = from.width / to.width;
+    var frames = [{ transform: "translate(" + dx + "px," + dy + "px) scale(" + sc + ")" }];
+    if (mid) frames.push(mid(dx, dy, sc));
+    frames.push({ transform: "none" });
+    return el.animate(frames, { duration: ms, delay: delay || 0, easing: "cubic-bezier(.22,.9,.28,1)", fill: "backwards" });
   }
   var promoted = false, nextBest = "common";
   function bestTier(cards) { var b = "common"; cards.forEach(function (c) { if (ORDER.indexOf(c.tier) < ORDER.indexOf(b)) b = c.tier; }); return b; }
@@ -1422,11 +1433,12 @@ body.playing .note { visibility: hidden; }
     /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
     var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
     paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
-    nextBest = best; glow(1); inspectEl.classList.add("cut", "told", "out");
+    nextBest = best; glow(1); inspectEl.classList.add("told");
     var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, promo ? null : TIERS[best].color, 7, promo);
     setHud("", ""); shelfPacks = [];
-    setTimeout(function () { buildStack(0, true); }, RM ? 60 : 380);
+    buildStack(0, r);
   }
+  /* fromPack = the torn pack's rect: the real cards rise out of it, fanned, and settle into the stack while the empty pack drops away. */
   function buildStack(from, fromPack) {
     deck = S.pending.cards; idx = from; stackEl.innerHTML = ""; summaryEl.innerHTML = "";
     for (var i = deck.length - 1; i >= from; i--) {
@@ -1438,9 +1450,30 @@ body.playing .note { visibility: hidden; }
       stackEl.appendChild(el);
     }
     showOnly("stack");
-    stackEl.classList.remove("rise", "fresh"); void stackEl.offsetWidth; stackEl.classList.add(fromPack ? "fresh" : "rise");
-    state = "stack"; sfx.whoosh(); paintCounter(); armTop();
+    stackEl.classList.remove("rise"); void stackEl.offsetWidth;
+    paintCounter(); sfx.whoosh();
+    var flight = fromPack && !RM ? dealFromPack(fromPack) : 0;
+    if (!flight) stackEl.classList.add("rise");
+    if (flight) { state = "dealing"; setTimeout(function () { if (state !== "dealing") return; state = "stack"; armTop(); }, flight); }
+    else { state = "stack"; armTop(); }
     try { stackEl.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function dealFromPack(pr) {
+    /* The empty pack: a copy of the torn pack, drawn on top so the cards come up out of its open top. */
+    var gp = document.createElement("div"); gp.className = "ghostpack inspect told"; gp.setAttribute("aria-hidden", "true");
+    gp.style.cssText = "left:" + pr.left + "px;top:" + pr.top + "px;width:" + pr.width + "px;min-width:0;--tp:1;--tell:" + inspectEl.style.getPropertyValue("--tell");
+    gp.innerHTML = '<div class="lift" style="animation:none"><div class="rot">' + packHTML(false) + '</div></div>';
+    document.body.appendChild(gp);
+    requestAnimationFrame(function () { requestAnimationFrame(function () { gp.classList.add("drop"); }); });
+    setTimeout(function () { gp.remove(); }, 900);
+    /* Start inside the pack (same width as the pack, sunk below its top), rise above it, then glide down into place. */
+    var start = { left: pr.left + pr.width * .08, top: pr.top + pr.height * .2, width: pr.width * .84, height: pr.width * .84 * 1.4 };
+    var all = stackEl.children, n = all.length;
+    for (var i = 0; i < n; i++) all[i].style.setProperty("--k", n - 1 - i);
+    stackEl.classList.add("fan");
+    flyFrom(stackEl, start, 720, 0, function (dx, dy, sc) { return { offset: .42, transform: "translate(" + (dx * .5) + "px," + (dy - pr.height * .42) + "px) scale(" + ((sc + 1) / 2) + ")" }; });
+    setTimeout(function () { stackEl.classList.remove("fan"); }, 380);
+    return 720;
   }
   function paintCounter() { counterEl.innerHTML = deck.map(function (c, i) { return '<i class="' + (i < idx ? "done" : i === idx ? "now" : "") + '"></i>'; }).join(""); }
   function topEl() { return stackEl.lastElementChild; }
@@ -1544,7 +1577,7 @@ body.playing .note { visibility: hidden; }
     return best;
   }
   function summary(skipped) {
-    var sets = (S.pending && S.pending.sets) || [];
+    var sets = (S.pending && S.pending.sets) || [], fromR = !stackView.hidden && stackEl.getBoundingClientRect();
     state = "summary"; S.pending = null; save(); document.body.classList.remove("takeover");
     summaryEl.innerHTML = "";
     deck.forEach(function (c, i) {
@@ -1555,6 +1588,8 @@ body.playing .note { visibility: hidden; }
       summaryEl.appendChild(el);
     });
     showOnly("summary");
+    if (fromR && fromR.width && !RM) { summaryEl.classList.add("flow"); Array.prototype.forEach.call(summaryEl.children, function (el, i) { flyFrom(el, fromR, 560, i * 70); }); }
+    else summaryEl.classList.remove("flow");
     var best = deck[deck.length - 1], bt = BY_NUM[best.num], news = deck.filter(function (c) { return c.isNew; }).length;
     var have = Object.keys(S.inv).filter(function (k) { return BY_NUM[k] && S.inv[k].length; }).length;
     var near = nearSet();
