@@ -23,6 +23,20 @@
   <div class="gate" id="gate" hidden></div>
 
   <main class="panel" id="panel" hidden>
+    <section class="card" aria-labelledby="rulesTitle">
+      <div class="card-head"><h2 id="rulesTitle">Free packs</h2></div>
+      <p class="hint-txt">How often everyone gets free packs, and how many. Changes count from each person's next claim; a shorter timer starts right away.</p>
+      <form class="inv-form rules-form" id="rulesForm" novalidate>
+        <label class="field">Hours between<small>0.1 to 168</small><input class="input" name="hours" type="number" inputmode="decimal" min="0.1" max="168" step="any"></label>
+        <label class="field">Packs each time<small>1 to 20</small><input class="input" name="claimPacks" type="number" inputmode="numeric" min="1" max="20"></label>
+        <label class="field">Missed timers kept<small>1 to 10, so nobody loses packs overnight</small><input class="input" name="bank" type="number" inputmode="numeric" min="1" max="10"></label>
+        <label class="field">New accounts start with<small>0 to 50 packs</small><input class="input" name="startPacks" type="number" inputmode="numeric" min="0" max="50"></label>
+        <button class="cta small" type="submit">Save</button>
+      </form>
+      <p class="hint-txt" id="rulesSum"></p>
+      <div class="msg" id="rulesMsg" role="status" hidden></div>
+    </section>
+
     <section class="card" aria-labelledby="invTitle">
       <div class="card-head"><h2 id="invTitle">Invite codes</h2><span class="count" id="invCount"></span></div>
       <p class="hint-txt">Each code makes accounts for the number of people you choose. Send the code or the link; after joining, people sign in with their username and password.</p>

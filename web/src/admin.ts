@@ -3,7 +3,7 @@
 
 import "./style.css";
 import "./admin.css";
-import { api, ApiError, explain, type AdminUser, type Invite } from "./api";
+import { api, ApiError, explain, type AdminUser, type Invite, type Rules } from "./api";
 
 type Kid = Node | string | null | undefined | false;
 
@@ -86,6 +86,67 @@ function say(text: string, bad = false) {
   toastTimer = window.setTimeout(() => toast.classList.remove("show"), 3200);
 }
 const fail = (e: unknown) => say(explain(e), true);
+
+// ---------- free packs ----------
+
+const rulesForm = $<HTMLFormElement>("#rulesForm");
+const field = (n: string) => rulesForm.elements.namedItem(n) as HTMLInputElement;
+
+/** Reads the form. Hours are shown to people; the server keeps whole minutes. */
+function readRules(): Rules | null {
+  const hours = Number(field("hours").value);
+  const r = {
+    claimMinutes: Math.round(hours * 60),
+    claimPacks: Number(field("claimPacks").value),
+    bank: Number(field("bank").value),
+    startPacks: Number(field("startPacks").value),
+  };
+  const int = (n: number, lo: number, hi: number) => Number.isInteger(n) && n >= lo && n <= hi;
+  const ok = int(r.claimMinutes, 5, 10080) && int(r.claimPacks, 1, 20) && int(r.bank, 1, 10) && int(r.startPacks, 0, 50);
+  return ok ? r : null;
+}
+
+function paintRulesSum() {
+  const r = readRules();
+  const sum = $("#rulesSum");
+  if (!r) return (sum.textContent = "");
+  const perDay = (24 * 60 / r.claimMinutes) * r.claimPacks;
+  const fmtN = (n: number) => (n >= 10 ? Math.round(n).toString() : (Math.round(n * 10) / 10).toString());
+  sum.textContent =
+    `That's up to ${fmtN(perDay)} packs a day for someone who claims every time, ` +
+    `and up to ${plural(r.claimPacks * r.bank, "pack")} waiting for someone who's been away.`;
+}
+
+function showRules(r: Rules) {
+  field("hours").value = String(Math.round((r.claimMinutes / 60) * 100) / 100);
+  field("claimPacks").value = String(r.claimPacks);
+  field("bank").value = String(r.bank);
+  field("startPacks").value = String(r.startPacks);
+  paintRulesSum();
+}
+
+rulesForm.addEventListener("input", paintRulesSum);
+rulesForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#rulesMsg");
+  const r = readRules();
+  if (!r) {
+    msg.textContent = "Hours between can be 0.1 to 168, packs each time 1 to 20, missed timers 1 to 10, and starting packs 0 to 50.";
+    msg.hidden = false;
+    return;
+  }
+  msg.hidden = true;
+  const btn = rulesForm.querySelector("button")!;
+  btn.disabled = true;
+  try {
+    showRules(await api.admin.saveSettings(r));
+    say("Saved. Everyone's timer uses the new rules.");
+  } catch (err) {
+    fail(err);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ---------- invite codes ----------
 
@@ -346,10 +407,11 @@ async function loadUsers() {
 
 async function boot() {
   try {
-    const [st, inv, us] = await Promise.all([api.state(), api.admin.invites(), api.admin.users()]);
+    const [st, inv, us, rules] = await Promise.all([api.state(), api.admin.invites(), api.admin.users(), api.admin.settings()]);
     me = st.account.username;
     invites = inv;
     users = us;
+    showRules(rules);
     $("#panel").hidden = false;
     paintInvites();
     paintUsers();

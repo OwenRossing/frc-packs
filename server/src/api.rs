@@ -17,11 +17,45 @@ use crate::error::{ApiError, ApiResult};
 use crate::packs::{Pack, Tier};
 use crate::roll::{self, Opts, Pity, Rolled};
 
-/// A free pack every 5 hours. Missed packs bank up to 2, so sleeping through one timer doesn't cost a pack.
-pub const CLAIM_MS: i64 = 5 * 60 * 60 * 1000;
-pub const BANK: i64 = 2;
-/// New accounts start with this many packs, and one free pack ready to claim.
-pub const START_PACKS: i32 = 2;
+/// The free-pack rules, which the admin sets in the panel (the one row of `settings`). Out of the box: a pack every
+/// 5 hours, missed timers bank up to 2 (so sleeping through one doesn't cost a pack), and new accounts start with 2
+/// packs and a free one ready to claim.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Rules {
+    /// Minutes between free packs.
+    pub claim_minutes: i32,
+    /// Packs each timer gives.
+    pub claim_packs: i32,
+    /// How many missed timers wait to be claimed.
+    pub bank: i32,
+    /// Packs a new account starts with.
+    pub start_packs: i32,
+}
+
+impl Rules {
+    pub fn claim_ms(&self) -> i64 {
+        i64::from(self.claim_minutes) * 60_000
+    }
+
+    /// The same limits as the table's checks: 5 minutes to a week, 1 to 20 packs a timer, 1 to 10 timers banked,
+    /// 0 to 50 starting packs.
+    pub fn valid(&self) -> bool {
+        (5..=10080).contains(&self.claim_minutes)
+            && (1..=20).contains(&self.claim_packs)
+            && (1..=10).contains(&self.bank)
+            && (0..=50).contains(&self.start_packs)
+    }
+
+    /// How many timers have run out and wait to be claimed (at most `bank`).
+    fn timers_ready(&self, now: DateTime<Utc>, next: DateTime<Utc>) -> i64 {
+        if now < next { 0 } else { i64::from(self.bank).min(1 + (now - next).num_milliseconds() / self.claim_ms()) }
+    }
+}
+
+pub async fn rules(c: impl sqlx::PgExecutor<'_>) -> Result<Rules, sqlx::Error> {
+    sqlx::query_as("select claim_minutes, claim_packs, bank, start_packs from settings").fetch_one(c).await
+}
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -64,7 +98,10 @@ pub struct StateOut {
     now: i64,
     next_claim_at: i64,
     claim_ms: i64,
-    bank: i64,
+    /// Packs each timer gives.
+    claim_packs: i32,
+    /// How many missed timers wait to be claimed.
+    bank: i32,
     demo: bool,
     dev_tools: bool,
     packs: Vec<PackState>,
@@ -158,10 +195,6 @@ async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack) 
     Ok(roll::roll(pack, &mut rng, &opts))
 }
 
-fn banked(now: DateTime<Utc>, next: DateTime<Utc>) -> i64 {
-    if now < next { 0 } else { BANK.min(1 + (now - next).num_milliseconds() / CLAIM_MS) }
-}
-
 async fn load_opening(
     c: &mut PgConnection,
     user: Uuid,
@@ -225,12 +258,16 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         Some((id, pack, revealed, sets)) => Some(load_opening(c, user, id, pack, revealed, sets).await?),
         None => None,
     };
+    let r = rules(&mut *c).await?;
+    // If the admin shortened the timer, nobody waits longer than one new timer.
+    let next = next.min(Utc::now() + Duration::milliseconds(r.claim_ms()));
     Ok(StateOut {
         account: AccountOut { username: username.unwrap_or_default(), admin },
         now: Utc::now().timestamp_millis(),
         next_claim_at: next.timestamp_millis(),
-        claim_ms: CLAIM_MS,
-        bank: BANK,
+        claim_ms: r.claim_ms(),
+        claim_packs: r.claim_packs,
+        bank: r.bank,
         demo,
         dev_tools: s.dev_tools,
         packs,
@@ -331,7 +368,8 @@ async fn signup(
             .map(|_| id),
         None => {
             let pack = s.catalog.claimable().id();
-            accounts::create(&mut tx, username, &password_hash, Some(&code), false, pack, START_PACKS).await
+            let start = rules(&mut *tx).await?.start_packs;
+            accounts::create(&mut tx, username, &password_hash, Some(&code), false, pack, start).await
         }
     };
     let id = match made {
@@ -453,22 +491,23 @@ async fn claim(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>>
         .fetch_one(&mut *tx)
         .await?;
     let now = Utc::now();
-    let window = Duration::milliseconds(CLAIM_MS);
+    let r = rules(&mut *tx).await?;
+    let window = Duration::milliseconds(r.claim_ms());
     if next > now + window {
         next = now + window;
     }
-    let n = banked(now, next);
+    let n = r.timers_ready(now, next);
     if n == 0 {
         return Err(err(StatusCode::CONFLICT, "not_ready"));
     }
-    let next = if n >= BANK { now + window } else { next + window * n as i32 };
+    let next = if n >= i64::from(r.bank) { now + window } else { next + window * n as i32 };
     sqlx::query("update users set next_claim_at = $2 where id = $1").bind(user.id).bind(next).execute(&mut *tx).await?;
     let p = s.catalog.claimable().id();
     lock_user_pack(&mut tx, user.id, p).await?;
     sqlx::query("update user_packs set sealed = sealed + $3 where user_id = $1 and pack_id = $2")
         .bind(user.id)
         .bind(p)
-        .bind(n as i32)
+        .bind(n as i32 * r.claim_packs)
         .execute(&mut *tx)
         .await?;
     let out = load_state(&s, &mut tx, user.id).await?;
@@ -731,7 +770,7 @@ async fn dev_skip_timer(State(s): State<Shared>, user: User) -> ApiResult<Json<S
         "update users set next_claim_at = least(next_claim_at - $2 * interval '1 millisecond', now()) where id = $1",
     )
     .bind(user.id)
-    .bind(CLAIM_MS as f64)
+    .bind(rules(&s.db).await?.claim_ms() as f64)
     .execute(&s.db)
     .await?;
     state_json(&s, user.id).await
@@ -743,10 +782,11 @@ async fn dev_reset(State(s): State<Shared>, user: User) -> ApiResult<Json<StateO
     for table in ["cards", "openings", "hands", "sets_done", "user_packs"] {
         sqlx::query(&format!("delete from {table} where user_id = $1")).bind(user.id).execute(&mut *tx).await?;
     }
+    let start = rules(&mut *tx).await?.start_packs;
     sqlx::query("insert into user_packs (user_id, pack_id, sealed) values ($1, $2, $3)")
         .bind(user.id)
         .bind(s.catalog.claimable().id())
-        .bind(START_PACKS)
+        .bind(start)
         .execute(&mut *tx)
         .await?;
     sqlx::query("update users set next_claim_at = now() where id = $1").bind(user.id).execute(&mut *tx).await?;
@@ -760,4 +800,25 @@ async fn dev_invite(State(s): State<Shared>) -> ApiResult<Json<serde_json::Value
     let code = accounts::new_invite_code();
     sqlx::query("insert into invites (code, note) values ($1, 'dev tools')").bind(&code).execute(&s.db).await?;
     Ok(Json(serde_json::json!({ "code": accounts::show_code(&code) })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timers_bank_up_and_each_gives_its_packs() {
+        let r = Rules { claim_minutes: 120, claim_packs: 3, bank: 2, start_packs: 0 };
+        let next = Utc::now();
+        assert_eq!(r.timers_ready(next - Duration::minutes(1), next), 0, "not yet");
+        assert_eq!(r.timers_ready(next, next), 1);
+        assert_eq!(r.timers_ready(next + Duration::minutes(119), next), 1);
+        assert_eq!(r.timers_ready(next + Duration::minutes(120), next), 2);
+        assert_eq!(r.timers_ready(next + Duration::days(3), next), 2, "missed timers bank up to 2");
+        assert!(r.valid());
+        assert!(!Rules { claim_minutes: 4, ..r }.valid());
+        assert!(!Rules { claim_packs: 0, ..r }.valid());
+        assert!(!Rules { bank: 11, ..r }.valid());
+        assert!(!Rules { start_packs: -1, ..r }.valid());
+    }
 }

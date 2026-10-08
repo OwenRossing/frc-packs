@@ -71,6 +71,9 @@ export interface State {
   now: number;
   nextClaimAt: number;
   claimMs: number;
+  /** Packs each timer gives. */
+  claimPacks: number;
+  /** How many missed timers wait to be claimed. */
   bank: number;
   demo: boolean;
   devTools: boolean;
@@ -92,6 +95,18 @@ export interface Invite {
   uses: number;
   createdAt: number;
   usedBy: string[];
+}
+
+/** The free-pack rules the admin sets. */
+export interface Rules {
+  /** Minutes between free packs. */
+  claimMinutes: number;
+  /** Packs each timer gives. */
+  claimPacks: number;
+  /** How many missed timers wait to be claimed. */
+  bank: number;
+  /** Packs a new account starts with. */
+  startPacks: number;
 }
 
 export interface AdminUser {
@@ -166,6 +181,8 @@ export const api = {
     givePacks: (id: string, count: number) => call<void>("POST", `/api/admin/users/${id}/packs`, { count }),
     setDisabled: (id: string, disabled: boolean) => call<void>("POST", `/api/admin/users/${id}/disabled`, { disabled }),
     deleteUser: (id: string, confirm: string) => call<void>("POST", `/api/admin/users/${id}/delete`, { confirm }),
+    settings: () => call<Rules>("GET", "/api/admin/settings"),
+    saveSettings: (r: Rules) => call<Rules>("POST", "/api/admin/settings", r),
   },
 };
 

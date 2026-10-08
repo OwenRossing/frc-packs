@@ -58,7 +58,7 @@ export function start(RECIPE) {
   function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
   function applyState(st) {
-    var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank;
+    var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
     S.demo = st.demo; S.devTools = st.devTools;
@@ -296,16 +296,19 @@ export function start(RECIPE) {
   /* ---------- status bar, timer, claim ---------- */
   var packCount = $("#packCount"), timerEl = $("#timer"), claimBtn = $("#claim");
   function fmt(ms) { var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0"); }
-  /* Free packs bank up to 2, so missing one timer overnight doesn't cost a pack. */
-  var BANK = 2;
+  /* The admin sets the timer, how many packs each one gives (PER) and how many missed timers wait (BANK), so missing
+     one overnight doesn't cost packs. */
+  var BANK = 2, PER = 1;
   function banked(now) { return now < S.nextClaimAt ? 0 : Math.min(BANK, 1 + Math.floor((now - S.nextClaimAt) / CLAIM_MS)); }
+  function packsWord(n) { return n === 1 ? "pack" : "packs"; }
   function paintStatus() {
     var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS;
     packCount.textContent = S.packs;
-    var n = banked(now);
-    if (n >= BANK) { timerEl.textContent = BANK + " free packs are ready"; claimBtn.hidden = false; claimBtn.textContent = "Claim " + BANK + " packs"; }
-    else if (n === 1) { timerEl.innerHTML = "A free pack is ready · another in <b>" + fmt(S.nextClaimAt + CLAIM_MS - now) + "</b>"; claimBtn.hidden = false; claimBtn.textContent = "Claim pack"; }
-    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(S.nextClaimAt - now) + "</b>"; claimBtn.hidden = true; }
+    var n = banked(now), ready = n * PER, next = PER === 1 ? "another" : PER + " more";
+    claimBtn.hidden = !n; claimBtn.textContent = ready === 1 ? "Claim pack" : "Claim " + ready + " packs";
+    if (n >= BANK) timerEl.textContent = (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready";
+    else if (n) timerEl.innerHTML = (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready · " + next + " in <b>" + fmt(S.nextClaimAt + n * CLAIM_MS - now) + "</b>";
+    else timerEl.innerHTML = "Next " + (PER === 1 ? "free pack" : PER + " free packs") + " in <b>" + fmt(S.nextClaimAt - now) + "</b>";
     paintMeter();
   }
   function paintMeter() {

@@ -45,6 +45,8 @@ a.cta { text-decoration: none; display: inline-block; }
 .toast { position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 20px); z-index: 20; max-width: calc(100vw - 32px); background: #0f3a44; color: var(--foam); border: 1px solid #2f7a86; border-radius: 12px; padding: 10px 14px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.bad { background: #4a1c22; border-color: rgba(255,140,120,.5); }
+.rules-form { grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
+#rulesSum { margin: 10px 0 0; }
 @media (max-width: 640px) {
   .inv-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .inv-form .note-f, .inv-form .cta { grid-column: 1 / -1; }

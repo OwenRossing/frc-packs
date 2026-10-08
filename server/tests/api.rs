@@ -717,3 +717,28 @@ async fn create_admin_once_and_reset_by_name() {
     db.close().await;
     sqlx::query(&format!("drop database {scratch}")).execute(&main).await.unwrap();
 }
+
+#[tokio::test]
+async fn admin_sees_and_checks_the_free_pack_rules() {
+    let (app, db) = need_db!(setup(true));
+    let (player_cookie, _) = player(&app, &db).await;
+    assert_eq!(call(&app, "GET", "/api/admin/settings", Some(&player_cookie), None).await.status, StatusCode::FORBIDDEN);
+    let admin = make_admin(&app, &db).await;
+    let got = call(&app, "GET", "/api/admin/settings", Some(&admin), None).await;
+    assert_eq!(got.status, StatusCode::OK);
+    for k in ["claimMinutes", "claimPacks", "bank", "startPacks"] {
+        assert!(got.body[k].is_i64(), "{k} in {}", got.body);
+    }
+    // Saving the same rules back changes nothing for the other tests sharing this database.
+    let same = call(&app, "POST", "/api/admin/settings", Some(&admin), Some(got.body.clone())).await;
+    assert_eq!((same.status, &same.body), (StatusCode::OK, &got.body));
+    for bad in [json!({ "claimMinutes": 0 }), json!({ "claimPacks": 21 }), json!({ "bank": 0 }), json!({ "startPacks": 51 })] {
+        let mut body = got.body.clone();
+        body.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        let r = call(&app, "POST", "/api/admin/settings", Some(&admin), Some(body)).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    let st = call(&app, "GET", "/api/state", Some(&admin), None).await.body;
+    assert_eq!(st["claimMs"].as_i64().unwrap(), got.body["claimMinutes"].as_i64().unwrap() * 60_000);
+    assert_eq!(st["claimPacks"], got.body["claimPacks"]);
+}

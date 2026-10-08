@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::Shared;
 use crate::accounts;
+use crate::api::{self, Rules};
 use crate::auth::Admin;
 use crate::error::{ApiError, ApiResult};
 
@@ -23,6 +24,34 @@ pub fn routes() -> Router<Shared> {
         .route("/users/{id}/packs", post(give_packs))
         .route("/users/{id}/disabled", post(set_disabled))
         .route("/users/{id}/delete", post(delete_user))
+        .route("/settings", get(settings).post(save_settings))
+}
+
+/// The free-pack rules: how often, how many, how many missed timers wait, and how many packs new accounts get.
+async fn settings(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Rules>> {
+    Ok(Json(api::rules(&s.db).await?))
+}
+
+/// Changes the free-pack rules for everyone from the next claim on. A shorter timer takes effect at once: nobody's
+/// next free pack is further away than one new timer.
+async fn save_settings(State(s): State<Shared>, _admin: Admin, Json(r): Json<Rules>) -> ApiResult<Json<Rules>> {
+    if !r.valid() {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
+    }
+    let mut tx = s.db.begin().await?;
+    sqlx::query("update settings set claim_minutes = $1, claim_packs = $2, bank = $3, start_packs = $4")
+        .bind(r.claim_minutes)
+        .bind(r.claim_packs)
+        .bind(r.bank)
+        .bind(r.start_packs)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("update users set next_claim_at = now() + $1 * interval '1 minute' where next_claim_at > now() + $1 * interval '1 minute'")
+        .bind(f64::from(r.claim_minutes))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(r))
 }
 
 fn err(status: StatusCode, code: &'static str) -> ApiError {
@@ -295,7 +324,8 @@ pub async fn create_admin(
     let password = accounts::new_password();
     let hash = accounts::hash(password.clone()).await;
     let mut c = db.acquire().await?;
-    match accounts::create(&mut c, username, &hash, None, true, start_pack, crate::api::START_PACKS).await {
+    let start = crate::api::rules(&mut *c).await?.start_packs;
+    match accounts::create(&mut c, username, &hash, None, true, start_pack, start).await {
         Ok(_) => Ok((username.to_string(), Some(password))),
         Err(e) if accounts::is_unique_violation(&e) => {
             anyhow::bail!("an account named {username} already exists; pick another name: create-admin <name>")
