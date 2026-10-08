@@ -16,7 +16,7 @@
   --panel: #0a222b;
   --display: "Lilita One", "Arial Rounded MT Bold", system-ui, sans-serif;
   --body: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
-  --cw: clamp(170px, min(74vw, 290px, calc((100svh - 300px) / 1.4)), 290px);
+  --cw: clamp(170px, min(74vw, 290px, calc((100svh - 322px) / 1.4)), 290px);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -63,6 +63,25 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .status .timer { font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; font-weight: 600; }
 .status .timer b { color: var(--foam); }
 .claim { background: var(--tide); color: #02211d; border: 0; border-radius: 10px; padding: 9px 16px; font-family: var(--display); font-size: 18px; cursor: pointer; box-shadow: 0 4px 0 #138a80; animation: pulse 1.6s ease-in-out infinite; }
+.meter { flex-basis: 100%; display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); padding-right: 6px; }
+.meter .mbar { flex: 1; height: 6px; background: #14323b; border-radius: 6px; overflow: hidden; position: relative; }
+.meter .mbar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #27d3c3, #3cffdc, #c9fff6); border-radius: 6px; transition: width .6s cubic-bezier(.2,1,.3,1); }
+.meter.hot .mbar i { animation: hot 1.4s ease-in-out infinite; }
+@keyframes hot { 50% { filter: brightness(1.6); } }
+.meter em { font-style: normal; color: var(--foam); font-variant-numeric: tabular-nums; }
+.teampick { margin-top: 10px; background: var(--panel); border: 1px solid #2f7a86; border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; position: relative; z-index: 4; }
+.teampick b { font-family: var(--display); font-weight: inherit; font-size: 18px; color: var(--foam); }
+.teampick p { margin: 0; font-size: 13px; color: var(--ink-dim); }
+.teampick form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.teampick input { width: 9ch; background: #06161d; color: var(--foam); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 16px; }
+.teampick .msg { font-size: 13px; color: #ffd27a; }
+.slot.mine .front { box-shadow: 0 0 0 3px #ffd34d, 0 14px 30px rgba(0,0,0,.5); }
+.slot.mine::after { content: "MY TEAM"; position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%); background: #ffd34d; color: #2a1c00; font-size: 10px; font-weight: 700; letter-spacing: .1em; padding: 2px 8px; border-radius: 6px; z-index: 6; white-space: nowrap; }
+.tell { position: absolute; left: -20%; right: -20%; top: -22%; bottom: -22%; border-radius: 50%; background: radial-gradient(closest-side, var(--tell, transparent), transparent); opacity: 0; transition: opacity .25s, background .3s; pointer-events: none; z-index: -1; }
+.inspect.told .tell { opacity: .9; }
+.inspect.rainbow .tell { background: radial-gradient(closest-side, #ff3d9a, transparent); opacity: .85; animation: hue 1.6s linear infinite; }
+@keyframes hue { to { filter: hue-rotate(360deg); } }
+.inspect.told .cutline { background: var(--tell); box-shadow: 0 0 14px var(--tell), 0 0 30px var(--tell); }
 .claim:active { transform: translateY(3px); box-shadow: 0 1px 0 #138a80; }
 @keyframes pulse { 0%,100% { box-shadow: 0 4px 0 #138a80, 0 0 0 0 rgba(39,211,195,.5); } 50% { box-shadow: 0 4px 0 #138a80, 0 0 0 9px rgba(39,211,195,0); } }
 
@@ -110,7 +129,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .dots i { width: 6px; height: 6px; border-radius: 50%; background: #2b6470; transition: background .2s, transform .2s; }
 .dots i.on { background: var(--tide); transform: scale(1.4); }
 
-.inspect { position: relative; width: min(66vw, 280px, calc((100svh - 330px) / 1.52)); min-width: 180px; perspective: 1200px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.inspect { position: relative; width: min(66vw, 280px, calc((100svh - 352px) / 1.52)); min-width: 180px; perspective: 1200px; touch-action: none; user-select: none; -webkit-user-select: none; }
 .inspect .lift { animation: lift .5s cubic-bezier(.2,1.25,.4,1) both; }
 @keyframes lift { from { transform: translateY(80px) scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }
 .rot { position: relative; transform-style: preserve-3d; transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: transform .5s cubic-bezier(.2,1.3,.4,1); cursor: grab; }
@@ -230,6 +249,9 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .banner.show { transform: translate(-50%, 0); opacity: 1; }
 
 /* ---------- binder ---------- */
+.divs .chip b { color: var(--foam); }
+.divs .chip.done { border-color: #ffd34d; }
+.divs .chip.done b::after { content: " ✓"; color: #ffd34d; }
 .binder-head { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .binder-sum { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .binder-sum h2 { margin: 0; font-family: var(--display); font-weight: inherit; font-size: 24px; color: var(--foam); }
@@ -260,7 +282,7 @@ body.playing .note { visibility: hidden; }
 .note b { color: var(--ink); font-weight: 600; }
 @media (max-width: 460px) { .brand { font-size: 19px; } .seg button { padding: 7px 10px; font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) {
-  .bg i, .rays, .alive .float, .tease .back, .tease .tilt, .card[data-tier="mythic"] .front, .claim, .cuthint, .cuthint::before { animation: none !important; }
+  .meter.hot .mbar i, .inspect.rainbow .tell, .bg i, .rays, .alive .float, .tease .back, .tease .tilt, .card[data-tier="mythic"] .front, .claim, .cuthint, .cuthint::before { animation: none !important; }
   .flip { transition-duration: .01s; }
   .inspect .lift, .stack.rise, .summary .slot, .ribbon { animation: none; }
   .stage.shake, .stage.shake-big, .flash.go { animation: none; }
@@ -288,8 +310,9 @@ body.playing .note { visibility: hidden; }
 
   <div class="settings" id="settings" hidden>
     <div class="line"><span>Sound<small>Chimes, rip and reveal stings.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
-    <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 20,000.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
+    <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 400, and the Mythic meter guarantees one by pack 200.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
     <div class="line"><span>Extra packs<small>Testing only. Real packs come from the 5-hour claim.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
+    <div class="line"><span>My team<small id="myTeamTxt">Not picked yet.</small></span><button type="button" class="chip" id="changeTeam">Change</button></div>
     <div class="line"><span>Start over<small>Deletes your collection on this device.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
     <div class="line warn" id="storageWarn" hidden>This browser is blocking storage, so progress will be lost when you close the page.</div>
   </div>
@@ -298,6 +321,13 @@ body.playing .note { visibility: hidden; }
     <div class="packs">Packs<b id="packCount">0</b></div>
     <div class="timer" id="timer"></div>
     <button type="button" class="claim" id="claim" hidden>Claim pack</button>
+    <div class="meter" id="meter"><span>Mythic meter</span><span class="mbar"><i id="meterBar"></i></span><em id="meterTxt"></em></div>
+  </div>
+  <div class="teampick" id="teamPick" hidden>
+    <b>Which team are you on?</b>
+    <p>Your team's card gets a gold border, and pulling it gets its own moment. Your first pack includes it if it was at Champs.</p>
+    <form id="teamForm"><input id="teamInput" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="Team #" aria-label="Team number"><button type="submit" class="cta small">Save</button><button type="button" class="cta small ghost" id="teamSkip">Skip</button></form>
+    <div class="msg" id="teamMsg" hidden></div>
   </div>
 
   <section id="viewOpen">
@@ -337,6 +367,7 @@ body.playing .note { visibility: hidden; }
     <div class="binder-head">
       <div class="binder-sum"><h2>Binder</h2><span id="binderSum"></span></div>
       <div class="tiers" id="tiers" role="group" aria-label="Filter by rarity"></div>
+      <div class="tiers divs" id="divs" role="group" aria-label="Division sets"></div>
       <div><button type="button" class="chip" id="missingBtn" aria-pressed="false" hidden>Show cards I'm missing</button></div>
     </div>
     <div class="grid" id="grid"></div>
@@ -911,6 +942,10 @@ body.playing .note { visibility: hidden; }
   var POOL = {}; ORDER.forEach(function (t) { POOL[t] = []; });
   TEAMS.forEach(function (t) { POOL[t.tier].push(t); });
   $("#poolN").textContent = TEAMS.length;
+  /* Division sets: own every team from one Houston division for a bonus pack. */
+  var DIVS = [], DIV_TEAMS = {};
+  TEAMS.forEach(function (t) { if (!DIV_TEAMS[t.div]) { DIV_TEAMS[t.div] = []; DIVS.push(t.div); } DIV_TEAMS[t.div].push(t); });
+  DIVS.sort();
 
   /* ---------- random + rolls ---------- */
   function rand() { try { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; } catch (e) { return Math.random(); } }
@@ -918,19 +953,30 @@ body.playing .note { visibility: hidden; }
   function weighted(w) { var r = rand(), s = 0, k; for (k in w) { s += w[k]; if (r < s) return k; } return k; }
   var SLOT_ODDS = { common: .70, uncommon: .22, rare: .07, legendary: .01 };
   var LAST_ODDS = { rare: .85, legendary: .15 };
-  function rollPack(demo, rng) {
-    var saved = rand; if (rng) rand = rng;
+  /* Mythic meter: 1 in 400 per pack, ramping up after pack 150 without one, guaranteed at pack 200.
+     Legendary or better is guaranteed if 9 packs in a row had none. */
+  var MYTHIC_BASE = 1 / 400, SOFT = 150, HARD = 200, LEG_EVERY = 10;
+  function mythicChance(demo, n) { var p = demo ? .2 : MYTHIC_BASE; if (n > SOFT) p = Math.max(p, Math.min(1, (n - SOFT) / (HARD - SOFT))); return p; }
+  /* o = { pity: { m, l } packs since the last Mythic and Legendary+, first: the scripted first pack, team: your team, slipped in } */
+  function rollPack(demo, rng, o) {
+    o = o || {}; var saved = rand; if (rng) rand = rng;
     try {
-      var cards = [], used = {};
+      var cards = [], used = {}, pm = o.pity ? o.pity.m + 1 : 0, pl = o.pity ? o.pity.l + 1 : 0;
       for (var i = 0; i < 5; i++) {
         var tier;
         if (i < 4) tier = weighted(SLOT_ODDS);
-        else if (rand() < (demo ? .2 : 1 / 20000)) tier = "mythic";
+        else if (rand() < mythicChance(demo, pm)) tier = "mythic";
+        else if (o.first || pl >= LEG_EVERY) tier = "legendary";
         else tier = weighted(demo ? { rare: .6, legendary: .4 } : LAST_ODDS);
         var team, tries = 0;
         do { team = pick(POOL[tier]); tries++; } while (used[team.num] && tries < 12);
         used[team.num] = 1;
         cards.push({ num: team.num, tier: tier });
+      }
+      var mine = o.team && BY_NUM[o.team];
+      if (mine && !used[mine.num]) {
+        var k = -1; for (var j = 0; j < 5; j++) if (cards[j].tier === mine.tier) { k = j; break; }
+        cards[k < 0 ? 0 : k] = { num: mine.num, tier: mine.tier };
       }
       return cards;
     } finally { rand = saved; }
@@ -939,7 +985,8 @@ body.playing .note { visibility: hidden; }
 
   /* ---------- storage ---------- */
   var KEY = "frcpacks.cmp26", storageOk = true, S;
-  function fresh() { return { v: 1, packs: 2, nextClaimAt: 0, inv: {}, pending: null, opened: 0, muted: false, demo: true, unseen: {} }; }
+  function fresh() { return { v: 1, packs: 2, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, muted: false, demo: true, unseen: {}, pity: { m: 0, l: 0 }, team: 0, teamAsked: false, sets: {} }; }
+  function cleanObj(o) { return o && typeof o === "object" && !Array.isArray(o) ? o : {}; }
   function readSave() {
     try {
       var raw = localStorage.getItem(KEY);
@@ -948,6 +995,10 @@ body.playing .note { visibility: hidden; }
         if (o && o.v === 1 && isFinite(o.packs) && o.packs >= 0 && o.packs < 10000 && isFinite(o.nextClaimAt) && o.inv && typeof o.inv === "object" && !Array.isArray(o.inv)) {
           o.packs = Math.floor(o.packs); o.opened = isFinite(o.opened) ? o.opened : 0;
           if (!o.unseen || typeof o.unseen !== "object" || Array.isArray(o.unseen)) o.unseen = {};
+          var pi = cleanObj(o.pity); o.pity = { m: isFinite(pi.m) && pi.m >= 0 ? Math.min(Math.floor(pi.m), HARD) : 0, l: isFinite(pi.l) && pi.l >= 0 ? Math.min(Math.floor(pi.l), LEG_EVERY) : 0 };
+          o.team = isFinite(o.team) && o.team > 0 && o.team < 100000 ? Math.floor(o.team) : 0;
+          if (typeof o.teamAsked !== "boolean") o.teamAsked = true; // older saves skip the question
+          o.sets = cleanObj(o.sets);
           Object.keys(o.inv).forEach(function (k) { if (!Array.isArray(o.inv[k])) delete o.inv[k]; else o.inv[k] = o.inv[k].filter(function (x) { return /^\d{1,6}$/.test(x); }); });
           return o;
         }
@@ -995,7 +1046,16 @@ body.playing .note { visibility: hidden; }
   var sfx = {
     tick: function () { blip(900, .03, "square", .02); },
     pick: function () { blip(520, .08, "triangle", .08); blip(780, .1, "triangle", .06, .06); },
-    rip: function () { noise(.4, .5, 2400); blip(180, .15, "sawtooth", .05); buzz([20, 30, 40]); },
+    rip: function (best) {
+      noise(.4, .5, 2400); blip(180, .15, "sawtooth", .05);
+      if (best === "legendary" || best === "mythic") { chord([392, 523, 659], .06, "triangle", .07); buzz([30, 30, 60, 30, 90]); }
+      else if (best === "rare") { blip(523, .2, "triangle", .06, .05); buzz([20, 30, 50]); }
+      else buzz([20, 30, 40]);
+    },
+    tease: function (tier) { if (tier === "rare") { blip(1318, .12, "sine", .03); buzz(12); } else { blip(1318, .14, "sine", .04); blip(1760, .14, "sine", .03, .09); buzz([15, 40, 15]); } },
+    promote: function () { [523, 659, 784, 1046, 1318].forEach(function (f, i) { blip(f, .18, "triangle", .06, i * .05); }); buzz([20, 20, 20, 20, 60]); },
+    riser: function () { if (S.muted) return; var a = actx(); if (!a) return; var t = a.currentTime, o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(880, t + .45); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t + .4); g.gain.exponentialRampToValueAtTime(.0001, t + .5); o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + .55); buzz([10, 30, 10, 30, 10, 30]); },
+    mine: function () { chord([659, 784, 988, 1318], .07, "triangle", .08); buzz([40, 40, 80]); },
     whoosh: function () { noise(.18, .18, 900); },
     claim: function () { chord([392, 523, 659], .08, "triangle", .09); },
     flip: function (tier) {
@@ -1113,6 +1173,7 @@ body.playing .note { visibility: hidden; }
     var slot = document.createElement("div");
     slot.className = "slot" + (opts.faceUp ? " flipped" : "") + (opts.button ? " btn" : "") + (opts.alive ? " alive" : "");
     slot.style.setProperty("--tc", T.color);
+    if (S.team && c.num === S.team) slot.classList.add("mine");
     if (opts.button) { slot.setAttribute("role", "button"); slot.tabIndex = 0; }
     slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
     var art = '<div class="art">' + artSVG(t.num, c.tier) + '</div>';
@@ -1152,25 +1213,37 @@ body.playing .note { visibility: hidden; }
       '<div class="pk-feat">Houston · 8 divisions</div></div></div></div>';
     var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Championship</h3>' +
       '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better.</div>' +
-      '<div class="odds"><span>Common</span><b>70%</b><span>Uncommon</span><b>22%</b><span>Rare</span><b>7%</b><span>Legendary</span><b>1%</b><span>Mythic</span><b>' + (S.demo ? "1 in 5*" : "1 in 20,000") + '</b></div>' +
-      '<small>Per card in slots 1 to 4, Mythic per pack. Every pack on the shelf is the same pack.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
+      '<div class="odds"><span>Common</span><b>70%</b><span>Uncommon</span><b>22%</b><span>Rare</span><b>7%</b><span>Legendary</span><b>1%</b><span>Mythic</span><b>' + (S.demo ? "1 in 5*" : "1 in 400") + '</b></div>' +
+      '<small>Per card in slots 1 to 4, Mythic per pack. The Mythic meter guarantees one by pack ' + HARD + ', and Legendary or better comes at least every ' + LEG_EVERY + ' packs.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
     return '<div class="pk" style="--h:' + PACK_HUE + '">' + front + b + '</div>';
   }
 
   /* ---------- status bar, timer, claim ---------- */
   var packCount = $("#packCount"), timerEl = $("#timer"), claimBtn = $("#claim");
   function fmt(ms) { var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0"); }
+  /* Free packs bank up to 2, so missing one timer overnight doesn't cost a pack. */
+  var BANK = 2;
+  function banked(now) { return now < S.nextClaimAt ? 0 : Math.min(BANK, 1 + Math.floor((now - S.nextClaimAt) / CLAIM_MS)); }
   function paintStatus() {
     var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS;
     packCount.textContent = S.packs;
-    var left = S.nextClaimAt - now;
-    if (left <= 0) { timerEl.textContent = "A free pack is ready"; claimBtn.hidden = false; }
-    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(left) + "</b>"; claimBtn.hidden = true; }
+    var n = banked(now);
+    if (n >= BANK) { timerEl.textContent = BANK + " free packs are ready"; claimBtn.hidden = false; claimBtn.textContent = "Claim " + BANK + " packs"; }
+    else if (n === 1) { timerEl.innerHTML = "A free pack is ready · another in <b>" + fmt(S.nextClaimAt + CLAIM_MS - now) + "</b>"; claimBtn.hidden = false; claimBtn.textContent = "Claim pack"; }
+    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(S.nextClaimAt - now) + "</b>"; claimBtn.hidden = true; }
+    paintMeter();
+  }
+  function paintMeter() {
+    var n = S.pity.m, el = $("#meter");
+    $("#meterBar").style.width = (Math.min(n, HARD) / HARD * 100) + "%";
+    $("#meterTxt").textContent = n + " / " + HARD;
+    el.classList.toggle("hot", n >= SOFT);
+    el.title = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + ".";
   }
   setInterval(function () { paintStatus(); if (state === "select") paintSelectHud(); }, 1000);
   claimBtn.addEventListener("click", function () {
-    if (Date.now() < S.nextClaimAt) return; actx();
-    S.packs++; S.nextClaimAt = Date.now() + CLAIM_MS; save(); paintStatus(); sfx.claim();
+    var now = Date.now(), n = banked(now); if (!n) return; actx();
+    S.packs += n; S.nextClaimAt = n >= BANK ? now + CLAIM_MS : S.nextClaimAt + n * CLAIM_MS; save(); paintStatus(); sfx.claim();
     var r = claimBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 18, "#27d3c3", 5);
     if (state === "select") paintSelectHud();
   });
@@ -1233,7 +1306,7 @@ body.playing .note { visibility: hidden; }
     if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
     inspectEl.className = "inspect"; rotY = 0; rotX = 0;
-    inspectEl.innerHTML = '<div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div>';
+    inspectEl.innerHTML = '<div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div><div class="tell"></div>';
     showOnly("inspect");
     setHud(SWIPE + " across the top to open", "Drag the pack to turn it over");
     try { $("#openBtn").focus({ preventScroll: true }); } catch (e) {}
@@ -1279,24 +1352,36 @@ body.playing .note { visibility: hidden; }
   function commitRip() {
     var latest = readSave(); if (latest && !latest.pending) S = latest;
     if (S.packs < 1) return false;
-    var cards = rollPack(S.demo).map(function (c) {
+    var first = S.opened === 0;
+    var cards = rollPack(S.demo, null, { pity: S.pity, first: first, team: first ? S.team : 0 }).map(function (c) {
       var arr = S.inv[c.num] || (S.inv[c.num] = []);
       var serial = newSerial(arr), isNew = arr.length === 0; arr.push(serial);
       if (isNew) S.unseen[c.num] = 1;
       return { num: c.num, tier: c.tier, serial: serial, isNew: isNew, copy: arr.length };
     });
     cards.sort(function (a, b) { return ORDER.indexOf(b.tier) - ORDER.indexOf(a.tier); }); // best card last
-    S.packs--; S.opened++; S.pending = { cards: cards, revealed: 0 }; save();
+    var hasM = cards.some(function (c) { return c.tier === "mythic"; }), hasL = hasM || cards.some(function (c) { return c.tier === "legendary"; });
+    S.pity = { m: hasM ? 0 : S.pity.m + 1, l: hasL ? 0 : S.pity.l + 1 };
+    var done = [];
+    cards.forEach(function (c) {
+      var d = BY_NUM[c.num].div;
+      if (S.sets[d] || done.indexOf(d) >= 0) return;
+      if (DIV_TEAMS[d].every(function (t) { return S.inv[t.num] && S.inv[t.num].length; })) { S.sets[d] = 1; S.packs++; done.push(d); }
+    });
+    S.packs--; S.opened++; S.pending = { cards: cards, revealed: 0, sets: done }; save();
     return true;
   }
   function cut() {
     if (state !== "inspect") return; state = "cutting";
     if (!commitRip()) { paintSelect(); say("Out of packs", 2000); return; }
-    paintStatus(); sfx.rip(); shake(false); document.body.classList.add("cutting");
-    inspectEl.classList.add("cut");
-    var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, 40, "#ffffff", 7);
+    /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
+    var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
+    paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
+    inspectEl.style.setProperty("--tell", TIERS[promo ? "legendary" : best].color); inspectEl.classList.add("cut", "told");
+    var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, TIERS[promo ? "legendary" : best].color, 7);
+    if (promo) setTimeout(function () { if (state !== "cutting") return; inspectEl.classList.add("rainbow"); sfx.promote(); burst(r.left + r.width / 2, r.top + r.height * .3, 50, null, 8, true); }, RM ? 0 : 480);
     setHud("", ""); shelfPacks = [];
-    setTimeout(function () { buildStack(0); }, RM ? 100 : 750);
+    setTimeout(function () { buildStack(0); }, RM ? 100 : big ? 1150 : 750);
   }
   function buildStack(from) {
     deck = S.pending.cards; idx = from; stackEl.innerHTML = ""; summaryEl.innerHTML = "";
@@ -1304,6 +1389,7 @@ body.playing .note { visibility: hidden; }
       var c = deck[i], hidden = c.tier !== "common" && c.tier !== "uncommon";
       var el = cardEl(c, { faceUp: !hidden, ribbon: true });
       if (hidden) el.classList.add("tease");
+      if (c.tier === "mythic") { el.style.setProperty("--tc", TIERS.legendary.color); el._promo = true; }
       el._c = c; el._hidden = hidden;
       stackEl.appendChild(el);
     }
@@ -1319,13 +1405,31 @@ body.playing .note { visibility: hidden; }
     var all = stackEl.children;
     for (var i = 0; i < all.length; i++) { all[i].style.setProperty("--k", all.length - 1 - i); all[i].classList.toggle("top", all[i] === el); }
     var c = el._c;
-    if (el._hidden) setHud("Something shiny…", TAP + " to flip it");
-    else { showRibbon(el); setHud(c.isNew ? "New card" : TIERS[c.tier].label, NEXT); }
+    if (el._hidden) {
+      setHud("Something shiny…", TAP + " to flip it");
+      if (!el._teased) { el._teased = true; sfx.tease(c.tier); }
+      if (el._promo) setTimeout(function () { if (!el._promo || !el._hidden || el !== topEl()) return; promoteCard(el); setHud("Something very shiny…", TAP + " to flip it"); }, RM ? 0 : 900);
+    }
+    else { showRibbon(el); setHud(c.isNew ? "New card" : TIERS[c.tier].label, NEXT); if (isMine(c)) celebrateMine(el); }
+  }
+  function promoteCard(el) { el._promo = false; el.style.setProperty("--tc", TIERS.mythic.color); sfx.promote(); var r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, null, 7, true); }
+  function isMine(c) { return S.team && c.num === S.team; }
+  function celebrateMine(el) {
+    if (el._cheered) return; el._cheered = true; sfx.mine();
+    var r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 50, "#ffd34d", 8);
+    say("Your team! " + BY_NUM[el._c.num].name + " (" + el._c.num + ")", 3000);
   }
   var NEXT = MOUSE ? "Click or press → for the next card" : "Swipe or tap for the next card";
   function showRibbon(el) { if (el._ribbon) el._ribbon.hidden = false; }
   function reveal(el) {
+    if (el._c.tier !== "mythic" || RM) return doReveal(el);
+    /* A Mythic gets a beat of build-up before the flip. */
+    state = "flipping"; if (el._promo) promoteCard(el); sfx.riser();
+    setTimeout(function () { if (state === "flipping") doReveal(el); }, 450);
+  }
+  function doReveal(el) {
     var c = el._c, T = TIERS[c.tier], t = BY_NUM[c.num];
+    el._promo = false; el.style.setProperty("--tc", T.color);
     el._hidden = false; el.classList.add("flipped"); el.classList.remove("tease"); sfx.flip(c.tier); state = "flipping";
     setTimeout(function () {
       if (state === "summary") return; // skipped ahead
@@ -1340,6 +1444,7 @@ body.playing .note { visibility: hidden; }
         say("MYTHIC PULL · " + t.name + " (" + t.num + ") · No. " + c.serial, 5200);
       }
       setHud(T.label + (c.isNew ? " · new" : ""), NEXT);
+      if (isMine(c)) setTimeout(function () { celebrateMine(el); }, c.tier === "mythic" || c.tier === "legendary" ? 1600 : 200);
     }, 380);
     setTimeout(function () { if (state === "flipping") state = "stack"; }, RM ? 400 : 850);
   }
@@ -1385,7 +1490,17 @@ body.playing .note { visibility: hidden; }
     else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { var el = topEl(); if (el && !el._hidden) fling(el, e.key === "ArrowRight" ? 1 : -1); }
   });
 
+  function nearSet() {
+    var best = null;
+    DIVS.forEach(function (d) {
+      if (S.sets[d]) return;
+      var miss = DIV_TEAMS[d].filter(function (t) { return !(S.inv[t.num] && S.inv[t.num].length); }).length;
+      if (miss > 0 && miss <= 3 && (!best || miss < best.miss)) best = { d: d, miss: miss };
+    });
+    return best;
+  }
   function summary(skipped) {
+    var sets = (S.pending && S.pending.sets) || [];
     state = "summary"; S.pending = null; save(); document.body.classList.remove("takeover");
     summaryEl.innerHTML = "";
     deck.forEach(function (c, i) {
@@ -1398,8 +1513,10 @@ body.playing .note { visibility: hidden; }
     showOnly("summary");
     var best = deck[deck.length - 1], bt = BY_NUM[best.num], news = deck.filter(function (c) { return c.isNew; }).length;
     var have = Object.keys(S.inv).filter(function (k) { return BY_NUM[k] && S.inv[k].length; }).length;
-    setHud(best.tier === "mythic" ? bt.name + ". Mythic." : "Best pull: " + bt.name, (news ? news + " new · " : "No new teams · ") + have + " of " + TEAMS.length + " collected");
-    paintTabDot();
+    var near = nearSet();
+    setHud(best.tier === "mythic" ? bt.name + ". Mythic." : "Best pull: " + bt.name, (news ? news + " new · " : "No new teams · ") + have + " of " + TEAMS.length + " collected" + (near ? " · " + near.miss + " away from the " + near.d + " set" : ""));
+    paintTabDot(); paintStatus();
+    if (sets.length) setTimeout(function () { if (state !== "summary") return; sfx.claim(); say((sets.length > 1 ? sets.slice(0, -1).join(", ") + " and " + sets[sets.length - 1] : sets[0]) + " set complete! +" + sets.length + (sets.length === 1 ? " pack" : " packs"), 4200); }, skipped ? 1800 : 400);
     if (skipped) {
       /* Skipping still gets the big moment for the best hidden card. */
       sfx.flip(skipped.tier);
@@ -1433,7 +1550,7 @@ body.playing .note { visibility: hidden; }
   function ownedList() {
     var out = [];
     Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length) out.push(t); });
-    out.sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    out.sort(function (a, b) { return (b.num === S.team) - (a.num === S.team) || ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
     return out;
   }
   function paintBinder() {
@@ -1451,8 +1568,18 @@ body.playing .note { visibility: hidden; }
       b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b><em>' + counts[t] + '/' + POOL[t].length + '</em><span class="bar"><i style="width:' + (POOL[t].length ? counts[t] / POOL[t].length * 100 : 0) + '%"></i></span>';
       b.onclick = function () { filter = t; shown = 48; paintBinder(); }; tiersEl.appendChild(b);
     });
+    var divsEl = $("#divs"); divsEl.innerHTML = "";
+    DIVS.forEach(function (d) {
+      var have = DIV_TEAMS[d].filter(function (t) { return S.inv[t.num] && S.inv[t.num].length; }).length, key = "div:" + d;
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (filter === key ? " on" : "") + (S.sets[d] ? " done" : ""); b.setAttribute("aria-pressed", String(filter === key));
+      b.innerHTML = '<b>' + esc(d) + '</b><em>' + have + '/' + DIV_TEAMS[d].length + '</em><span class="bar"><i style="width:' + (have / DIV_TEAMS[d].length * 100) + '%"></i></span>';
+      b.title = S.sets[d] ? "Set complete" : "Collect every team in " + d + " for a bonus pack";
+      b.onclick = function () { filter = key; shown = 48; paintBinder(); }; divsEl.appendChild(b);
+    });
+    var isDiv = filter.indexOf("div:") === 0, dname = filter.slice(4);
     missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
-    var list = (showMissing && filter !== "all") ? POOL[filter] : owned.filter(function (t) { return filter === "all" || t.tier === filter; });
+    var list = (showMissing && filter !== "all") ? (isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; })
+      : owned.filter(function (t) { return filter === "all" || (isDiv ? t.div === dname : t.tier === filter); });
     gridEl.innerHTML = "";
     if (!list.length) {
       var e = document.createElement("div"); e.className = "empty-binder"; e.style.gridColumn = "1 / -1";
@@ -1511,7 +1638,7 @@ body.playing .note { visibility: hidden; }
     var b = which === "binder";
     banner.classList.remove("show");
     vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
-    $("#status").hidden = b; document.body.classList.toggle("focus", !b && state === "inspect");
+    $("#status").hidden = b; paintTeamPick(b); document.body.classList.toggle("focus", !b && state === "inspect");
     if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} }
     else { try { history.replaceState(null, "", "#open"); } catch (e) {} if (state === "select") requestAnimationFrame(centerShelf); }
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
@@ -1525,11 +1652,32 @@ body.playing .note { visibility: hidden; }
   muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
   demoBtn.onclick = function () { S.demo = !S.demo; save(); paintToggles(); };
   $("#demoPack").onclick = function () { S.packs++; save(); paintStatus(); if (state === "select") paintSelectHud(); };
-  $("#skipTimer").onclick = function () { S.nextClaimAt = 0; save(); paintStatus(); if (state === "select") paintSelectHud(); };
+  $("#skipTimer").onclick = function () { S.nextClaimAt = Math.min(S.nextClaimAt - CLAIM_MS, Date.now()); save(); paintStatus(); if (state === "select") paintSelectHud(); };
+  /* ---------- my team ---------- */
+  var teamPick = $("#teamPick"), teamInput = $("#teamInput"), teamMsg = $("#teamMsg");
+  function paintTeamPick(inBinder) {
+    if (inBinder === undefined) inBinder = !vBinder.hidden;
+    teamPick.hidden = S.teamAsked || inBinder;
+    var t = S.team && BY_NUM[S.team];
+    $("#myTeamTxt").textContent = !S.team ? "Not picked yet." : "Team " + S.team + (t ? " · " + t.name : " · not in the 2026 Championship pack");
+  }
+  $("#teamForm").addEventListener("submit", function (e) {
+    e.preventDefault(); var n = parseInt(teamInput.value, 10);
+    if (!(n > 0 && n < 100000)) { teamMsg.hidden = false; teamMsg.textContent = "Enter your team number, like 254."; return; }
+    S.team = n; S.teamAsked = true; save(); teamMsg.hidden = true; paintTeamPick(); actx(); sfx.mine();
+    var t = BY_NUM[n];
+    say(t ? "Team " + n + ", " + t.name + ", is your team" + (S.opened === 0 ? ". It's in your first pack." : ".") : "Saved team " + n + ". It wasn't at Champs 2026, so it isn't in this pack.", 4200);
+    if (state === "select") paintSelect(); if (!vBinder.hidden) paintBinder();
+  });
+  $("#teamSkip").onclick = function () { S.teamAsked = true; save(); teamMsg.hidden = true; paintTeamPick(); };
+  $("#changeTeam").onclick = function () {
+    S.teamAsked = false; save(); settings.hidden = true; gear.setAttribute("aria-expanded", "false"); show("open");
+    teamInput.value = S.team || ""; try { teamInput.focus(); } catch (e) {}
+  };
   var resetBtn = $("#reset"), armed = 0;
   resetBtn.onclick = function () {
     if (!armed) { armed = 1; resetBtn.textContent = "Tap again to delete"; setTimeout(function () { armed = 0; resetBtn.textContent = "Reset collection"; }, 3500); return; }
-    armed = 0; resetBtn.textContent = "Reset collection"; var d = S.demo, m = S.muted; S = fresh(); S.demo = d; S.muted = m; save(); paintTabDot();
+    armed = 0; resetBtn.textContent = "Reset collection"; var d = S.demo, m = S.muted, tm = S.team; S = fresh(); S.demo = d; S.muted = m; S.team = tm; S.teamAsked = true; save(); paintTabDot(); paintTeamPick();
     document.body.classList.remove("takeover"); shelfPacks = []; paintSelect(); if (!vBinder.hidden) paintBinder();
   };
   paintToggles();
@@ -1541,7 +1689,7 @@ body.playing .note { visibility: hidden; }
     else paintSelect();
     paintStatus(); show(hash === "binder" ? "binder" : "open");
   }
-  window.__frc = { S: function () { return S; }, rollPack: rollPack, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, state: function () { return state; }, cardEl: cardEl };
+  window.__frc = { S: function () { return S; }, rollPack: rollPack, mythicChance: mythicChance, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, DIVS: DIVS, DIV_TEAMS: DIV_TEAMS, state: function () { return state; }, cardEl: cardEl };
   boot();
 })();
 </script>

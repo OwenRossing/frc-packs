@@ -30,7 +30,22 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check(sim.dupes === 0, 'no duplicate team inside one pack');
   const slotShare = t => sim.tiers[t] / (sim.N * 4 + sim.N * 1);
   check(Math.abs(sim.tiers.common / (sim.N * 4) - .70) < .01, 'common about 70% of slots 1-4 (' + (sim.tiers.common / (sim.N * 4)).toFixed(3) + ')');
-  check(sim.myth >= 1 && sim.myth <= 30, 'mythic about 1 in 20,000 packs (' + sim.myth + ' in ' + sim.N + ')');
+  check(sim.myth >= 380 && sim.myth <= 640, 'mythic about 1 in 400 packs before pity (' + sim.myth + ' in ' + sim.N + ')');
+  const pity = await p.evaluate(() => {
+    const f = window.__frc; let hard = 0, leg = 0, first = 0, mine = 0;
+    for (let i = 0; i < 2000; i++) {
+      if (f.rollPack(false, null, { pity: { m: 199, l: 0 } })[4].tier === 'mythic') hard++;
+      if (['legendary', 'mythic'].includes(f.rollPack(false, null, { pity: { m: 0, l: 9 } })[4].tier)) leg++;
+      if (['legendary', 'mythic'].includes(f.rollPack(false, null, { first: true })[4].tier)) first++;
+      const c = f.rollPack(false, null, { team: 254 }); if (c.filter(x => x.num === 254).length === 1 && new Set(c.map(x => x.num)).size === 5) mine++;
+    }
+    return { hard, leg, first, mine, soft: f.mythicChance(false, 175), base: f.mythicChance(false, 10) };
+  });
+  check(pity.hard === 2000, 'Mythic meter guarantees a Mythic at pack 200');
+  check(pity.leg === 2000, 'Legendary or better is guaranteed on the 10th dry pack');
+  check(pity.first === 2000, 'the scripted first pack always ends in Legendary or better');
+  check(pity.mine === 2000, 'your team is slipped into the pack exactly once');
+  check(pity.base === 1 / 400 && pity.soft > .4 && pity.soft < .6, 'Mythic odds climb after pack 150 ' + JSON.stringify(pity));
   check(Object.values(sim.pools).every(n => n > 20), 'every tier has cards in the pool ' + JSON.stringify(sim.pools));
 
   // 2. fresh load state
@@ -42,6 +57,11 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check(!(await p.locator('#claim').isVisible()), 'claim button hides after claiming');
   await p.click('#claim', { force: true }).catch(() => {});
   check(await p.locator('#packCount').textContent() === '3', 'double claim does nothing');
+
+  // pick your team on first visit; the first pack then includes it
+  check(await p.locator('#teamPick').isVisible(), 'asks for your team on first visit');
+  await p.fill('#teamInput', '254'); await p.click('#teamForm button[type=submit]'); await p.waitForTimeout(150);
+  check((await p.evaluate(() => window.__frc.S().team)) === 254 && !(await p.locator('#teamPick').isVisible()), 'saving a team hides the question');
 
   // 3. play three packs through the UI (button, swipe-cut + swipe cards, button), demo luck on
   check((await p.locator('.pick').count()) === 10, 'shelf shows 10 packs');
@@ -57,6 +77,9 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
     await p.click('#backBtn'); await waitState(p, 'select'); }
   await openOne(p); await p.waitForTimeout(700); await p.screenshot({ path: out + '/02-pack1-done.png' });
   check((await p.locator('#summary .slot').count()) === 5, 'summary shows all 5 cards');
+  check((await p.locator('#summary .slot.mine').count()) === 1, 'first pack includes your team with the gold border');
+  check(/Legendary|Mythic/.test(await p.locator('#summary .slot').last().getAttribute('aria-label')), 'first pack ends in Legendary or better');
+  check((await p.evaluate(() => window.__frc.S().pity.m)) <= 1, 'Mythic meter counts the pack');
   check(await p.locator('#packCount').textContent() === '2', 'opening a pack uses one');
   await p.click('#again'); await waitState(p, 'inspect');
   check(true, 'open another pack goes straight to a pack in hand');
@@ -107,6 +130,12 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check(after.cards === before && after.rev === 1 && after.left === 4, 'closing mid-pack resumes the same cards at card 2 ' + JSON.stringify(after));
   check(after.st === 'stack', 'resumed pack shows the stack');
   await p.screenshot({ path: out + '/06-resume.png' });
+
+  // banked packs: two missed timers give two packs, never more
+  await p.evaluate(() => { const s = JSON.parse(localStorage.getItem('frcpacks.cmp26')); s.pending = null; s.nextClaimAt = Date.now() - 30 * 3600e3; localStorage.setItem('frcpacks.cmp26', JSON.stringify(s)); });
+  await p.reload(); await p.waitForTimeout(300);
+  { const n0 = +(await p.locator('#packCount').textContent()); await p.click('#claim'); await p.waitForTimeout(150);
+    check(+(await p.locator('#packCount').textContent()) === n0 + 2 && !(await p.locator('#claim').isVisible()), 'missed timers bank up to 2 packs'); }
 
   // 6. corrupt storage, blocked storage
   await p.evaluate(() => localStorage.setItem('frcpacks.cmp26', '{not json'));
