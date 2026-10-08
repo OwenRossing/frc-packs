@@ -461,11 +461,11 @@ body.playing .note { visibility: hidden; }
   function rand() { try { var a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; } catch (e) { return Math.random(); } }
   function pick(arr) { return arr[Math.floor(rand() * arr.length)]; }
   function weighted(w) { var r = rand(), s = 0, k; for (k in w) { s += w[k]; if (r < s) return k; } return k; }
-  var SLOT_ODDS = { common: .70, uncommon: .22, rare: .07, legendary: .01 };
-  var LAST_ODDS = { rare: .85, legendary: .15 };
+  var SLOT_ODDS = { common: .705, uncommon: .22, rare: .07, legendary: .005 };
+  var LAST_ODDS = { rare: .93, legendary: .07 };
   /* Mythic meter: 1 in 400 per pack, ramping up after pack 150 without one, guaranteed at pack 200.
-     Legendary or better is guaranteed if 9 packs in a row had none. */
-  var MYTHIC_BASE = 1 / 400, SOFT = 150, HARD = 200, LEG_EVERY = 10;
+     Legendary or better is guaranteed if 19 packs in a row had none. That works out to about 1 pack in 10. */
+  var MYTHIC_BASE = 1 / 400, SOFT = 150, HARD = 200, LEG_EVERY = 20;
   function mythicChance(demo, n) { var p = demo ? .2 : MYTHIC_BASE; if (n > SOFT) p = Math.max(p, Math.min(1, (n - SOFT) / (HARD - SOFT))); return p; }
   /* o = { pity: { m, l } packs since the last Mythic and Legendary+, first: the scripted first pack, team: your team, slipped in } */
   function rollPack(demo, rng, o) {
@@ -477,7 +477,7 @@ body.playing .note { visibility: hidden; }
         if (i < 4) tier = weighted(SLOT_ODDS);
         else if (rand() < mythicChance(demo, pm)) tier = "mythic";
         else if (o.first || pl >= LEG_EVERY) tier = "legendary";
-        else tier = weighted(demo ? { rare: .6, legendary: .4 } : LAST_ODDS);
+        else tier = weighted(LAST_ODDS); // demo luck only boosts Mythic
         var team, tries = 0;
         do { team = pick(POOL[tier]); tries++; } while (used[team.num] && tries < 12);
         used[team.num] = 1;
@@ -727,8 +727,8 @@ body.playing .note { visibility: hidden; }
       '<div class="pk-hero"><div class="burst"></div>' + TROPHY + '</div>' +
       '<div class="pk-feat">Houston · 8 divisions</div></div></div></div>';
     var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Championship</h3>' +
-      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better.</div>' +
-      '<div class="odds"><span>Common</span><b>70%</b><span>Uncommon</span><b>22%</b><span>Rare</span><b>7%</b><span>Legendary</span><b>1%</b><span>Mythic</span><b>' + (S.demo ? "1 in 5*" : "1 in 400") + '</b></div>' +
+      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better (Legendary 7%).</div>' +
+      '<div class="odds"><span>Common</span><b>70.5%</b><span>Uncommon</span><b>22%</b><span>Rare</span><b>7%</b><span>Legendary</span><b>0.5%</b><span>Mythic</span><b>' + (S.demo ? "1 in 5*" : "1 in 400") + '</b></div>' +
       '<small>Per card in slots 1 to 4, Mythic per pack. The Mythic meter guarantees one by pack ' + HARD + ', and Legendary or better comes at least every ' + LEG_EVERY + ' packs.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
     return '<div class="pk" style="--h:' + PACK_HUE + '">' + front + b + '</div>';
   }

@@ -35,14 +35,14 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
     const f = window.__frc; let hard = 0, leg = 0, first = 0, mine = 0;
     for (let i = 0; i < 2000; i++) {
       if (f.rollPack(false, null, { pity: { m: 199, l: 0 } })[4].tier === 'mythic') hard++;
-      if (['legendary', 'mythic'].includes(f.rollPack(false, null, { pity: { m: 0, l: 9 } })[4].tier)) leg++;
+      if (['legendary', 'mythic'].includes(f.rollPack(false, null, { pity: { m: 0, l: 19 } })[4].tier)) leg++;
       if (['legendary', 'mythic'].includes(f.rollPack(false, null, { first: true })[4].tier)) first++;
       const c = f.rollPack(false, null, { team: 254 }); if (c.filter(x => x.num === 254).length === 1 && new Set(c.map(x => x.num)).size === 5) mine++;
     }
     return { hard, leg, first, mine, soft: f.mythicChance(false, 175), base: f.mythicChance(false, 10) };
   });
   check(pity.hard === 2000, 'Mythic meter guarantees a Mythic at pack 200');
-  check(pity.leg === 2000, 'Legendary or better is guaranteed on the 10th dry pack');
+  check(pity.leg === 2000, 'Legendary or better is guaranteed on the 20th dry pack');
   check(pity.first === 2000, 'the scripted first pack always ends in Legendary or better');
   check(pity.mine === 2000, 'your team is slipped into the pack exactly once');
   check(pity.base === 1 / 400 && pity.soft > .4 && pity.soft < .6, 'Mythic odds climb after pack 150 ' + JSON.stringify(pity));
