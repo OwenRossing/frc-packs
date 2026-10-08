@@ -253,6 +253,20 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .divs .chip.done { border-color: #ffd34d; }
 .divs .chip.done b::after { content: " ✓"; color: #ffd34d; }
 .binder-head { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.packrow { display: grid; gap: 8px; }
+.ptile { display: flex; gap: 14px; align-items: center; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px 10px 10px; cursor: pointer; text-align: left; color: var(--ink); }
+.ptile.on { border-color: #2f7a86; background: #0c2a34; }
+.ptile .pmini { width: 58px; flex: none; }
+.ptile .pmini .pk-body { box-shadow: 0 6px 14px rgba(0,0,0,.5), inset 0 0 0 1.2cqw rgba(255,255,255,.14); }
+.pinfo { display: grid; gap: 5px; flex: 1; min-width: 0; }
+.pinfo .pname { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.pinfo b { font-family: var(--display); font-weight: inherit; font-size: 19px; color: var(--foam); }
+.pinfo .pct { font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.pinfo .pct em { font-style: normal; color: var(--foam); font-weight: 700; }
+.pinfo .pbar { height: 8px; background: #14323b; border-radius: 8px; overflow: hidden; }
+.pinfo .pbar i { display: block; height: 100%; background: linear-gradient(90deg, #27d3c3, #7fe0d2); border-radius: 8px; }
+.pinfo .ptiers { display: flex; gap: 4px 10px; flex-wrap: wrap; font-size: 11px; font-weight: 700; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: var(--ink-dim); }
+.pinfo .ptiers span i { font-style: normal; }
 .binder-sum { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .binder-sum h2 { margin: 0; font-family: var(--display); font-weight: inherit; font-size: 24px; color: var(--foam); }
 .binder-sum span { color: var(--ink-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -365,7 +379,8 @@ body.playing .note { visibility: hidden; }
 
   <section id="viewBinder" hidden>
     <div class="binder-head">
-      <div class="binder-sum"><h2>Binder</h2><span id="binderSum"></span></div>
+      <div class="packrow" id="packRow" role="group" aria-label="Your packs"></div>
+      <div class="binder-sum"><h2 id="binderTitle">Binder</h2><span id="binderSum"></span></div>
       <div class="tiers" id="tiers" role="group" aria-label="Filter by rarity"></div>
       <div class="tiers divs" id="divs" role="group" aria-label="Division sets"></div>
       <div><button type="button" class="chip" id="missingBtn" aria-pressed="false" hidden>Show cards I'm missing</button></div>
@@ -1206,6 +1221,9 @@ body.playing .note { visibility: hidden; }
     '<path d="M70 26 Q72 56 86 70" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round" opacity=".55"/>' +
     '<text x="90" y="56" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="20" fill="#3a2600">2026</text></svg>';
   var PACK_HUE = 222;
+  /* Pack system: every pack (set) the binder tracks. Only the 2026 Championship pack exists so far;
+     future packs add an entry here with their own team list and inventory. */
+  var PACKS = [{ id: "cmp26", name: "2026 Championship", where: "Houston · 8 divisions", teams: TEAMS }], curPack = PACKS[0];
   function packHTML(back) {
     var front = '<div class="pk-face pk-front"><div class="pk-top"></div><div class="pk-body"><div class="pk-cover">' +
       '<div class="pk-set">2026 Championship</div><div class="pk-logo">FRC<br>PACKS</div>' +
@@ -1558,6 +1576,8 @@ body.playing .note { visibility: hidden; }
     owned.forEach(function (t) { counts[t.tier]++; });
     var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
     $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
+    $("#binderTitle").textContent = "Cards";
+    paintPacks(owned, counts);
     tiersEl.innerHTML = "";
     var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
     all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
@@ -1598,6 +1618,20 @@ body.playing .note { visibility: hidden; }
     moreBtn.hidden = list.length <= shown;
   }
   moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
+  function paintPacks(owned, counts) {
+    var row = $("#packRow"); row.innerHTML = "";
+    PACKS.forEach(function (pk) {
+      var have = owned.length, total = pk.teams.length, pct = total ? Math.floor(have / total * 100) : 0;
+      var b = document.createElement("button"); b.type = "button"; b.className = "ptile" + (pk === curPack ? " on" : ""); b.setAttribute("aria-pressed", String(pk === curPack));
+      b.setAttribute("aria-label", pk.name + " pack, " + have + " of " + total + " teams collected");
+      b.innerHTML = '<div class="pmini" aria-hidden="true">' + packHTML(false) + '</div><div class="pinfo">' +
+        '<div class="pname"><b>' + esc(pk.name) + '</b><span class="pct"><em>' + pct + '%</em> · ' + have + ' of ' + total + '</span></div>' +
+        '<div class="pbar"><i style="width:' + (have / total * 100) + '%"></i></div>' +
+        '<div class="ptiers">' + ORDER.map(function (t) { return '<span style="color:' + TIERS[t].color + '">' + TIERS[t].label + ' <i>' + counts[t] + '/' + POOL[t].length + '</i></span>'; }).join("") + '</div></div>';
+      b.onclick = function () { curPack = pk; filter = "all"; shown = 48; paintBinder(); };
+      row.appendChild(b);
+    });
+  }
 
   var modal = $("#modal"), modalIn = $("#modalIn"), lastFocus = null;
   function paintTabDot() {

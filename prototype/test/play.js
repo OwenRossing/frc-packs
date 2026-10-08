@@ -110,6 +110,7 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   await p.click('#tabBinder'); await p.waitForTimeout(300);
   await p.screenshot({ path: out + '/04-binder.png' });
   check((await p.locator('#grid .ribbon:visible').count()) > 0, 'binder marks newly pulled teams');
+  check((await p.locator('#packRow .ptile').count()) === 1 && /of 515/.test(await p.locator('#packRow .ptile').textContent()), 'binder shows the 2026 Championship pack with its progress');
   const cells = await p.locator('#grid .slot').count();
   check(cells > 0 && cells <= 15, 'binder shows owned cards: ' + cells);
   await p.locator('#grid .slot').first().click(); await p.waitForTimeout(300);

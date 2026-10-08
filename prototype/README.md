@@ -10,7 +10,7 @@ What it does:
 - Pick one of 10 identical 2026 Championship packs from a shelf (they are the same pack; the choice is for fun), turn it over to read the odds, and swipe across the top to cut it open (inspired by Pokémon TCG Pocket). Common and Uncommon cards arrive face up; Rare and better arrive face down and glowing, and you tap to flip them. Swipe each card away (or press Reveal all to skip ahead; a face-down best card still gets its reveal), then see all 5 on a summary screen with your collection progress. "Open another pack" puts the next pack straight in your hand.
 - Each pack holds 5 cards from the 515 teams at the 2026 Championship in Houston. Mythic is the 44 teams from the season's top 50 by Statbotics EPA who were there. Everyone else is ranked by EPA at Champs: the next 50 are Legendary, then 120 Rare, 150 Uncommon and 151 Common.
 - Every card copy gets a serial number, and copies are unlimited.
-- Binder with tier and division progress, NEW marks (and a count on the Binder tab) for teams you haven't looked at yet, "show cards I'm missing" chase view, and a card inspector.
+- Binder with a pack list (just the 2026 Championship pack for now) showing overall and per-tier progress, plus tier and division progress, NEW marks (and a count on the Binder tab) for teams you haven't looked at yet, "show cards I'm missing" chase view, and a card inspector.
 - Progress is saved in `localStorage`. Closing the tab mid-pack resumes the same cards.
 
 What it is not:
