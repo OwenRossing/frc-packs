@@ -48,7 +48,7 @@ They need Playwright and a Chromium build (edit the `executablePath` in the scri
 
 ## Depth and opening feel
 
-- Cards and packs have real thickness and render with perspective, and they sway gently in the light (or follow your phone's tilt where the browser allows it). The binder stays still.
+- Cards and packs have real thickness and render with perspective. They tilt toward your pointer or finger, and the robot photo shifts behind its frame for depth. Nothing moves on its own.
 - The glow behind a pack only appears once you start swiping. It starts white and takes on the best card's color as the tear gets longer.
 - Tearing a pack open fires a slash of light, a shockwave and (for Legendary or Mythic) rays in the best card's color.
 - "Open another pack" brings back the wheel of 10 packs. Settings > "Pack wheel every time" turns that off, so the next pack goes straight to your hand.

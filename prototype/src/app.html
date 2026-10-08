@@ -150,7 +150,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .pk-edge { position: absolute; left: .4%; right: .4%; top: 12.5%; bottom: .3%; border-radius: 0 0 4cqw 4cqw; background: hsl(calc(var(--h) + 25) 60% 20%); transform: translateZ(calc(var(--pth) * var(--z) / 4)); }
 .inspect.cut .pk-edge { opacity: 0; transition: opacity .15s; }
 .ptype { perspective: 900px; }
-/* --gx/--gy (-1..1) come from the phone's tilt, the pointer, or a slow idle sway, so packs and cards always turn a little in the light. */
+/* --gx/--gy (-1..1) follow the pointer over the tile, so the pack turns in the light as you move. Nothing moves on its own. */
 .ptype .pk { --sheen: calc(100% - var(--gx, 0) * 90%); transform: perspective(700px) rotateX(calc(var(--gy, 0) * -10deg)) rotateY(calc(var(--gx, 0) * 18deg)); }
 .ptype:hover .pk, .ptype:focus-visible .pk { transform: translateY(-6px) perspective(700px) rotateX(calc(var(--gy, 0) * -10deg)) rotateY(calc(var(--gx, 0) * 18deg)); }
 .ptype .pk { transition: transform .15s ease-out !important; }
@@ -230,7 +230,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 
 .front { transform: rotateY(180deg); padding: calc(var(--cw) * .03); background: var(--frame); box-shadow: 0 18px 40px rgba(0,0,0,.55), 0 0 30px -6px var(--glow); color: #0a1a20; }
 /* Depth: the two faces sit a card's thickness apart with stacked edge layers between them, so tilts and flips show a solid edge.
-   A soft shadow on the table slides opposite the tilt, a rim light follows it, and the robot photo shifts a little behind its window. */
+   A soft shadow on the table slides opposite the tilt, a rim light follows it, and the robot photo shifts behind its window. */
 .slot { --th: calc(var(--cw) * .017); }
 .float { transform-style: preserve-3d; }
 .back { transform: translateZ(var(--th)); }
@@ -248,7 +248,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .hp small { font-family: var(--body); font-weight: 700; font-size: calc(var(--cw) * .036); letter-spacing: .06em; margin-right: .25em; color: var(--ink-card); opacity: .75; }
 .art { position: relative; flex: 0 0 auto; height: 47%; border-radius: calc(var(--cw) * .02); overflow: hidden; background: var(--art); box-shadow: inset 0 0 0 calc(var(--cw) * .012) var(--art-edge, #c9a33a), 0 2px 0 rgba(0,0,0,.15); }
 .art svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.art .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; transform: translate(calc((var(--mx, 50) - 50) * -.07% - var(--gx, 0) * 3%), calc((var(--my, 50) - 50) * -.07% - var(--gy, 0) * 3%)) scale(1.1); transition: transform .12s ease-out; }
+.art .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; transform: translate(calc((var(--mx, 50) - 50) * -.12%), calc((var(--my, 50) - 50) * -.12%)) scale(1.14); transition: transform .12s ease-out; }
 .inner.full .art .ph { inset: 17% 5% auto; width: 90%; height: 41%; border-radius: calc(var(--cw) * .03); box-shadow: 0 0 0 calc(var(--cw) * .012) var(--gem), 0 0 calc(var(--cw) * .08) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
 .sub-l { display: flex; justify-content: space-between; gap: 6px; font-size: calc(var(--cw) * .033); font-weight: 700; letter-spacing: .04em; color: var(--ink-card); opacity: .8; position: relative; z-index: 2; white-space: nowrap; overflow: hidden; }
 .sub-l span:first-child { overflow: hidden; text-overflow: ellipsis; }
@@ -480,26 +480,6 @@ body.playing .note { visibility: hidden; }
   var $ = function (s) { return document.querySelector(s); };
   var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   /* Mouse users click and drag; touch users tap and swipe. */
-  /* Motion: the phone's tilt when it reports one, otherwise a slow sway, written to --gx/--gy on the Open view only (the binder stays still). */
-  var motion = { gyro: false, x: 0, y: 0 };
-  function clamp1(v) { return Math.max(-1, Math.min(1, v)); }
-  window.addEventListener("deviceorientation", function (e) {
-    if (e.gamma == null || e.beta == null) return;
-    motion.gyro = true; motion.x = clamp1(e.gamma / 25); motion.y = clamp1((e.beta - 40) / 25);
-  });
-  function askGyro() {
-    var D = window.DeviceOrientationEvent;
-    if (D && typeof D.requestPermission === "function" && !askGyro.done) { askGyro.done = true; D.requestPermission().catch(function () {}); }
-  }
-  (function sway() {
-    var v = document.getElementById("viewOpen");
-    if (v && !v.hidden && !RM) {
-      var t = performance.now() / 1000, x = motion.gyro ? motion.x : Math.sin(t * .8) * .55, y = motion.gyro ? motion.y : Math.sin(t * .55 + 1) * .35;
-      v.style.setProperty("--gx", x.toFixed(3)); v.style.setProperty("--gy", y.toFixed(3));
-      var r = document.getElementById("rot"); if (r && !r.classList.contains("live")) r.style.setProperty("--sheen", (100 - Math.sin(rotY * Math.PI / 180) * 90 - x * 60).toFixed(1) + "%");
-    }
-    requestAnimationFrame(sway);
-  })();
   var MOUSE = !!(window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches);
   var TAP = MOUSE ? "Click" : "Tap", SWIPE = MOUSE ? "Drag" : "Swipe";
 
