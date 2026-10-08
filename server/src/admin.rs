@@ -39,11 +39,12 @@ async fn save_settings(State(s): State<Shared>, _admin: Admin, Json(r): Json<Rul
         return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
     }
     let mut tx = s.db.begin().await?;
-    sqlx::query("update settings set claim_minutes = $1, claim_packs = $2, bank = $3, start_packs = $4")
+    sqlx::query("update settings set claim_minutes = $1, claim_packs = $2, bank = $3, start_packs = $4, boost_cost = $5")
         .bind(r.claim_minutes)
         .bind(r.claim_packs)
         .bind(r.bank)
         .bind(r.start_packs)
+        .bind(r.boost_cost)
         .execute(&mut *tx)
         .await?;
     sqlx::query("update users set next_claim_at = now() + $1 * interval '1 minute' where next_claim_at > now() + $1 * interval '1 minute'")

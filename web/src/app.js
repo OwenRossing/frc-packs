@@ -47,7 +47,7 @@ export function start(RECIPE) {
   /* S mirrors the server: sealed packs, the free-pack timer, pity, the collection and the pack being revealed.
      Only display preferences (sound, the wheel setting, which cards are marked new) are kept in this browser. */
   var PREFS = "frcpacks.prefs";
-  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
+  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, boosted: 0, parts: 0, boostCost: 250, scrapParts: {}, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
@@ -59,8 +59,9 @@ export function start(RECIPE) {
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
   function applyState(st) {
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
-    var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, opened: 0, pity: { m: 0, l: 0 } };
-    S.packs = p.sealed; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
+    var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
+    S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
+    S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     S.demo = st.demo; S.devTools = st.devTools;
   }
   function applyCollection(col) {
@@ -348,14 +349,16 @@ export function start(RECIPE) {
   }
   function paintSelectHud() {
     if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · tap one");
-    else packsLeftHud("Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    else packsLeftHud(S.boosted ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
     ringwrap.classList.toggle("out", S.packs < 1);
+    ringwrap.classList.toggle("boosted", S.boosted > 0 && S.packs > 0); // boosted packs open first
     var tile = collectionEl.querySelector(".ptype"); if (tile) paintTile(tile, PACKS[0]);
   }
   /* ---------- home: your pack collection ---------- */
   function paintTile(b, pk) {
     var n = S.packs; // every pack you own is a 2026 Championship pack for now
     b.classList.toggle("empty", n < 1); b.querySelector(".cnt").textContent = "×" + n;
+    var bst = b.querySelector(".bst"); bst.hidden = !S.boosted; bst.textContent = S.boosted + " boosted";
     b.querySelector(".pt-sub").textContent = n ? "Tap to open" : "None left";
     b.setAttribute("aria-label", pk.name + " pack, " + n + " to open");
   }
@@ -364,7 +367,7 @@ export function start(RECIPE) {
     collectionEl.innerHTML = ""; collectionEl.classList.toggle("one", PACKS.length === 1);
     PACKS.forEach(function (pk) {
       var b = document.createElement("button"); b.type = "button"; b.className = "ptype"; b.setAttribute("role", "listitem");
-      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
+      b.innerHTML = '<span class="cnt"></span><span class="bst" hidden></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
       paintTile(b, pk);
       b.addEventListener("click", function () { openRing(b); });
       b.addEventListener("pointermove", function (e) {
@@ -464,7 +467,7 @@ export function start(RECIPE) {
     if (state !== "select") return; actx();
     if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
-    inspectEl.className = "inspect"; rotY = 0; rotX = 0;
+    inspectEl.className = "inspect" + (S.boosted > 0 ? " boosted" : ""); rotY = 0; rotX = 0;
     /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
     promoted = false; nextBest = "common"; openReq = null; inspectEl.style.setProperty("--tp", 0);
     holdPack();
@@ -496,6 +499,7 @@ export function start(RECIPE) {
     api.hand(PACK_ID).then(function (r) {
       if (n !== holdN || state !== "inspect") return;
       nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
+      inspectEl.classList.toggle("boosted", !!r.boosted);
     }, function (e) { if (n === holdN && e && e.code === "no_packs") sync(); });
   }
   /* Like opening a loot pack: the light leaking out of the tear gets brighter the further you swipe, in the best card's color. A Mythic starts gold and flips to rainbow past halfway. */
@@ -598,7 +602,7 @@ export function start(RECIPE) {
   /* Calls done when the cards have landed. Returns false when there's nothing to animate. */
   function dealFromPack(pr, done) {
     /* The empty pack: a copy of the torn pack, drawn on top so the cards come up out of its open top. */
-    var gp = document.createElement("div"); gp.className = "ghostpack inspect told"; gp.setAttribute("aria-hidden", "true");
+    var gp = document.createElement("div"); gp.className = "ghostpack inspect told" + (inspectEl.classList.contains("boosted") ? " boosted" : ""); gp.setAttribute("aria-hidden", "true");
     gp.style.cssText = "left:" + pr.left + "px;top:" + pr.top + "px;width:" + pr.width + "px;min-width:0;--tp:1;--tell:" + inspectEl.style.getPropertyValue("--tell");
     gp.innerHTML = '<div class="lift" style="animation:none"><div class="rot">' + packHTML(false) + '</div></div>';
     document.body.appendChild(gp);
@@ -788,7 +792,7 @@ export function start(RECIPE) {
     var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
     $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
     $("#binderTitle").textContent = "Cards";
-    paintPacks(owned, counts);
+    paintPacks(owned, counts); paintWorkshop();
     tiersEl.innerHTML = "";
     var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
     all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
@@ -829,6 +833,57 @@ export function start(RECIPE) {
     moreBtn.hidden = list.length <= shown;
   }
   moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
+
+  /* ---------- workshop: scrap extra copies for parts, craft boosted packs ---------- */
+  var scrapPick = { common: true, uncommon: true, rare: false, legendary: false, mythic: false }, scrapArmed = 0;
+  var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
+  /* Extra copies (beyond the first) by tier, and what they'd give. */
+  function extras() {
+    var out = {}; ORDER.forEach(function (t) { out[t] = 0; });
+    Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length > 1) out[t.tier] += S.inv[k].length - 1; });
+    return out;
+  }
+  function paintWorkshop() {
+    var ex = extras(), n = 0, gain = 0, cost = S.boostCost;
+    $("#partsN").textContent = S.parts;
+    $("#partsBar").style.width = Math.min(100, S.parts / cost * 100) + "%";
+    $("#partsTxt").textContent = S.parts >= cost ? Math.floor(S.parts / cost) + " boosted pack" + (S.parts >= cost * 2 ? "s" : "") + " ready to craft" : (cost - S.parts) + " more for a boosted pack";
+    craftBtn.disabled = S.parts < cost; craftBtn.textContent = "Craft boosted pack · " + cost;
+    var row = $("#scrapTiers"); row.innerHTML = "";
+    ORDER.slice().reverse().forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (scrapPick[t] ? " on" : "");
+      b.setAttribute("aria-pressed", String(!!scrapPick[t])); b.style.setProperty("--tc", TIERS[t].color);
+      b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b> <em>' + ex[t] + '</em>';
+      b.title = "+" + (S.scrapParts[t] || 0) + " parts each";
+      b.onclick = function () { scrapPick[t] = !scrapPick[t]; scrapArmed = 0; paintWorkshop(); };
+      row.appendChild(b);
+      if (scrapPick[t]) { n += ex[t]; gain += ex[t] * (S.scrapParts[t] || 0); }
+    });
+    scrapBtn.disabled = !n;
+    scrapBtn.textContent = !n ? "No extras to scrap" : scrapArmed ? "Tap again to scrap " + n : "Scrap " + n + (n === 1 ? " extra" : " extras") + " · +" + gain + " parts";
+    scrapBtn.classList.toggle("armed", !!scrapArmed);
+  }
+  function scrapped(r) {
+    applyState(r.state); applyCollection(r.collection);
+    Object.keys(S.unseen).forEach(function (k) { if (!S.inv[k]) delete S.unseen[k]; }); save();
+    sfx.whoosh(); paintStatus(); if (!vBinder.hidden) paintBinder(); paintTabDot();
+    if (r.scrapped) say("Scrapped " + r.scrapped + (r.scrapped === 1 ? " copy" : " copies") + " · +" + r.gained + " parts", 2600);
+  }
+  scrapBtn.addEventListener("click", function () {
+    var tiers = ORDER.filter(function (t) { return scrapPick[t]; }); if (!tiers.length) return;
+    if (!scrapArmed) { scrapArmed = 1; paintWorkshop(); setTimeout(function () { if (scrapArmed) { scrapArmed = 0; paintWorkshop(); } }, 3500); return; }
+    scrapArmed = 0; scrapBtn.disabled = true;
+    api.scrapExtras(PACK_ID, tiers).then(scrapped, offline).then(paintWorkshop);
+  });
+  craftBtn.addEventListener("click", function () {
+    if (S.parts < S.boostCost) return; actx(); craftBtn.disabled = true;
+    api.craft().then(function (st) {
+      applyState(st); paintStatus(); paintWorkshop(); sfx.promote();
+      var r = craftBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, "#ffd34d", 7);
+      say("Boosted pack crafted. It opens next.", 2800);
+      if (state === "home" || state === "select") paintSelectHud();
+    }, function (e) { offline(e); paintWorkshop(); });
+  });
   function paintPacks(owned, counts) {
     var row = $("#packRow"); row.innerHTML = "";
     PACKS.forEach(function (pk) {
@@ -868,7 +923,20 @@ export function start(RECIPE) {
       row.appendChild(cp);
     }
     modalIn.appendChild(row);
-    lastFocus = document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+    if (serials.length > 1) {
+      var each = S.scrapParts[t.tier] || 0, more = serials.length - 1, srow = document.createElement("div"); srow.className = "cta-row";
+      var one = document.createElement("button"); one.type = "button"; one.className = "chip"; one.textContent = "Scrap 1 extra · +" + each + " parts";
+      one.onclick = function () { scrapOne(t, 1, one); }; srow.appendChild(one);
+      if (more > 1) { var all = document.createElement("button"); all.type = "button"; all.className = "chip"; all.textContent = "Scrap all " + more + " extras · +" + each * more; all.onclick = function () { scrapOne(t, more, all); }; srow.appendChild(all); }
+      modalIn.appendChild(srow);
+    }
+    lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+  }
+  /* The first copy (the lowest serial you got first) is always kept. */
+  function scrapOne(t, count, btn) {
+    if (!btn._armed && (t.tier === "legendary" || t.tier === "mythic")) { btn._armed = true; btn.textContent = "Tap again to scrap"; return; }
+    btn.disabled = true;
+    api.scrap(PACK_ID, t.num, count).then(function (r) { scrapped(r); inspect(t); }, function (e) { btn.disabled = false; offline(e); });
   }
   function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
@@ -934,6 +1002,104 @@ export function start(RECIPE) {
     }, offline);
   };
   paintToggles();
+
+  /* ---------- controller ---------- */
+  /* Any standard gamepad (Xbox, PlayStation, Switch Pro in a browser that maps it): A takes / opens / flips, B goes
+     back, X turns the pack over, Y reveals the rest, the d-pad or left stick moves, the sticks tilt what you're
+     holding, LB / RB switch tabs and Start claims free packs. In the binder the d-pad moves between cards and
+     buttons and A presses. */
+  var PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, BACK: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+  var padPrev = [], padRaf = 0, padRep = { dir: "", at: 0 }, padTilt = false, padSeen = false;
+  function pads() { try { return Array.prototype.filter.call(navigator.getGamepads ? navigator.getGamepads() : [], Boolean); } catch (e) { return []; } }
+  function padRumble(ms) {
+    var total = Array.isArray(ms) ? ms.reduce(function (a, b) { return a + b; }, 0) : ms;
+    pads().forEach(function (p) { try { if (p.vibrationActuator) p.vibrationActuator.playEffect("dual-rumble", { duration: Math.min(total, 600), strongMagnitude: .7, weakMagnitude: .5 }); } catch (e) {} });
+  }
+  var buzzPhone = buzz;
+  buzz = function (ms) { buzzPhone(ms); if (!S.muted && padSeen) padRumble(ms); };
+  /* Moves focus to the nearest visible control in a direction, for the binder and the card view. */
+  function padMove(dir, root) {
+    var all = Array.prototype.filter.call(root.querySelectorAll("button:not([disabled]), [role=button][tabindex], .slot.btn, a[href], input"), function (el) { return el.offsetParent && el.getClientRects().length; });
+    var cur = document.activeElement && root.contains(document.activeElement) ? document.activeElement : null;
+    if (!cur) { if (all[0]) padFocus(all[0]); return; }
+    var c = cur.getBoundingClientRect(), cx = c.left + c.width / 2, cy = c.top + c.height / 2, best = null, bestD = Infinity;
+    all.forEach(function (el) {
+      if (el === cur) return;
+      var r = el.getBoundingClientRect(), dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
+      var along = dir === "left" ? -dx : dir === "right" ? dx : dir === "up" ? -dy : dy, across = dir === "left" || dir === "right" ? Math.abs(dy) : Math.abs(dx);
+      if (along <= 4) return;
+      var d = along + across * 2.5; if (d < bestD) { bestD = d; best = el; }
+    });
+    if (best) padFocus(best);
+  }
+  function padFocus(el) { try { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} }
+  function padPress(el) { if (el && el.click) el.click(); }
+  function padDir(dir) {
+    document.body.classList.add("pad");
+    if (!modal.hidden) return padMove(dir, modal);
+    if (!vBinder.hidden) return padMove(dir, vBinder);
+    if (state === "select" && (dir === "left" || dir === "right")) spinTo(Math.round(ringA / 36) * 36 + (dir === "left" ? -36 : 36), 220);
+    else if (state === "stack" && (dir === "left" || dir === "right")) { var el = topEl(); if (el && !el._hidden) fling(el, dir === "right" ? 1 : -1); }
+    else if (state === "summary" || state === "home") padMove(dir, vOpen);
+  }
+  function padButton(b) {
+    actx(); document.body.classList.add("pad");
+    if (b === PAD.LB || b === PAD.RB) { if (modal.hidden) show(b === PAD.LB ? "open" : "binder"); return; }
+    if (b === PAD.START) { if (!claimBtn.hidden) padPress(claimBtn); return; }
+    if (!modal.hidden) { if (b === PAD.A && modal.contains(document.activeElement)) padPress(document.activeElement); else if (b === PAD.A || b === PAD.B) closeModal(); return; }
+    if (!vBinder.hidden) {
+      if (b === PAD.A) { var f = document.activeElement; if (f && vBinder.contains(f)) padPress(f); else padMove("down", vBinder); }
+      else if (b === PAD.B) show("open");
+      return;
+    }
+    if (state === "home") { if (b === PAD.A) { var f2 = document.activeElement; if (f2 && vOpen.contains(f2) && f2.matches("button")) padPress(f2); else openRing(); } }
+    else if (state === "select") { if (b === PAD.A) choose(ringFront < 0 ? Math.floor(SHELF_N / 2) : ringFront); else if (b === PAD.B) { cancelAnimationFrame(ringRaf); paintHome(); } }
+    else if (state === "inspect") { if (b === PAD.A) padPress($("#openBtn")); else if (b === PAD.X) padPress($("#turnBtn")); else if (b === PAD.B) back(); }
+    else if (state === "stack") { if (b === PAD.A) tapTop(); else if (b === PAD.Y) revealAll(); }
+    else if (state === "summary") { if (b === PAD.A) { var f3 = document.activeElement; if (f3 && vOpen.contains(f3) && f3 !== againBtn) padPress(f3); else padPress(againBtn); } else if (b === PAD.B) paintHome(); else if (b === PAD.X) show("binder"); }
+  }
+  /* The sticks tilt the pack in your hand, or the card you're looking at. */
+  function padSticks(p) {
+    var ax = p.axes || [], x = Math.abs(ax[2] || 0) > .2 ? ax[2] : 0, y = Math.abs(ax[3] || 0) > .2 ? ax[3] : 0;
+    if (state === "inspect" && modal.hidden && vBinder.hidden && !g) {
+      if (x || y) { rotY = Math.round(rotY / 180) * 180 + x * 55; rotX = -y * 16; setRot(true); padTilt = true; }
+      else if (padTilt) { padTilt = false; rotY = Math.round(rotY / 180) * 180; rotX = 0; setRot(false); }
+      return;
+    }
+    var slot = !modal.hidden ? modal.querySelector(".slot") : state === "stack" ? topEl() : null;
+    if (!slot) return;
+    var tilt = slot.querySelector(".tilt");
+    if (x || y) { tilt.classList.remove("rest"); tilt.style.setProperty("--ry", (x * 16) + "deg"); tilt.style.setProperty("--rx", (-y * 14) + "deg"); slot._padTilt = true; }
+    else if (slot._padTilt) { slot._padTilt = false; tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); }
+  }
+  function padLoop() {
+    padRaf = 0;
+    var list = pads(); if (!list.length) { padPrev = []; return; }
+    var now = performance.now(), dir = "";
+    list.forEach(function (p, pi) {
+      var prev = padPrev[pi] || [], cur = p.buttons.map(function (b) { return b.pressed || b.value > .5; });
+      cur.forEach(function (down, i) { if (down && !prev[i] && i !== PAD.UP && i !== PAD.DOWN && i !== PAD.LEFT && i !== PAD.RIGHT) padButton(i); });
+      padPrev[pi] = cur;
+      var ax = p.axes || [];
+      if (cur[PAD.LEFT] || ax[0] < -.55) dir = "left"; else if (cur[PAD.RIGHT] || ax[0] > .55) dir = "right";
+      else if (cur[PAD.UP] || ax[1] < -.55) dir = "up"; else if (cur[PAD.DOWN] || ax[1] > .55) dir = "down";
+      if (pi === 0) padSticks(p);
+    });
+    /* A held direction repeats: once, then again after a pause, then steadily. */
+    if (!dir) padRep.dir = "";
+    else if (dir !== padRep.dir) { padRep = { dir: dir, at: now + 380 }; padDir(dir); }
+    else if (now >= padRep.at) { padRep.at = now + 150; padDir(dir); }
+    padRaf = requestAnimationFrame(padLoop);
+  }
+  addEventListener("gamepadconnected", function () {
+    document.body.classList.add("pad");
+    if (!padSeen) say("Controller connected · A select · B back · X turn over · Y reveal all · LB/RB tabs", 4200);
+    padSeen = true; if (!padRaf) padRaf = requestAnimationFrame(padLoop);
+  });
+  addEventListener("gamepaddisconnected", function () { if (!pads().length) document.body.classList.remove("pad"); });
+  /* Mouse or touch after a controller puts the focus rings back the way they were. */
+  addEventListener("pointerdown", function () { document.body.classList.remove("pad"); }, true);
+  if (pads().length) { document.body.classList.add("pad"); padSeen = true; padRaf = requestAnimationFrame(padLoop); }
 
   /* ---------- boot ---------- */
   function boot() {

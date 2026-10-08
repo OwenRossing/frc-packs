@@ -133,6 +133,18 @@
     <div class="binder-head">
       <div class="packrow" id="packRow" role="group" aria-label="Your packs"></div>
       <div class="binder-sum"><h2 id="binderTitle">Binder</h2><span id="binderSum"></span></div>
+      <div class="workshop" id="workshop">
+        <div class="ws-top">
+          <div class="ws-parts"><span>Parts</span><b id="partsN">0</b><span class="ws-bar"><i id="partsBar"></i></span><small id="partsTxt"></small></div>
+          <button type="button" class="cta small" id="craftBtn">Craft boosted pack</button>
+        </div>
+        <div class="ws-scrap">
+          <span class="ws-lbl">Scrap extra copies</span>
+          <div class="ws-tiers" id="scrapTiers" role="group" aria-label="Tiers to scrap"></div>
+          <button type="button" class="chip" id="scrapBtn">Scrap</button>
+        </div>
+        <small class="ws-note">You always keep your first copy of every team. Boosted packs have better odds (Legendary or better in about half of them, Mythic 4x as likely) and open before your other packs.</small>
+      </div>
       <div class="tiers" id="tiers" role="group" aria-label="Filter by rarity"></div>
       <div class="tiers divs" id="divs" role="group" aria-label="Division sets"></div>
       <div><button type="button" class="chip" id="missingBtn" aria-pressed="false" hidden>Show cards I'm missing</button></div>

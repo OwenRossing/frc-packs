@@ -726,7 +726,7 @@ async fn admin_sees_and_checks_the_free_pack_rules() {
     let admin = make_admin(&app, &db).await;
     let got = call(&app, "GET", "/api/admin/settings", Some(&admin), None).await;
     assert_eq!(got.status, StatusCode::OK);
-    for k in ["claimMinutes", "claimPacks", "bank", "startPacks"] {
+    for k in ["claimMinutes", "claimPacks", "bank", "startPacks", "boostCost"] {
         assert!(got.body[k].is_i64(), "{k} in {}", got.body);
     }
     // Saving the same rules back changes nothing for the other tests sharing this database.
@@ -741,4 +741,64 @@ async fn admin_sees_and_checks_the_free_pack_rules() {
     let st = call(&app, "GET", "/api/state", Some(&admin), None).await.body;
     assert_eq!(st["claimMs"].as_i64().unwrap(), got.body["claimMinutes"].as_i64().unwrap() * 60_000);
     assert_eq!(st["claimPacks"], got.body["claimPacks"]);
+}
+
+#[tokio::test]
+async fn scrap_extras_for_parts_and_craft_a_boosted_pack() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let name = st["account"]["username"].as_str().unwrap().to_string();
+    let id: uuid::Uuid = sqlx::query_scalar("select id from users where username = $1").bind(&name).fetch_one(&db).await.unwrap();
+    // Three copies of a Common and two of a Rare, with serials no pack will mint.
+    let common: i32 = 9971;
+    let base = 1_000_000 + (rand_serial() % 1_000_000);
+    for (team, tier, n) in [(common, "common", 3), (9972, "rare", 2)] {
+        for k in 0..n {
+            sqlx::query("insert into cards (user_id, pack_id, team, tier, serial) values ($1, 'cmp26', $2, $3, $4)")
+                .bind(id)
+                .bind(team)
+                .bind(tier)
+                .bind(base + team * 10 + k)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+    }
+    let first_serial = base + common * 10;
+    // Scrap needs a real team in the pack; the inserted ones aren't, so this checks the guard.
+    let r = call(&app, "POST", "/api/scrap", Some(&c), Some(json!({ "pack": "cmp26", "num": common, "count": 5 }))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::NOT_FOUND, Some("unknown_team")));
+    // Scrap all extra Commons and Rares: 2 Commons (5 each) and 1 Rare (40).
+    let r = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common", "rare"] }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["gained"].as_i64(), r.body["scrapped"].as_i64()), (Some(50), Some(3)));
+    assert_eq!(r.body["state"]["parts"], 50);
+    let kept = r.body["collection"]["cards"].as_array().unwrap().iter().find(|x| x["num"] == common).unwrap().clone();
+    assert_eq!(kept["serials"], json!([first_serial]), "the first copy is kept");
+    let again = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common", "rare"] }))).await;
+    assert_eq!(again.body["scrapped"], 0, "nothing left to scrap");
+
+    let cost: i32 = sqlx::query_scalar("select boost_cost from settings").fetch_one(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/craft", Some(&c), Some(json!({}))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_enough_parts")));
+    sqlx::query("update users set parts = $2 where id = $1").bind(id).bind(cost).execute(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/craft", Some(&c), Some(json!({}))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["parts"], 0);
+    let p = r.body["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!((p["sealed"].as_i64(), p["boosted"].as_i64()), (Some(3), Some(1)));
+    let h = call(&app, "POST", "/api/hand", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(h.body["boosted"], true, "boosted packs open first");
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(o.status, StatusCode::OK);
+    let p = o.body["state"]["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!(p["boosted"], 0);
+    let b: bool = sqlx::query_scalar("select boosted from openings where user_id = $1").bind(id).fetch_one(&db).await.unwrap();
+    assert!(b, "the opening is recorded as boosted");
+    let h = call(&app, "POST", "/api/hand", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(h.body["boosted"], false);
+}
+
+fn rand_serial() -> i32 {
+    (uuid::Uuid::new_v4().as_u128() % 1_000_000) as i32
 }

@@ -56,6 +56,8 @@ export interface Opening {
 export interface PackState {
   id: string;
   sealed: number;
+  /** How many of the sealed packs are boosted (they open first). */
+  boosted: number;
   opened: number;
   pity: { m: number; l: number };
 }
@@ -75,6 +77,11 @@ export interface State {
   claimPacks: number;
   /** How many missed timers wait to be claimed. */
   bank: number;
+  /** Parts from scrapping extra copies, spent on boosted packs. */
+  parts: number;
+  boostCost: number;
+  /** Parts for scrapping one extra copy, by tier. */
+  scrapParts: Record<Tier, number>;
   demo: boolean;
   devTools: boolean;
   packs: PackState[];
@@ -107,6 +114,8 @@ export interface Rules {
   bank: number;
   /** Packs a new account starts with. */
   startPacks: number;
+  /** Parts a boosted pack costs. */
+  boostCost: number;
 }
 
 export interface AdminUser {
@@ -122,6 +131,13 @@ export interface AdminUser {
   opened: number;
   cards: number;
   lastOpenedAt: number | null;
+}
+
+export interface Scrapped {
+  gained: number;
+  scrapped: number;
+  state: State;
+  collection: Collection;
 }
 
 /** status 0 means the server couldn't be reached. */
@@ -160,10 +176,16 @@ export const api = {
   state: () => call<State>("GET", "/api/state"),
   claim: () => call<State>("POST", "/api/claim"),
   /** Pick up a pack: its cards are decided now; only the best rarity comes back, for the glow. */
-  hand: (pack: string) => call<{ best: Tier }>("POST", "/api/hand", { pack }),
+  hand: (pack: string) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack }),
   open: (pack: string) => call<{ opening: Opening; state: State }>("POST", "/api/open", { pack }),
   progress: (id: number, revealed: number) => call<void>("POST", `/api/openings/${id}/progress`, { revealed }),
   collection: (pack: string) => call<Collection>("GET", `/api/collection/${encodeURIComponent(pack)}`),
+  /** Scrap extra copies of one team (the first copy is always kept). */
+  scrap: (pack: string, num: number, count: number) => call<Scrapped>("POST", "/api/scrap", { pack, num, count }),
+  /** Scrap every extra copy of these tiers. */
+  scrapExtras: (pack: string, tiers: Tier[]) => call<Scrapped>("POST", "/api/scrap/extras", { pack, tiers }),
+  /** Spend parts on a boosted pack. */
+  craft: () => call<State>("POST", "/api/craft"),
   recipe: (pack: string) => call<Recipe>("GET", `/packs/${encodeURIComponent(pack)}.json`),
   dev: {
     demo: (on: boolean) => call<State>("POST", "/api/dev/demo", { on }),
@@ -204,6 +226,8 @@ export function explain(e: unknown): string {
     not_yourself: "You can't do that to your own account.",
     confirm_mismatch: "The name you typed doesn't match.",
     not_found: "That no longer exists. Reload the page.",
+    not_enough_parts: "Not enough parts yet. Scrap some extra copies first.",
+    no_extras: "No extra copies of that card to scrap.",
   };
   return words[e.code] ?? "Something went wrong. Try again.";
 }

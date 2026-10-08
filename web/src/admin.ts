@@ -100,9 +100,10 @@ function readRules(): Rules | null {
     claimPacks: Number(field("claimPacks").value),
     bank: Number(field("bank").value),
     startPacks: Number(field("startPacks").value),
+    boostCost: Number(field("boostCost").value),
   };
   const int = (n: number, lo: number, hi: number) => Number.isInteger(n) && n >= lo && n <= hi;
-  const ok = int(r.claimMinutes, 5, 10080) && int(r.claimPacks, 1, 20) && int(r.bank, 1, 10) && int(r.startPacks, 0, 50);
+  const ok = int(r.claimMinutes, 5, 10080) && int(r.claimPacks, 1, 20) && int(r.bank, 1, 10) && int(r.startPacks, 0, 50) && int(r.boostCost, 1, 100000);
   return ok ? r : null;
 }
 
@@ -122,6 +123,7 @@ function showRules(r: Rules) {
   field("claimPacks").value = String(r.claimPacks);
   field("bank").value = String(r.bank);
   field("startPacks").value = String(r.startPacks);
+  field("boostCost").value = String(r.boostCost);
   paintRulesSum();
 }
 
@@ -131,7 +133,7 @@ rulesForm.addEventListener("submit", async (e) => {
   const msg = $("#rulesMsg");
   const r = readRules();
   if (!r) {
-    msg.textContent = "Hours between can be 0.1 to 168, packs each time 1 to 20, missed timers 1 to 10, and starting packs 0 to 50.";
+    msg.textContent = "Hours between can be 0.1 to 168, packs each time 1 to 20, missed timers 1 to 10, starting packs 0 to 50, and a boosted pack 1 to 100000 parts.";
     msg.hidden = false;
     return;
   }

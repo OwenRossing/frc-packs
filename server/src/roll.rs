@@ -26,6 +26,8 @@ pub struct Opts {
     /// The scripted first pack: its last card is Legendary or better.
     pub first: bool,
     pub pity: Pity,
+    /// A boosted pack, crafted from parts: the recipe's boosted odds.
+    pub boosted: bool,
 }
 
 /// Chance the last card is a Mythic when this is the `n`th pack since the last one.
@@ -57,16 +59,18 @@ fn weighted<R: Rng + ?Sized>(rng: &mut R, w: &HashMap<Tier, f64>) -> Tier {
 pub fn roll<R: Rng + ?Sized>(pack: &Pack, rng: &mut R, o: &Opts) -> Vec<Rolled> {
     let odds = &pack.recipe.odds;
     let (pm, pl) = (o.pity.m + 1, o.pity.l + 1);
+    let (slots, last, mult) =
+        if o.boosted { (&odds.boosted.slots, &odds.boosted.last, odds.boosted.mythic_mult) } else { (&odds.slots, &odds.last, 1.0) };
     let mut cards: Vec<Rolled> = Vec::with_capacity(5);
     for slot in 0..5 {
         let tier = if slot < 4 {
-            weighted(rng, &odds.slots)
-        } else if rng.random::<f64>() < mythic_chance(odds, o.demo, pm) {
+            weighted(rng, slots)
+        } else if rng.random::<f64>() < (mythic_chance(odds, o.demo, pm) * mult).min(1.0) {
             Tier::Mythic
         } else if o.first || pl >= odds.leg_every {
             Tier::Legendary
         } else {
-            weighted(rng, &odds.last) // demo luck only boosts Mythic
+            weighted(rng, last) // demo luck only boosts Mythic
         };
         let pool = &pack.pools[&tier];
         let free: Vec<i32> = pool.iter().copied().filter(|n| !cards.iter().any(|c| c.num == *n)).collect();
@@ -158,6 +162,26 @@ mod tests {
         assert_eq!(mythic_chance(o, false, 10), 1.0 / 400.0);
         assert!((mythic_chance(o, false, 175) - 0.5).abs() < 1e-9);
         assert_eq!(mythic_chance(o, true, 10), 0.2);
+    }
+
+    #[test]
+    fn boosted_packs_are_better() {
+        let pack = cmp26();
+        let mut rng = StdRng::seed_from_u64(11);
+        let n = 100_000;
+        let (mut myth, mut leg_plus, mut rare_plus_slots) = (0, 0, 0);
+        for _ in 0..n {
+            let c = roll(&pack, &mut rng, &Opts { boosted: true, ..Default::default() });
+            assert!(c[4].tier.rank() <= Tier::Rare.rank(), "last card Rare or better");
+            myth += i32::from(c.iter().any(|x| x.tier == Tier::Mythic));
+            leg_plus += i32::from(c.iter().any(|x| x.tier.rank() <= Tier::Legendary.rank()));
+            rare_plus_slots += c[..4].iter().filter(|x| x.tier.rank() <= Tier::Rare.rank()).count();
+        }
+        // Mythic 4x: 1 in 100, so about 1000 in 100k.
+        assert!((850..=1150).contains(&myth), "boosted mythic packs {myth}");
+        let rate = f64::from(leg_plus) / f64::from(n);
+        assert!((0.50..0.60).contains(&rate), "boosted legendary+ rate {rate}");
+        assert!(rare_plus_slots > n as usize, "more than one Rare+ in slots 1-4 per pack on average");
     }
 
     #[test]

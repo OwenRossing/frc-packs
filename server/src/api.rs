@@ -31,6 +31,8 @@ pub struct Rules {
     pub bank: i32,
     /// Packs a new account starts with.
     pub start_packs: i32,
+    /// Parts a boosted pack costs.
+    pub boost_cost: i32,
 }
 
 impl Rules {
@@ -45,6 +47,7 @@ impl Rules {
             && (1..=20).contains(&self.claim_packs)
             && (1..=10).contains(&self.bank)
             && (0..=50).contains(&self.start_packs)
+            && (1..=100_000).contains(&self.boost_cost)
     }
 
     /// How many timers have run out and wait to be claimed (at most `bank`).
@@ -54,7 +57,7 @@ impl Rules {
 }
 
 pub async fn rules(c: impl sqlx::PgExecutor<'_>) -> Result<Rules, sqlx::Error> {
-    sqlx::query_as("select claim_minutes, claim_packs, bank, start_packs from settings").fetch_one(c).await
+    sqlx::query_as("select claim_minutes, claim_packs, bank, start_packs, boost_cost from settings").fetch_one(c).await
 }
 
 pub fn routes() -> Router<Shared> {
@@ -71,6 +74,9 @@ pub fn routes() -> Router<Shared> {
         .route("/open", post(open))
         .route("/openings/{id}/progress", post(progress))
         .route("/collection/{pack}", get(collection))
+        .route("/scrap", post(scrap))
+        .route("/scrap/extras", post(scrap_extras))
+        .route("/craft", post(craft))
         .route("/dev/demo", post(dev_demo))
         .route("/dev/pack", post(dev_pack))
         .route("/dev/skip-timer", post(dev_skip_timer))
@@ -102,6 +108,11 @@ pub struct StateOut {
     claim_packs: i32,
     /// How many missed timers wait to be claimed.
     bank: i32,
+    /// Parts from scrapping extra copies, spent on boosted packs.
+    parts: i32,
+    boost_cost: i32,
+    /// Parts for scrapping one extra copy, by tier.
+    scrap_parts: std::collections::HashMap<Tier, i32>,
     demo: bool,
     dev_tools: bool,
     packs: Vec<PackState>,
@@ -120,6 +131,8 @@ struct AccountOut {
 struct PackState {
     id: String,
     sealed: i32,
+    /// How many of the sealed packs are boosted (they open first).
+    boosted: i32,
     opened: i32,
     pity: PityOut,
 }
@@ -153,6 +166,7 @@ struct OpeningOut {
 #[derive(sqlx::FromRow)]
 struct UserPack {
     sealed: i32,
+    boosted: i32,
     pity_m: i32,
     pity_l: i32,
 }
@@ -175,14 +189,14 @@ async fn lock_user_pack(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResu
         .bind(pack)
         .execute(&mut *c)
         .await?;
-    Ok(sqlx::query_as("select sealed, pity_m, pity_l from user_packs where user_id = $1 and pack_id = $2 for update")
+    Ok(sqlx::query_as("select sealed, boosted, pity_m, pity_l from user_packs where user_id = $1 and pack_id = $2 for update")
         .bind(user)
         .bind(pack)
         .fetch_one(&mut *c)
         .await?)
 }
 
-async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack) -> ApiResult<Vec<Rolled>> {
+async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack, boosted: bool) -> ApiResult<Vec<Rolled>> {
     let demo: bool = sqlx::query_scalar("select demo from users where id = $1").bind(user).fetch_one(&mut *c).await?;
     let opened_any: i64 =
         sqlx::query_scalar("select coalesce(sum(opened), 0)::bigint from user_packs where user_id = $1")
@@ -190,7 +204,7 @@ async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack) 
             .fetch_one(&mut *c)
             .await?;
     let opts =
-        Opts { demo, first: opened_any == 0, pity: Pity { m: up.pity_m.max(0) as u32, l: up.pity_l.max(0) as u32 } };
+        Opts { demo, first: opened_any == 0, pity: Pity { m: up.pity_m.max(0) as u32, l: up.pity_l.max(0) as u32 }, boosted };
     let mut rng = rand::rng();
     Ok(roll::roll(pack, &mut rng, &opts))
 }
@@ -228,13 +242,13 @@ async fn load_opening(
 }
 
 pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResult<StateOut> {
-    let (next, demo, username, admin): (DateTime<Utc>, bool, Option<String>, bool) =
-        sqlx::query_as("select next_claim_at, demo, username, is_admin from users where id = $1")
+    let (next, demo, username, admin, parts): (DateTime<Utc>, bool, Option<String>, bool, i32) =
+        sqlx::query_as("select next_claim_at, demo, username, is_admin, parts from users where id = $1")
             .bind(user)
             .fetch_one(&mut *c)
             .await?;
-    let rows: Vec<(String, i32, i32, i32, i32)> =
-        sqlx::query_as("select pack_id, sealed, opened, pity_m, pity_l from user_packs where user_id = $1")
+    let rows: Vec<(String, i32, i32, i32, i32, i32)> =
+        sqlx::query_as("select pack_id, sealed, opened, pity_m, pity_l, boosted from user_packs where user_id = $1")
             .bind(user)
             .fetch_all(&mut *c)
             .await?;
@@ -244,8 +258,8 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         .iter()
         .map(|p| {
             let r = rows.iter().find(|r| r.0 == p.id());
-            let (sealed, opened, m, l) = r.map_or((0, 0, 0, 0), |r| (r.1, r.2, r.3, r.4));
-            PackState { id: p.id().to_string(), sealed, opened, pity: PityOut { m, l } }
+            let (sealed, opened, m, l, boosted) = r.map_or((0, 0, 0, 0, 0), |r| (r.1, r.2, r.3, r.4, r.5));
+            PackState { id: p.id().to_string(), sealed, boosted, opened, pity: PityOut { m, l } }
         })
         .collect();
     let pend: Option<(i64, String, i32, Vec<String>)> = sqlx::query_as(
@@ -268,6 +282,9 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         claim_ms: r.claim_ms(),
         claim_packs: r.claim_packs,
         bank: r.bank,
+        parts,
+        boost_cost: r.boost_cost,
+        scrap_parts: Tier::ORDER.iter().map(|t| (*t, t.scrap_parts())).collect(),
         demo,
         dev_tools: s.dev_tools,
         packs,
@@ -518,6 +535,8 @@ async fn claim(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>>
 #[derive(Serialize)]
 struct HandOut {
     best: Tier,
+    /// The pack in hand is a boosted one.
+    boosted: bool,
 }
 
 /// Picks up a pack. Its cards are decided now and kept if you put it back; only the best rarity is revealed, to
@@ -529,27 +548,30 @@ async fn hand(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     if up.sealed < 1 {
         return Err(err(StatusCode::CONFLICT, "no_packs"));
     }
-    let held: Option<sqlx::types::Json<Vec<Rolled>>> =
-        sqlx::query_scalar("select cards from hands where user_id = $1 and pack_id = $2")
+    let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
+        sqlx::query_as("select cards, boosted from hands where user_id = $1 and pack_id = $2")
             .bind(user.id)
             .bind(pack.id())
             .fetch_optional(&mut *tx)
             .await?;
-    let cards = match held {
-        Some(c) => c.0,
+    let (cards, boosted) = match held {
+        Some((c, b)) => (c.0, b),
         None => {
-            let cards = roll_for(&mut tx, user.id, pack, &up).await?;
-            sqlx::query("insert into hands (user_id, pack_id, cards) values ($1, $2, $3)")
+            // Boosted packs open first.
+            let boosted = up.boosted > 0;
+            let cards = roll_for(&mut tx, user.id, pack, &up, boosted).await?;
+            sqlx::query("insert into hands (user_id, pack_id, cards, boosted) values ($1, $2, $3, $4)")
                 .bind(user.id)
                 .bind(pack.id())
                 .bind(sqlx::types::Json(&cards))
+                .bind(boosted)
                 .execute(&mut *tx)
                 .await?;
-            cards
+            (cards, boosted)
         }
     };
     tx.commit().await?;
-    Ok(Json(HandOut { best: roll::best(&cards) }))
+    Ok(Json(HandOut { best: roll::best(&cards), boosted }))
 }
 
 #[derive(Serialize)]
@@ -567,15 +589,19 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     if up.sealed < 1 {
         return Err(err(StatusCode::CONFLICT, "no_packs"));
     }
-    let held: Option<sqlx::types::Json<Vec<Rolled>>> =
-        sqlx::query_scalar("delete from hands where user_id = $1 and pack_id = $2 returning cards")
+    let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
+        sqlx::query_as("delete from hands where user_id = $1 and pack_id = $2 returning cards, boosted")
             .bind(user.id)
             .bind(pack.id())
             .fetch_optional(&mut *tx)
             .await?;
-    let mut cards = match held {
-        Some(c) if c.0.len() == 5 && c.0.iter().all(|x| pack.team_tier.get(&x.num) == Some(&x.tier)) => c.0,
-        _ => roll_for(&mut tx, user.id, pack, &up).await?,
+    let valid = |c: &[Rolled]| c.len() == 5 && c.iter().all(|x| pack.team_tier.get(&x.num) == Some(&x.tier));
+    let (mut cards, boosted) = match held {
+        Some((c, b)) if valid(&c.0) && (!b || up.boosted > 0) => (c.0, b),
+        _ => {
+            let b = up.boosted > 0;
+            (roll_for(&mut tx, user.id, pack, &up, b).await?, b)
+        }
     };
     roll::sort_best_last(&mut cards);
     // Only one pack can be mid-reveal at a time; an older unfinished one counts as seen.
@@ -583,11 +609,13 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
         .bind(user.id)
         .execute(&mut *tx)
         .await?;
-    let opening_id: i64 = sqlx::query_scalar("insert into openings (user_id, pack_id) values ($1, $2) returning id")
-        .bind(user.id)
-        .bind(pack.id())
-        .fetch_one(&mut *tx)
-        .await?;
+    let opening_id: i64 =
+        sqlx::query_scalar("insert into openings (user_id, pack_id, boosted) values ($1, $2, $3) returning id")
+            .bind(user.id)
+            .bind(pack.id())
+            .bind(boosted)
+            .fetch_one(&mut *tx)
+            .await?;
     let mut out = Vec::with_capacity(5);
     for (slot, c) in cards.iter().enumerate() {
         let serial: i32 = sqlx::query_scalar(
@@ -650,14 +678,15 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
         }
     }
     sqlx::query(
-        "update user_packs set sealed = sealed - 1 + $3, opened = opened + 1, pity_m = $4, pity_l = $5
-         where user_id = $1 and pack_id = $2",
+        "update user_packs set sealed = sealed - 1 + $3, boosted = boosted - $6, opened = opened + 1, pity_m = $4,
+         pity_l = $5 where user_id = $1 and pack_id = $2",
     )
     .bind(user.id)
     .bind(pack.id())
     .bind(sets.len() as i32)
     .bind(pity.m as i32)
     .bind(pity.l as i32)
+    .bind(i32::from(boosted))
     .execute(&mut *tx)
     .await?;
     sqlx::query("update openings set sets = $2 where id = $1").bind(opening_id).bind(&sets).execute(&mut *tx).await?;
@@ -707,26 +736,156 @@ struct CollectionOut {
     sets: Vec<String>,
 }
 
-async fn collection(State(s): State<Shared>, user: User, Path(id): Path<String>) -> ApiResult<Json<CollectionOut>> {
-    let pack = pack(&s, &id)?;
+async fn load_collection(c: &mut PgConnection, user: Uuid, pack: &Pack) -> ApiResult<CollectionOut> {
     let rows: Vec<(i32, Vec<i32>)> = sqlx::query_as(
         "select team, array_agg(serial order by id) from cards where user_id = $1 and pack_id = $2 group by team",
     )
-    .bind(user.id)
+    .bind(user)
     .bind(pack.id())
-    .fetch_all(&s.db)
+    .fetch_all(&mut *c)
     .await?;
     let sets: Vec<String> =
         sqlx::query_scalar("select division from sets_done where user_id = $1 and pack_id = $2 order by division")
-            .bind(user.id)
+            .bind(user)
             .bind(pack.id())
-            .fetch_all(&s.db)
+            .fetch_all(&mut *c)
             .await?;
-    Ok(Json(CollectionOut {
+    Ok(CollectionOut {
         pack: pack.id().to_string(),
         cards: rows.into_iter().map(|(num, serials)| OwnedOut { num, serials }).collect(),
         sets,
-    }))
+    })
+}
+
+async fn collection(State(s): State<Shared>, user: User, Path(id): Path<String>) -> ApiResult<Json<CollectionOut>> {
+    let pack = pack(&s, &id)?;
+    let mut c = s.db.acquire().await?;
+    Ok(Json(load_collection(&mut c, user.id, pack).await?))
+}
+
+// ---------- scrapping and crafting ----------
+
+#[derive(Deserialize)]
+struct ScrapReq {
+    pack: String,
+    num: i32,
+    /// How many extra copies to scrap. The first copy you got is never scrapped.
+    count: i32,
+}
+
+#[derive(Deserialize)]
+struct ScrapExtrasReq {
+    pack: String,
+    /// Scrap every extra copy of these tiers.
+    tiers: Vec<Tier>,
+}
+
+#[derive(Serialize)]
+struct ScrapOut {
+    /// Parts this gave.
+    gained: i32,
+    /// Copies scrapped.
+    scrapped: i64,
+    state: StateOut,
+    collection: CollectionOut,
+}
+
+/// Scraps extra copies: deletes them (their serial numbers are not reused) and adds their parts. Keeps each team's
+/// first copy, and never touches a card from a pack that is still being revealed. `teams` limits it to some teams
+/// (None = every team in `tiers`); `limit` caps copies per team.
+async fn scrap_copies(
+    c: &mut PgConnection,
+    user: Uuid,
+    pack: &Pack,
+    teams: Option<&[i32]>,
+    tiers: &[Tier],
+    limit: i64,
+) -> ApiResult<(i32, i64)> {
+    let tiers: Vec<&str> = tiers.iter().map(|t| t.as_str()).collect();
+    let gone: Vec<String> = sqlx::query_scalar(
+        "with ranked as (
+           select c.id, c.tier, row_number() over (partition by c.team order by c.id) as n,
+                  count(*) over (partition by c.team) as total
+           from cards c left join openings o on o.id = c.opening_id
+           where c.user_id = $1 and c.pack_id = $2 and c.tier = any($3)
+             and ($4::int[] is null or c.team = any($4))
+             and (o.id is null or o.revealed >= 5)
+         ),
+         pick as (select id, tier from ranked where n > 1 and n > total - $5)
+         delete from cards where id in (select id from pick) returning tier",
+    )
+    .bind(user)
+    .bind(pack.id())
+    .bind(&tiers)
+    .bind(teams)
+    .bind(limit)
+    .fetch_all(&mut *c)
+    .await?;
+    let gained: i32 = gone.iter().filter_map(|t| Tier::parse(t)).map(Tier::scrap_parts).sum();
+    if gained > 0 {
+        sqlx::query("update users set parts = parts + $2 where id = $1").bind(user).bind(gained).execute(&mut *c).await?;
+    }
+    Ok((gained, gone.len() as i64))
+}
+
+async fn scrapped(s: &Shared, mut tx: sqlx::Transaction<'_, sqlx::Postgres>, user: Uuid, pack: &Pack, r: (i32, i64)) -> ApiResult<Json<ScrapOut>> {
+    let state = load_state(s, &mut tx, user).await?;
+    let collection = load_collection(&mut tx, user, pack).await?;
+    tx.commit().await?;
+    Ok(Json(ScrapOut { gained: r.0, scrapped: r.1, state, collection }))
+}
+
+/// Scraps extra copies of one team.
+async fn scrap(State(s): State<Shared>, user: User, Json(req): Json<ScrapReq>) -> ApiResult<Json<ScrapOut>> {
+    let pack = pack(&s, &req.pack)?;
+    let tier = *pack.team_tier.get(&req.num).ok_or(err(StatusCode::NOT_FOUND, "unknown_team"))?;
+    if req.count < 1 {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
+    }
+    let mut tx = s.db.begin().await?;
+    sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
+    let r = scrap_copies(&mut tx, user.id, pack, Some(&[req.num]), &[tier], i64::from(req.count)).await?;
+    if r.1 == 0 {
+        return Err(err(StatusCode::CONFLICT, "no_extras"));
+    }
+    scrapped(&s, tx, user.id, pack, r).await
+}
+
+/// Scraps every extra copy of the chosen tiers.
+async fn scrap_extras(State(s): State<Shared>, user: User, Json(req): Json<ScrapExtrasReq>) -> ApiResult<Json<ScrapOut>> {
+    let pack = pack(&s, &req.pack)?;
+    if req.tiers.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
+    }
+    let mut tx = s.db.begin().await?;
+    sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
+    let r = scrap_copies(&mut tx, user.id, pack, None, &req.tiers, i64::MAX).await?;
+    scrapped(&s, tx, user.id, pack, r).await
+}
+
+/// Spends parts on a boosted pack of the free pack. Boosted packs open before plain ones.
+async fn craft(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
+    let mut tx = s.db.begin().await?;
+    let cost = rules(&mut *tx).await?.boost_cost;
+    let paid = sqlx::query("update users set parts = parts - $2 where id = $1 and parts >= $2")
+        .bind(user.id)
+        .bind(cost)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if paid == 0 {
+        return Err(err(StatusCode::CONFLICT, "not_enough_parts"));
+    }
+    let p = s.catalog.claimable().id();
+    lock_user_pack(&mut tx, user.id, p).await?;
+    sqlx::query("update user_packs set sealed = sealed + 1, boosted = boosted + 1 where user_id = $1 and pack_id = $2")
+        .bind(user.id)
+        .bind(p)
+        .execute(&mut *tx)
+        .await?;
+    let out = load_state(&s, &mut tx, user.id).await?;
+    tx.commit().await?;
+    Ok(Json(out))
 }
 
 // ---------- testing helpers (DEV_TOOLS=1 only) ----------
@@ -808,7 +967,7 @@ mod tests {
 
     #[test]
     fn timers_bank_up_and_each_gives_its_packs() {
-        let r = Rules { claim_minutes: 120, claim_packs: 3, bank: 2, start_packs: 0 };
+        let r = Rules { claim_minutes: 120, claim_packs: 3, bank: 2, start_packs: 0, boost_cost: 250 };
         let next = Utc::now();
         assert_eq!(r.timers_ready(next - Duration::minutes(1), next), 0, "not yet");
         assert_eq!(r.timers_ready(next, next), 1);
