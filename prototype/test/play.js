@@ -1,7 +1,7 @@
 // Play-test bot for the FRC Packs prototype. Run: NODE_PATH=$(npm root -g) node test/play.js
 const { chromium } = require('playwright');
 const path = require('path');
-const { url, out, openOne, waitState } = require('./lib');
+const { url, out, openOne, waitState, pickPack, toRing } = require('./lib');
 require('fs').mkdirSync(out, { recursive: true });
 const fails = [];
 const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg); } else console.log('ok  ', msg); };
@@ -64,9 +64,16 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check((await p.evaluate(() => window.__frc.S().team)) === 254 && !(await p.locator('#teamPick').isVisible()), 'saving a team hides the question');
 
   // 3. play three packs through the UI (button, swipe-cut + swipe cards, button), demo luck on
-  check((await p.locator('.pick').count()) === 10, 'shelf shows 10 packs');
+  check((await p.locator('.ptype').count()) === 1 && /×3/.test(await p.locator('.ptype .cnt').textContent()), 'home shows your pack collection with a count');
+  await toRing(p); await p.waitForTimeout(1300);
+  check((await p.locator('.pick').count()) === 10, 'the wheel shows 10 packs');
+  { const before = await p.evaluate(() => document.querySelector('.pick.front').style.getPropertyValue('--i'));
+    const b = await p.locator('#ringwrap').boundingBox();
+    await p.mouse.move(b.x + b.width * .7, b.y + b.height / 2); await p.mouse.down(); await p.mouse.move(b.x + b.width * .3, b.y + b.height / 2, { steps: 8 }); await p.mouse.up(); await p.waitForTimeout(1500);
+    const after = await p.evaluate(() => document.querySelector('.pick.front').style.getPropertyValue('--i'));
+    check(before !== after && (await p.evaluate(() => window.__frc.state())) === 'select', 'dragging spins the wheel and does not open a pack (' + before + ' -> ' + after + ')'); }
   await p.screenshot({ path: out + '/01b-shelf.png' });
-  await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.waitForTimeout(600);
+  await p.locator('.pick.front').click({ force: true }); await waitState(p, 'inspect'); await p.waitForTimeout(600);
   await p.screenshot({ path: out + '/01c-inspect.png' });
   { const b = await p.locator('#inspect').boundingBox();
     await p.mouse.move(b.x + b.width / 2, b.y + b.height * .6); await p.mouse.down();
@@ -97,9 +104,9 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check(dotN > 0 && (await p.locator('#tabDot').textContent()) === String(dotN), 'binder tab counts new teams (' + dotN + ')');
   check(await p.locator('#again').textContent() === 'Back to the packs', 'last pack offers back to the packs');
   await p.click('#again'); await p.waitForTimeout(300);
-  check((await p.locator('#hint').textContent()) === 'Out of packs', 'shelf says out of packs');
-  await p.locator('.pick').nth(5).click({ force: true }); await p.waitForTimeout(200);
-  check((await p.evaluate(() => window.__frc.state())) === 'select', 'an empty shelf will not open');
+  check((await p.locator('#hint').textContent()) === 'Out of packs', 'home says out of packs');
+  await p.locator('.ptype').first().click({ force: true }); await p.waitForTimeout(200);
+  check((await p.evaluate(() => window.__frc.state())) === 'home', 'an empty collection will not open');
   await p.screenshot({ path: out + '/03-empty.png' });
   check((await p.evaluate(() => window.__frc.S().opened)) === 3, 'opened counter is 3');
 
@@ -123,7 +130,7 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   // 5. resume mid-reveal after reload
   await p.click('#tabOpen');
   check((await p.evaluate(() => Object.keys(window.__frc.S().unseen).length)) === 0 && !(await p.locator('#tabDot').isVisible()), 'leaving the binder clears the new marks'); await p.click('#gear'); await p.click('#demoPack'); await p.click('#gear');
-  await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.click('#openBtn'); await waitState(p, 'stack');
+  await pickPack(p); await waitState(p, 'inspect'); await p.click('#openBtn'); await waitState(p, 'stack');
   await p.click('#stack', { force: true }); await p.waitForTimeout(600); await waitState(p, 'stack');
   const before = await p.evaluate(() => JSON.stringify(window.__frc.S().pending.cards.map(c => c.num)));
   await p.reload(); await p.waitForTimeout(500);
@@ -166,9 +173,11 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
     await q.goto(url); await q.waitForTimeout(300);
     const ov1 = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     await q.screenshot({ path: out + `/07-open-${vp.w}.png` });
-    await q.evaluate(() => { const s = window.__frc.S(); s.packs = 5; });
+    await q.evaluate(() => { const s = window.__frc.S(); s.packs = 5; }); await q.waitForTimeout(1100);
     await q.screenshot({ path: out + `/07b-shelf-${vp.w}.png` });
-    await q.locator('.pick').nth(5).click({ force: true }); await waitState(q, 'inspect'); await q.waitForTimeout(600);
+    await toRing(q); await q.waitForTimeout(1200); await q.screenshot({ path: out + `/07d-ring-${vp.w}.png` });
+    const ovR = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    await q.locator('.pick.front').click({ force: true }); await waitState(q, 'inspect'); await q.waitForTimeout(600);
     const ovI = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     await q.screenshot({ path: out + `/07c-inspect-${vp.w}.png` }); await q.click('#backBtn'); await waitState(q, 'select');
     await openOne(q); await q.waitForTimeout(1200);
@@ -177,7 +186,7 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
     await q.click('#tabBinder'); await q.waitForTimeout(300);
     const ov3 = await q.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     await q.screenshot({ path: out + `/09-binder-${vp.w}.png` });
-    check(ov1 <= 0 && ovI <= 0 && ov2 <= 0 && ov3 <= 0, `no horizontal scroll at ${vp.w}px (${ov1},${ovI},${ov2},${ov3})`);
+    check(ov1 <= 0 && ovR <= 0 && ovI <= 0 && ov2 <= 0 && ov3 <= 0, `no horizontal scroll at ${vp.w}px (${ov1},${ovR},${ovI},${ov2},${ov3})`);
     await c.close();
   }
   await b.close();

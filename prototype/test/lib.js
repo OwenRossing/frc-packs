@@ -5,11 +5,15 @@ exports.out = path.resolve(__dirname, 'out');
 const st = p => p.evaluate(() => window.__frc.state());
 exports.st = st;
 exports.waitState = (p, s, timeout = 5000) => p.waitForFunction(s => window.__frc.state() === s, s, { timeout });
+// From your pack collection, tap the pack type to bring up the wheel of 10.
+exports.toRing = async p => { if ((await st(p)) === 'home') { await p.locator('.ptype').first().click(); await exports.waitState(p, 'select'); } };
+// Take a pack off the wheel (opening the wheel first if needed).
+exports.pickPack = async (p, i = 5, how = 'click') => { await exports.toRing(p); await p.locator('.pick').nth(i)[how]({ force: true }); };
 
 // Pick a pack from the shelf (unless one is already in hand), open it (swipe the top or press the button), then deal through the stack to the summary.
 exports.openOne = async (p, { swipe = false, shelfIndex = 5, swipeCards = false } = {}) => {
   // "Open another pack" hands you a pack straight away, so only pick from the shelf when it is showing.
-  if ((await st(p)) === 'select') await p.locator('.pick').nth(shelfIndex).click({ force: true });
+  if (['home', 'select'].includes(await st(p))) await exports.pickPack(p, shelfIndex);
   await exports.waitState(p, 'inspect');
   if (swipe) {
     await p.waitForTimeout(550);

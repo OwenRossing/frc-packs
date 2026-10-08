@@ -1,7 +1,7 @@
 // Edge-case checks from the FMEA. Run: NODE_PATH=$(npm root -g) node test/edge.js
 const { chromium } = require('playwright');
 const path = require('path');
-const { url, out, openOne, waitState } = require('./lib');
+const { url, out, openOne, waitState, pickPack, toRing } = require('./lib');
 const fails = [];
 const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg); } else console.log('ok  ', msg); };
 const seed = (p, o) => p.evaluate(o => localStorage.setItem('frcpacks.cmp26', JSON.stringify(o)), o);
@@ -12,13 +12,13 @@ const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now()
 
   // double click on the open button must spend exactly one pack
   { const c = await b.newContext({ viewport: { width: 400, height: 800 } }); const p = await c.newPage(); await p.goto(url); await seed(p, base()); await p.reload();
-    await p.locator('.pick').nth(5).dblclick({ force: true }); await waitState(p, 'inspect');
+    await pickPack(p, 5, 'dblclick'); await waitState(p, 'inspect');
     await p.click('#openBtn', { clickCount: 2, delay: 5 }); await p.waitForTimeout(900);
     check((await p.evaluate(() => window.__frc.S().packs)) === 2, 'double-click spends one pack, not two'); await c.close(); }
 
   // a short tap on the cut zone, or a swipe while the pack faces away, must not open it
   { const c = await b.newContext({ viewport: { width: 400, height: 800 } }); const p = await c.newPage(); await p.goto(url); await seed(p, base()); await p.reload();
-    await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.waitForTimeout(600);
+    await pickPack(p); await waitState(p, 'inspect'); await p.waitForTimeout(600);
     const bb = await p.locator('#inspect').boundingBox();
     await p.mouse.click(bb.x + bb.width / 2, bb.y + bb.height * .12); await p.waitForTimeout(200);
     await p.mouse.move(bb.x + bb.width * .1, bb.y + bb.height * .12); await p.mouse.down(); await p.mouse.move(bb.x + bb.width * .4, bb.y + bb.height * .12, { steps: 5 }); await p.mouse.up(); await p.waitForTimeout(200);
@@ -30,7 +30,7 @@ const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now()
 
   // face-down cards resist a swipe and need a tap
   { const c = await b.newContext({ viewport: { width: 400, height: 800 } }); const p = await c.newPage(); await p.goto(url); await seed(p, base()); await p.reload();
-    await p.locator('.pick').nth(5).click({ force: true }); await waitState(p, 'inspect'); await p.click('#openBtn'); await waitState(p, 'stack');
+    await pickPack(p); await waitState(p, 'inspect'); await p.click('#openBtn'); await waitState(p, 'stack');
     for (let i = 0; i < 4 && !(await p.evaluate(() => document.querySelector('#stack').lastElementChild._hidden)); i++) { await p.click('#stack', { force: true }); await p.waitForTimeout(600); }
     const before = await p.evaluate(() => window.__frc.S().pending.revealed);
     const bb = await p.locator('#stack').boundingBox();
@@ -46,7 +46,7 @@ const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now()
     await a.bringToFront(); await openOne(a);
     const cardsA = await a.evaluate(() => Object.values(window.__frc.S().inv).reduce((x, y) => x + y.length, 0));
     await t2.bringToFront(); await t2.waitForTimeout(200);
-    await t2.locator('.pick').nth(5).click({ force: true }); await waitState(t2, 'inspect'); await t2.click('#openBtn'); await waitState(t2, 'stack');
+    await pickPack(t2); await waitState(t2, 'inspect'); await t2.click('#openBtn'); await waitState(t2, 'stack');
     const st = await t2.evaluate(() => { const s = JSON.parse(localStorage.getItem('frcpacks.cmp26')); return { packs: s.packs, cards: Object.values(s.inv).reduce((x, y) => x + y.length, 0) }; });
     check(cardsA === 5 && st.cards === 10 && st.packs === 1, `second tab adds to the first tab's cards (5 then ${st.cards}, packs left ${st.packs})`); await c.close(); }
 
@@ -59,7 +59,7 @@ const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now()
 
   // keyboard only
   { const c = await b.newContext({ viewport: { width: 400, height: 800 } }); const p = await c.newPage(); await p.goto(url); await seed(p, base({ packs: 1 })); await p.reload();
-    await p.locator('.pick').nth(5).focus(); await p.keyboard.press('Enter'); await waitState(p, 'inspect', 4000);
+    await p.locator('.ptype').first().focus(); await p.keyboard.press('Enter'); await waitState(p, 'select'); await p.locator('#ringwrap').focus(); await p.keyboard.press('ArrowRight'); await p.keyboard.press('Enter'); await waitState(p, 'inspect', 4000);
     await p.keyboard.press('Enter'); await waitState(p, 'stack', 4000);
     for (let i = 0; i < 15 && (await p.evaluate(() => window.__frc.state())) !== 'summary'; i++) { await p.keyboard.press('Enter'); await p.waitForTimeout(950); }
     check((await p.evaluate(() => window.__frc.state())) === 'summary', 'a whole pack can be opened with the keyboard alone');
@@ -67,7 +67,8 @@ const base = (x = {}) => Object.assign({ v: 1, packs: 3, nextClaimAt: Date.now()
 
   // touch
   { const c = await b.newContext({ viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true }); const p = await c.newPage(); await p.goto(url); await seed(p, base({ packs: 1 })); await p.reload(); await p.waitForTimeout(300);
-    const bb = await p.locator('.pick').nth(5).boundingBox(); await p.touchscreen.tap(bb.x + bb.width / 2, bb.y + bb.height / 2);
+    { const tb = await p.locator('.ptype').first().boundingBox(); await p.touchscreen.tap(tb.x + tb.width / 2, tb.y + tb.height / 2); await waitState(p, 'select'); await p.waitForTimeout(1300); }
+    const bb = await p.locator('.pick.front').boundingBox(); await p.touchscreen.tap(bb.x + bb.width / 2, bb.y + bb.height / 2);
     let ok = await waitState(p, 'inspect', 4000).then(() => true, () => false);
     if (ok) { const ob = await p.locator('#openBtn').boundingBox(); await p.touchscreen.tap(ob.x + ob.width / 2, ob.y + ob.height / 2); ok = await waitState(p, 'stack', 4000).then(() => true, () => false); }
     if (ok) { const sb = await p.locator('#stack').boundingBox(); await p.touchscreen.tap(sb.x + sb.width / 2, sb.y + sb.height / 2); await p.waitForTimeout(700); ok = (await p.evaluate(() => window.__frc.S().pending.revealed)) === 1; }

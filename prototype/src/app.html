@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Chakra+Petch:wght@500;600;700&display=swap">
 <style>
-/* Layout: a dark teal card table. Open tab: status bar, a shelf of 10 packs; pick one, it lifts into the middle to inspect, swipe its top to cut, then flick through a stack of 5 cards and land on a summary. Binder tab: tier chips and a grid of everything you own. */
+/* Layout: a dark teal card table. Open tab: status bar, your pack collection; tap a pack type and 10 copies appear on a spinning wheel; take one, it lifts into the middle to inspect, swipe its top to cut, then flick through a stack of 5 cards and land on a summary. Binder tab: tier chips and a grid of everything you own. */
 :root {
   color-scheme: dark;
   --bg: #06161d;
@@ -126,16 +126,29 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .pk-back .odds b { font-weight: 700; }
 .pk-back small { opacity: .75; font-size: 3.8cqw; }
 
-#selectView { width: 100%; }
-.shelf { --pw: min(44vw, 184px); width: calc(100% + 32px); margin-inline: -16px; display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 26px calc(50% + 16px - var(--pw) / 2) 30px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.shelf::-webkit-scrollbar { display: none; }
-.pick { flex: 0 0 var(--pw); scroll-snap-align: center; border: 0; padding: 0; background: none; cursor: pointer; transform: translateY(calc(var(--d, 1) * 18px)) scale(calc(1 - var(--d, 1) * .14)) rotate(calc(var(--side, 0) * 4deg)); opacity: calc(1 - var(--d, 1) * .35); transition: transform .25s ease-out, opacity .25s; border-radius: 12px; }
-.pick .pk { transition: transform .2s; }
-.pick:hover .pk, .pick:focus-visible .pk { transform: translateY(-6px); }
-.shelf.out .pick { filter: grayscale(.8) brightness(.6); }
-.dots { display: flex; gap: 6px; justify-content: center; }
-.dots i { width: 6px; height: 6px; border-radius: 50%; background: #2b6470; transition: background .2s, transform .2s; }
-.dots i.on { background: var(--tide); transform: scale(1.4); }
+#homeView, #selectView { width: 100%; }
+/* Home: your pack collection. One big tile per pack type you own (only the 2026 Championship pack exists so far). */
+.collection { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; justify-items: center; padding-top: 6px; }
+.collection.one { grid-template-columns: 1fr; }
+.ptype { position: relative; border: 0; background: none; padding: 0; cursor: pointer; display: grid; justify-items: center; gap: 10px; color: var(--ink); width: min(52vw, 210px, calc((100svh - 420px) / 1.52 * 1.05)); min-width: 140px; }
+.ptype .pk { transition: transform .25s cubic-bezier(.2,1.3,.4,1); animation: bob 4s ease-in-out infinite; }
+.ptype:hover .pk, .ptype:focus-visible .pk { transform: translateY(-6px) rotate(-1deg); }
+@keyframes bob { 0%,100% { translate: 0 0; } 50% { translate: 0 -5px; } }
+.ptype .cnt { position: absolute; top: -10px; right: -12px; z-index: 3; min-width: 38px; height: 38px; padding-inline: 8px; border-radius: 99px; display: grid; place-items: center; background: var(--tide); color: #02211d; font-family: var(--display); font-size: 20px; box-shadow: 0 4px 0 #138a80, 0 6px 14px rgba(0,0,0,.4); }
+.ptype .pt-name { font-family: var(--display); font-size: 18px; color: var(--foam); line-height: 1.1; text-align: center; }
+.ptype .pt-sub { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); font-weight: 700; margin-top: -6px; }
+.ptype.empty .pk { filter: grayscale(.85) brightness(.55); animation: none; }
+.ptype.empty .cnt { background: #2b6470; color: var(--foam); box-shadow: none; }
+/* Choosing: 10 copies of the pack on a slowly turning wheel, like picking a booster in Pocket. Drag to spin, tap one to take it. */
+.ringwrap { --pw: min(36vw, 190px, calc((100svh - 400px) / 1.6)); --R: calc(var(--pw) * 1.75); position: relative; width: calc(100% + 32px); margin-inline: -16px; height: calc(var(--pw) * 1.52 + 96px); perspective: 1000px; perspective-origin: 50% 20%; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
+.ringwrap.drag { cursor: grabbing; }
+.ring { position: absolute; left: calc(50% - var(--pw) / 2); top: 34px; width: var(--pw); aspect-ratio: 5 / 7.6; transform-style: preserve-3d; transform: translateZ(calc(var(--R) * -1)) rotateX(-7deg) rotateY(var(--a, 0deg)); }
+.ring .pick { position: absolute; inset: 0; border: 0; padding: 0; background: none; cursor: pointer; transform: rotateY(calc(var(--i) * 36deg)) translateZ(var(--R)); filter: brightness(calc(1 - var(--d, 0) * .6)); transition: filter .15s; border-radius: 12px; }
+.ring .pick.front .pk { box-shadow: 0 0 0 3px rgba(255,255,255,.0); }
+.ring .pick.front { filter: brightness(1.08) drop-shadow(0 0 18px rgba(120,200,255,.45)); }
+.ringfloor { position: absolute; left: 50%; bottom: 10px; width: calc(var(--R) * 2.4); height: 40px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(39,211,195,.22), transparent); pointer-events: none; }
+.ringback { margin-top: 4px; }
+.ringwrap.out .pick { filter: grayscale(.8) brightness(.6); }
 
 .inspect { position: relative; width: min(66vw, 280px, calc((100svh - 352px) / 1.52)); min-width: 180px; perspective: 1200px; touch-action: none; user-select: none; -webkit-user-select: none; }
 .inspect .lift { animation: lift .5s cubic-bezier(.2,1.25,.4,1) both; }
@@ -307,6 +320,7 @@ body.playing .note { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .meter.hot .mbar i, .inspect.rainbow .tell, .bg i, .rays, .alive .float, .tease .back, .tease .tilt, .card[data-tier="mythic"] .front, .claim, .cuthint, .cuthint::before { animation: none !important; }
   .flip { transition-duration: .01s; }
+  .ptype .pk { animation: none; }
   .inspect .lift, .stack.rise, .summary .slot, .ribbon { animation: none; }
   .stage.shake, .stage.shake-big, .flash.go { animation: none; }
 }
@@ -357,9 +371,16 @@ body.playing .note { visibility: hidden; }
     <main class="stage" id="stage">
       <div class="hud"><div class="hint" id="hint" aria-live="polite"></div><div class="sub" id="sub"></div></div>
 
-      <div id="selectView">
-        <div class="shelf" id="shelf" role="list" aria-label="Choose a pack"></div>
-        <div class="dots" id="dots" aria-hidden="true"></div>
+      <div id="homeView">
+        <div class="collection" id="collection" role="list" aria-label="Your packs"></div>
+      </div>
+
+      <div id="selectView" hidden>
+        <div class="ringwrap" id="ringwrap" tabindex="0" role="listbox" aria-label="Choose a pack. Arrow keys spin the wheel, Enter takes the front pack.">
+          <div class="ringfloor"></div>
+          <div class="ring" id="ring"></div>
+        </div>
+        <div class="rowbtns ringback"><button type="button" class="linkbtn" id="ringBack">Back to your packs</button></div>
       </div>
 
       <div id="inspectView" hidden>
@@ -525,9 +546,9 @@ body.playing .note { visibility: hidden; }
 
   /* Two tabs share one save. Re-read it whenever this tab is between packs, so a stale tab can't overwrite the other one's cards. */
   function sync() {
-    if (state !== "select" && state !== "summary") return;
+    if (state !== "select" && state !== "summary" && state !== "home") return;
     var other = readSave(); if (!other || other.pending) return;
-    S = other; paintStatus(); paintToggles(); paintTabDot(); if (!vBinder.hidden) paintBinder(); if (state === "select") paintSelect();
+    S = other; paintStatus(); paintToggles(); paintTabDot(); if (!vBinder.hidden) paintBinder(); if (state === "select" || state === "home") paintSelectHud();
   }
   addEventListener("storage", function (e) { if (e.key === KEY) sync(); });
   document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
@@ -753,65 +774,132 @@ body.playing .note { visibility: hidden; }
     el.classList.toggle("hot", n >= SOFT);
     el.title = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + ".";
   }
-  setInterval(function () { paintStatus(); if (state === "select") paintSelectHud(); }, 1000);
+  setInterval(function () { paintStatus(); if (state === "select" || state === "home") paintSelectHud(); }, 1000);
   claimBtn.addEventListener("click", function () {
     var now = Date.now(), n = banked(now); if (!n) return; actx();
     S.packs += n; S.nextClaimAt = n >= BANK ? now + CLAIM_MS : S.nextClaimAt + n * CLAIM_MS; save(); paintStatus(); sfx.claim();
     var r = claimBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 18, "#27d3c3", 5);
-    if (state === "select") paintSelectHud();
+    if (state === "select" || state === "home") paintSelectHud();
   });
 
   /* ---------- open flow: select -> inspect -> cut -> stack -> summary ---------- */
-  var hint = $("#hint"), sub = $("#sub"), shelf = $("#shelf"), dots = $("#dots");
+  var hint = $("#hint"), sub = $("#sub"), ringwrap = $("#ringwrap"), ringEl = $("#ring"), homeView = $("#homeView"), collectionEl = $("#collection");
   var selectView = $("#selectView"), inspectView = $("#inspectView"), inspectEl = $("#inspect"), stackView = $("#stackView"), stackEl = $("#stack"), counterEl = $("#counter");
   var summaryEl = $("#summary"), inspectBtns = $("#inspectBtns"), sumBtns = $("#sumBtns"), againBtn = $("#again"), skipBtn = $("#skipBtn");
-  var state = "select", shelfPacks = [], chosen = -1, deck = [], idx = 0;
+  var state = "home", chosen = -1, deck = [], idx = 0;
   function setHud(h, s) { hint.textContent = h; sub.textContent = s; }
   function showOnly(which) {
-    selectView.hidden = which !== "select"; inspectView.hidden = which !== "inspect"; inspectBtns.hidden = which !== "inspect";
+    homeView.hidden = which !== "home"; selectView.hidden = which !== "select"; inspectView.hidden = which !== "inspect"; inspectBtns.hidden = which !== "inspect";
     stackView.hidden = which !== "stack"; counterEl.hidden = which !== "stack"; summaryEl.hidden = which !== "summary"; sumBtns.hidden = which !== "summary";
     document.body.classList.toggle("focus", which === "inspect");
     document.body.classList.toggle("playing", which === "inspect" || which === "stack");
     document.body.classList.remove("cutting"); skipBtn.hidden = which !== "stack";
   }
-  function newShelf() { var out = []; for (var i = 0; i < SHELF_N; i++) out.push({}); return out; }
-  function paintSelectHud() {
-    if (S.packs > 0) setHud("Pick a pack", S.packs === 1 ? "1 pack to open" : S.packs + " packs to open");
+  function packsLeftHud(title, more) {
+    if (S.packs > 0) setHud(title, more);
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
-    shelf.classList.toggle("out", S.packs < 1);
   }
-  function centerShelf() { var mid = shelf.children[Math.floor(shelf.children.length / 2)]; if (mid) shelf.scrollLeft = mid.offsetLeft - (shelf.clientWidth - mid.offsetWidth) / 2; shelfDepth(); }
-  function paintSelect() {
-    state = "select"; showOnly("select");
-    if (!shelfPacks.length) {
-      shelfPacks = newShelf(); shelf.innerHTML = ""; dots.innerHTML = ""; lastCenter = -1;
-      shelfPacks.forEach(function (p, i) {
-        var b = document.createElement("button"); b.type = "button"; b.className = "pick"; b.setAttribute("role", "listitem");
-        b.setAttribute("aria-label", "2026 Championship pack " + (i + 1) + " of " + shelfPacks.length);
-        b.innerHTML = packHTML(false);
-        b.addEventListener("click", function () { choose(i); });
-        b.addEventListener("focus", function () { try { b.scrollIntoView({ inline: "center", block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} });
-        shelf.appendChild(b); dots.appendChild(document.createElement("i"));
-      });
-      requestAnimationFrame(centerShelf);
-    }
+  function paintSelectHud() {
+    if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · tap one");
+    else packsLeftHud("Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    ringwrap.classList.toggle("out", S.packs < 1);
+    var tile = collectionEl.querySelector(".ptype"); if (tile) paintTile(tile, PACKS[0]);
+  }
+  /* ---------- home: your pack collection ---------- */
+  function paintTile(b, pk) {
+    var n = S.packs; // every pack you own is a 2026 Championship pack for now
+    b.classList.toggle("empty", n < 1); b.querySelector(".cnt").textContent = "×" + n;
+    b.querySelector(".pt-sub").textContent = n ? "Tap to open" : "None left";
+    b.setAttribute("aria-label", pk.name + " pack, " + n + " to open");
+  }
+  function paintHome() {
+    state = "home"; showOnly("home");
+    collectionEl.innerHTML = ""; collectionEl.classList.toggle("one", PACKS.length === 1);
+    PACKS.forEach(function (pk) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "ptype"; b.setAttribute("role", "listitem");
+      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
+      paintTile(b, pk);
+      b.addEventListener("click", function () { openRing(b); });
+      collectionEl.appendChild(b);
+    });
     paintSelectHud(); paintStatus();
   }
-  var lastCenter = -1;
-  function shelfDepth() {
-    if (!shelf.clientWidth) return; // hidden: sizes are 0 and would give NaN depths
-    var mid = shelf.scrollLeft + shelf.clientWidth / 2, best = -1, bd = 1e9;
-    Array.prototype.forEach.call(shelf.children, function (el, i) {
-      var c = el.offsetLeft + el.offsetWidth / 2, d = Math.min(1, Math.abs(c - mid) / (el.offsetWidth * 1.6));
-      el.style.setProperty("--d", d.toFixed(3)); el.style.setProperty("--side", ((c < mid ? -1 : 1) * d).toFixed(3));
-      if (Math.abs(c - mid) < bd) { bd = Math.abs(c - mid); best = i; }
-    });
-    Array.prototype.forEach.call(dots.children, function (d, i) { d.classList.toggle("on", i === best); });
-    if (best !== lastCenter && lastCenter !== -1) sfx.tick();
-    lastCenter = best;
+  function openRing(tile) {
+    if (state !== "home") return; actx();
+    if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    sfx.pick(); paintSelect(true);
   }
-  shelf.addEventListener("scroll", function () { if (!shelfDepth.q) { shelfDepth.q = requestAnimationFrame(function () { shelfDepth.q = 0; shelfDepth(); }); } }, { passive: true });
-  addEventListener("resize", function () { if (state === "select") shelfDepth(); });
+  /* ---------- the wheel of 10 packs ---------- */
+  var ringA = 0, ringFront = -1, ringRaf = 0, ringDragged = false;
+  function setRing(a) {
+    ringA = a; ringEl.style.setProperty("--a", a + "deg");
+    var front = ((Math.round(-a / 36) % SHELF_N) + SHELF_N) % SHELF_N;
+    Array.prototype.forEach.call(ringEl.children, function (el, i) {
+      var th = (i * 36 + a) * Math.PI / 180; el.style.setProperty("--d", ((1 - Math.cos(th)) / 2).toFixed(3));
+      el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front));
+    });
+    if (front !== ringFront) { if (ringFront !== -1) { sfx.tick(); buzz(4); } ringFront = front; }
+  }
+  function spinTo(target, ms, done) {
+    cancelAnimationFrame(ringRaf);
+    if (RM || !ms) { setRing(target); if (done) done(); return; }
+    var from = ringA, t0 = performance.now();
+    (function step(now) {
+      var t = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - t, 3);
+      setRing(from + (target - from) * e);
+      if (t < 1) ringRaf = requestAnimationFrame(step); else if (done) done();
+    })(t0);
+  }
+  function snap() { spinTo(Math.round(ringA / 36) * 36, 380); }
+  function paintSelect(spinIn, toIdx) {
+    state = "select"; showOnly("select");
+    if (!ringEl.children.length) {
+      for (var i = 0; i < SHELF_N; i++) (function (i) {
+        var b = document.createElement("button"); b.type = "button"; b.className = "pick"; b.setAttribute("role", "option"); b.tabIndex = -1;
+        b.style.setProperty("--i", i);
+        b.setAttribute("aria-label", "2026 Championship pack " + (i + 1) + " of " + SHELF_N);
+        b.innerHTML = packHTML(false);
+        b.addEventListener("click", function () { if (ringDragged) return; choose(i); });
+        ringEl.appendChild(b);
+      })(i);
+    }
+    var target = -36 * (toIdx == null ? Math.floor(SHELF_N / 2) : toIdx);
+    ringFront = -1;
+    /* Packs shuffle around the wheel on the way in, then settle with one in front. */
+    if (spinIn && !RM) { setRing(target + 540); spinTo(target, 1100); } else setRing(target);
+    paintSelectHud(); paintStatus();
+  }
+  var rg = null;
+  ringwrap.addEventListener("pointerdown", function (e) {
+    if (state !== "select") return; cancelAnimationFrame(ringRaf); ringDragged = false;
+    rg = { x: e.clientX, a: ringA, t: performance.now(), v: 0, lx: e.clientX, id: e.pointerId, cap: false };
+  });
+  ringwrap.addEventListener("pointermove", function (e) {
+    if (!rg) return; var dx = e.clientX - rg.x;
+    if (!rg.cap && Math.abs(dx) > 6) { rg.cap = true; ringDragged = true; ringwrap.classList.add("drag"); try { ringwrap.setPointerCapture(rg.id); } catch (er) {} }
+    if (!rg.cap) return;
+    var now = performance.now(), dt = Math.max(1, now - rg.t); rg.v = (e.clientX - rg.lx) * .32 / dt; rg.lx = e.clientX; rg.t = now;
+    setRing(rg.a + dx * .32);
+  });
+  function ringUp() {
+    if (!rg) return; var was = rg; rg = null; ringwrap.classList.remove("drag");
+    if (!was.cap) return;
+    setTimeout(function () { ringDragged = false; }, 0);
+    /* Let it coast with the flick's speed, then click into place on the nearest pack. */
+    var v = Math.max(-2.5, Math.min(2.5, was.v)); if (RM) return snap();
+    var last = performance.now();
+    (function coast(now) {
+      var dt = now - last; last = now; v *= Math.pow(.94, dt / 16); setRing(ringA + v * dt);
+      if (Math.abs(v) > .05) ringRaf = requestAnimationFrame(coast); else snap();
+    })(last);
+  }
+  ringwrap.addEventListener("pointerup", ringUp); ringwrap.addEventListener("pointercancel", ringUp);
+  ringwrap.addEventListener("keydown", function (e) {
+    if (state !== "select") return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); spinTo(Math.round(ringA / 36) * 36 + (e.key === "ArrowLeft" ? -36 : 36), 260); }
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(ringFront < 0 ? Math.floor(SHELF_N / 2) : ringFront); }
+  });
+  $("#ringBack").addEventListener("click", function () { if (state === "select") { cancelAnimationFrame(ringRaf); paintHome(); } });
 
   var rotY = 0, rotX = 0, g = null;
   function choose(i) {
@@ -822,7 +910,8 @@ body.playing .note { visibility: hidden; }
     /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
     var best = bestTier(ensureNext()); promoted = false; nextBest = best;
     inspectEl.style.setProperty("--tell", TIERS[best === "mythic" ? "legendary" : best].color); inspectEl.style.setProperty("--tp", 0);
-    var fromR = shelf.children[i] && shelf.children[i].getBoundingClientRect();
+    cancelAnimationFrame(ringRaf);
+    var fromR = ringEl.children[i] && ringEl.children[i].getBoundingClientRect();
     inspectEl.innerHTML = '<div class="tell"></div><div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div>';
     showOnly("inspect");
     if (fromR && fromR.width) flyFrom(inspectEl.querySelector(".lift"), fromR, 460);
@@ -882,9 +971,8 @@ body.playing .note { visibility: hidden; }
   }
   inspectEl.addEventListener("pointerup", endGesture); inspectEl.addEventListener("pointercancel", endGesture);
   function back() {
-    if (state !== "inspect") return; paintSelect(); var b = shelf.children[chosen];
-    if (b) { shelf.scrollLeft = b.offsetLeft - (shelf.clientWidth - b.offsetWidth) / 2; shelfDepth(); } // the shelf may have been built while hidden
-    try { b && b.focus({ preventScroll: true }); } catch (e) {}
+    if (state !== "inspect") return; paintSelect(false, chosen);
+    try { ringwrap.focus({ preventScroll: true }); } catch (e) {}
   }
   $("#turnBtn").addEventListener("click", function () { if (state !== "inspect") return; rotY += 180; setRot(false); sfx.whoosh(); });
   $("#openBtn").addEventListener("click", function () { if (state !== "inspect") return; var turned = !facingFront(); rotY = Math.round(rotY / 360) * 360; setRot(false); if (turned) setTimeout(cut, 350); else cut(); });
@@ -913,13 +1001,13 @@ body.playing .note { visibility: hidden; }
   }
   function cut() {
     if (state !== "inspect") return; state = "cutting";
-    if (!commitRip()) { paintSelect(); say("Out of packs", 2000); return; }
+    if (!commitRip()) { paintHome(); say("Out of packs", 2000); return; }
     /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
     var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
     paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
     nextBest = best; glow(1); inspectEl.classList.add("told");
     var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, promo ? null : TIERS[best].color, 7, promo);
-    setHud("", ""); shelfPacks = [];
+    setHud("", "");
     buildStack(0, r);
   }
   /* fromPack = the torn pack's rect: the real cards rise out of it, fanned, and settle into the stack while the empty pack drops away. */
@@ -1093,10 +1181,10 @@ body.playing .note { visibility: hidden; }
     againBtn.textContent = S.packs > 0 ? "Open another pack" : "Back to the packs";
     try { againBtn.focus({ preventScroll: true }); } catch (e) {}
   }
-  /* With packs left, go straight to a fresh pack in hand; "Pick another" there still returns to the shelf. */
+  /* With packs left, go straight to a fresh pack in hand; "Pick another" there goes back to the wheel. */
   againBtn.addEventListener("click", function () {
-    if (state !== "summary") return; shelfPacks = []; paintSelect();
-    if (S.packs > 0) choose(Math.floor(SHELF_N / 2));
+    if (state !== "summary") return;
+    if (S.packs > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
   });
   function revealAll() {
     if (state !== "stack" && state !== "flipping") return;
@@ -1208,7 +1296,7 @@ body.playing .note { visibility: hidden; }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
-    if (!modal.hidden) closeModal(); else if (state === "inspect") back();
+    if (!modal.hidden) closeModal(); else if (state === "inspect") back(); else if (state === "select") paintHome();
   });
 
   /* ---------- tabs and settings ---------- */
@@ -1219,7 +1307,7 @@ body.playing .note { visibility: hidden; }
     vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
     $("#status").hidden = b; paintTeamPick(b); document.body.classList.toggle("focus", !b && state === "inspect");
     if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} }
-    else { try { history.replaceState(null, "", "#open"); } catch (e) {} if (state === "select") requestAnimationFrame(centerShelf); }
+    else { try { history.replaceState(null, "", "#open"); } catch (e) {} }
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
     vBinder._was = b; paintTabDot();
   }
@@ -1230,8 +1318,8 @@ body.playing .note { visibility: hidden; }
   function paintToggles() { muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); }
   muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
   demoBtn.onclick = function () { S.demo = !S.demo; S.next = null; save(); paintToggles(); };
-  $("#demoPack").onclick = function () { S.packs++; save(); paintStatus(); if (state === "select") paintSelectHud(); };
-  $("#skipTimer").onclick = function () { S.nextClaimAt = Math.min(S.nextClaimAt - CLAIM_MS, Date.now()); save(); paintStatus(); if (state === "select") paintSelectHud(); };
+  $("#demoPack").onclick = function () { S.packs++; save(); paintStatus(); if (state === "select" || state === "home") paintSelectHud(); };
+  $("#skipTimer").onclick = function () { S.nextClaimAt = Math.min(S.nextClaimAt - CLAIM_MS, Date.now()); save(); paintStatus(); if (state === "select" || state === "home") paintSelectHud(); };
   /* ---------- my team ---------- */
   var teamPick = $("#teamPick"), teamInput = $("#teamInput"), teamMsg = $("#teamMsg");
   function paintTeamPick(inBinder) {
@@ -1246,7 +1334,7 @@ body.playing .note { visibility: hidden; }
     S.team = n; S.teamAsked = true; if (S.opened === 0) S.next = null; save(); teamMsg.hidden = true; paintTeamPick(); actx(); sfx.mine();
     var t = BY_NUM[n];
     say(t ? "Team " + n + ", " + t.name + ", is your team" + (S.opened === 0 ? ". It's in your first pack." : ".") : "Saved team " + n + ". It wasn't at Champs 2026, so it isn't in this pack.", 4200);
-    if (state === "select") paintSelect(); if (!vBinder.hidden) paintBinder();
+    if (state === "select" || state === "home") paintSelectHud(); if (!vBinder.hidden) paintBinder();
   });
   $("#teamSkip").onclick = function () { S.teamAsked = true; save(); teamMsg.hidden = true; paintTeamPick(); };
   $("#changeTeam").onclick = function () {
@@ -1257,7 +1345,7 @@ body.playing .note { visibility: hidden; }
   resetBtn.onclick = function () {
     if (!armed) { armed = 1; resetBtn.textContent = "Tap again to delete"; setTimeout(function () { armed = 0; resetBtn.textContent = "Reset collection"; }, 3500); return; }
     armed = 0; resetBtn.textContent = "Reset collection"; var d = S.demo, m = S.muted, tm = S.team; S = fresh(); S.demo = d; S.muted = m; S.team = tm; S.teamAsked = true; save(); paintTabDot(); paintTeamPick();
-    document.body.classList.remove("takeover"); shelfPacks = []; paintSelect(); if (!vBinder.hidden) paintBinder();
+    document.body.classList.remove("takeover"); paintHome(); if (!vBinder.hidden) paintBinder();
   };
   paintToggles();
 
@@ -1265,7 +1353,7 @@ body.playing .note { visibility: hidden; }
   function boot() {
     var hash = (location.hash || "").replace("#", "");
     if (S.pending) { say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
-    else paintSelect();
+    else paintHome();
     paintStatus(); show(hash === "binder" ? "binder" : "open");
   }
   window.__frc = { S: function () { return S; }, rollPack: rollPack, mythicChance: mythicChance, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, DIVS: DIVS, DIV_TEAMS: DIV_TEAMS, state: function () { return state; }, cardEl: cardEl };
