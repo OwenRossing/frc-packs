@@ -19,10 +19,11 @@ html, body { min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; overflow-x: hidden; }
 button { font: inherit; color: inherit; }
 .bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; background: radial-gradient(120% 90% at 50% 0%, var(--bg-2), var(--bg) 70%); }
-.bg i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; filter: blur(60px); opacity: .35; animation: drift 26s ease-in-out infinite alternate; }
-.bg i:nth-child(1) { background: #0f6b73; left: -25vmax; top: -20vmax; }
-.bg i:nth-child(2) { background: #14396b; right: -30vmax; bottom: -25vmax; animation-duration: 34s; animation-direction: alternate-reverse; }
-.bg i:nth-child(3) { background: #0c5a4a; left: 20vmax; top: 30vh; width: 40vmax; height: 40vmax; opacity: .22; animation-duration: 42s; }
+/* Soft blobs are radial gradients, not blurred circles: a moving blur(60px) layer this big costs the GPU every frame, a gradient is drawn once and slid. */
+.bg i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; background: radial-gradient(closest-side, var(--c) 45%, transparent); opacity: .35; animation: drift 26s ease-in-out infinite alternate; will-change: transform; }
+.bg i:nth-child(1) { --c: #0f6b73; left: -25vmax; top: -20vmax; }
+.bg i:nth-child(2) { --c: #14396b; right: -30vmax; bottom: -25vmax; animation-duration: 34s; animation-direction: alternate-reverse; }
+.bg i:nth-child(3) { --c: #0c5a4a; left: 20vmax; top: 30vh; width: 40vmax; height: 40vmax; opacity: .22; animation-duration: 42s; }
 @keyframes drift { from { transform: translate(0,0) rotate(0deg) scale(1); } to { transform: translate(8vmax, 5vmax) rotate(40deg) scale(1.15); } }
 .rays { position: fixed; inset: -50vmax; z-index: 1; pointer-events: none; opacity: 0; transition: opacity .6s; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0 8deg, var(--ray, rgba(120,255,240,.14)) 8deg 12deg); animation: spin 30s linear infinite; mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 38%); -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 38%); }
 body.takeover .rays { opacity: 1; }
@@ -57,7 +58,9 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .status .packs b { font-family: var(--display); font-size: 24px; color: var(--foam); letter-spacing: 0; margin-left: 6px; font-variant-numeric: tabular-nums; }
 .status .timer { font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; font-weight: 600; }
 .status .timer b { color: var(--foam); }
-.claim { background: var(--tide); color: #02211d; border: 0; border-radius: 10px; padding: 9px 16px; font-family: var(--display); font-size: 18px; cursor: pointer; box-shadow: 0 4px 0 #138a80; animation: pulse 1.6s ease-in-out infinite; }
+.claim { position: relative; background: var(--tide); color: #02211d; border: 0; border-radius: 10px; padding: 9px 16px; font-family: var(--display); font-size: 18px; cursor: pointer; box-shadow: 0 4px 0 #138a80; }
+/* The pulse is a halo behind the button that grows and fades (transform and opacity only, so nothing repaints). */
+.claim::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(39,211,195,.5); animation: pulse 1.6s ease-out infinite; pointer-events: none; }
 .meter { flex-basis: 100%; display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); padding-right: 6px; }
 .meter .mbar { flex: 1; height: 6px; background: #14323b; border-radius: 6px; overflow: hidden; position: relative; }
 .meter .mbar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #27d3c3, #3cffdc, #c9fff6); border-radius: 6px; transition: width .6s cubic-bezier(.2,1,.3,1); }
@@ -76,8 +79,9 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 /* Nothing glows until you start the swipe. The light starts white and only takes on the best card's color as the tear gets longer, so you can edge it. */
 .inspect { --tellc: color-mix(in srgb, var(--tell, #fff) calc(min(1, var(--tp, 0) * var(--tp, 0) * 1.6) * 100%), #eef6ff); }
 .inspect .tell { opacity: calc(var(--tp, 0) * 1); background: radial-gradient(closest-side at 50% 35%, var(--tellc), transparent); }
-.inspect .lift { filter: drop-shadow(0 0 calc(var(--tp, 0) * 26px) var(--tellc)); }
-.inspect:not(.swiping):not(.told) .lift { filter: none; }
+/* The pack's rim light is a glow layer behind it that fades in with the swipe. A drop-shadow filter here had to redraw the whole 3D pack on every finger move. */
+.inspect .lift::before { content: ""; position: absolute; inset: 0 1%; border-radius: 4%; box-shadow: 0 0 calc(var(--tp, 0) * 30px) calc(var(--tp, 0) * 8px) var(--tellc); opacity: min(1, calc(var(--tp, 0) * 2)); pointer-events: none; }
+.inspect:not(.swiping):not(.told) .lift::before { opacity: 0; }
 .inspect:not(.swiping):not(.told) .tell, .inspect:not(.swiping):not(.told) .cutline { opacity: 0; }
 .inspect.told .tell { opacity: .95; }
 .inspect .lift { position: relative; z-index: 1; }
@@ -102,7 +106,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 @keyframes shock { 0% { transform: translateY(-50%) scale(.2); opacity: 1; } 100% { transform: translateY(-50%) scale(4.5); opacity: 0; } }
 @keyframes rays { 0% { transform: translateY(-50%) rotate(0) scale(.3); opacity: 0; } 25% { opacity: .55; } 100% { transform: translateY(-50%) rotate(40deg) scale(1); opacity: 0; } }
 .claim:active { transform: translateY(3px); box-shadow: 0 1px 0 #138a80; }
-@keyframes pulse { 0%,100% { box-shadow: 0 4px 0 #138a80, 0 0 0 0 rgba(39,211,195,.5); } 50% { box-shadow: 0 4px 0 #138a80, 0 0 0 9px rgba(39,211,195,0); } }
+@keyframes pulse { 0% { transform: none; opacity: 0; } 10% { opacity: 1; } 70%, 100% { transform: scale(1.14, 1.45); opacity: 0; } }
 
 .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding-block: 12px 4px; position: relative; z-index: 3; min-height: 0; }
 .stage.shake { animation: shake .5s cubic-bezier(.36,.07,.19,.97); }
@@ -170,13 +174,16 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 /* Choosing: 10 copies of the pack on a slowly turning wheel, like picking a booster in Pocket. Drag to spin, tap one to take it. */
 .ringwrap { --pw: min(36vw, 190px, calc((100svh - 400px) / 1.6)); --R: calc(var(--pw) * 1.75); position: relative; width: calc(100% + 32px); margin-inline: -16px; height: calc(var(--pw) * 1.52 + 96px); perspective: 1000px; perspective-origin: 50% 20%; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
 .ringwrap.drag { cursor: grabbing; }
-.ring { position: absolute; left: calc(50% - var(--pw) / 2); top: 34px; width: var(--pw); aspect-ratio: 5 / 7.6; transform-style: preserve-3d; transform: translateZ(calc(var(--R) * -1)) rotateX(-7deg) rotateY(var(--a, 0deg)); }
-.ring .pick { position: absolute; inset: 0; border: 0; padding: 0; background: none; cursor: pointer; transform: rotateY(calc(var(--i) * 36deg)) translateZ(var(--R)); filter: brightness(calc(1 - var(--d, 0) * .6)); transition: filter .15s; border-radius: 12px; }
-.ring .pick.front .pk { box-shadow: 0 0 0 3px rgba(255,255,255,.0); }
-.ring .pick.front { filter: brightness(1.08) drop-shadow(0 0 18px rgba(120,200,255,.45)); }
+.ring { position: absolute; left: calc(50% - var(--pw) / 2); top: 34px; width: var(--pw); aspect-ratio: 5 / 7.6; transform-style: preserve-3d; transform: translateZ(calc(var(--R) * -1)) rotateX(-7deg); }
+/* Packs further round the wheel fade into the dark table (opacity, which the GPU applies for free, where a changing filter repaints every pack every frame). The front one gets a glow behind it. */
+.ring .pick { position: absolute; inset: 0; border: 0; padding: 0; background: none; cursor: pointer; transform: rotateY(calc(var(--i) * 36deg)) translateZ(var(--R)); border-radius: 12px; }
+.ring .pick::before { content: ""; position: absolute; inset: 2% 3%; border-radius: 12px; box-shadow: 0 0 26px 4px rgba(120,200,255,.45); opacity: 0; transition: opacity .15s; pointer-events: none; }
+.ring .pick.front::before { opacity: 1; }
+/* Ten packs × seven edge layers is too many 3D layers to turn every frame, and the thickness doesn't show at this size. */
+.ring .pk-edge { display: none; }
 .ringfloor { position: absolute; left: 50%; bottom: 10px; width: calc(var(--R) * 2.4); height: 40px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(39,211,195,.22), transparent); pointer-events: none; }
 .ringback { margin-top: 4px; }
-.ringwrap.out .pick { filter: grayscale(.8) brightness(.6); }
+.ringwrap.out { filter: grayscale(.8) brightness(.6); }
 
 .inspect { position: relative; width: min(66vw, 280px, calc((100svh - 352px) / 1.52)); min-width: 180px; perspective: 1200px; touch-action: none; user-select: none; -webkit-user-select: none; }
 .inspect .lift { animation: lift .5s cubic-bezier(.2,1.25,.4,1) both; }
@@ -214,8 +221,10 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .back { background: radial-gradient(circle at 50% 45%, #1b6f7a, #0a2f45 60%, #061c2a); border: calc(var(--cw) * .03) solid #e9f6f4; display: grid; place-items: center; box-shadow: 0 14px 30px rgba(0,0,0,.5); }
 .back::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(60deg, rgba(255,255,255,.05) 0 2px, transparent 2px 16px), repeating-linear-gradient(-60deg, rgba(255,255,255,.05) 0 2px, transparent 2px 16px); }
 .back svg { position: relative; width: 74%; }
-.tease .back { animation: tease 1.2s ease-in-out infinite; }
-@keyframes tease { 0%,100% { box-shadow: 0 14px 30px rgba(0,0,0,.5), 0 0 0 0 var(--tc); } 50% { box-shadow: 0 14px 30px rgba(0,0,0,.5), 0 0 40px 10px var(--tc); } }
+/* A hidden good card throbs with light: a glow layer behind it fades in and out (opacity only, so nothing repaints). */
+.tilt { position: relative; }
+.tease .tilt::before { content: ""; position: absolute; inset: 0; border-radius: calc(var(--cw) * .055); box-shadow: 0 0 40px 10px var(--tc); opacity: 0; animation: tease 1.2s ease-in-out infinite; pointer-events: none; }
+@keyframes tease { 50% { opacity: 1; } }
 .tease .tilt { animation: rattle 1.2s ease-in-out infinite; }
 @keyframes rattle { 0%,70%,100% { transform: rotate(0); } 76% { transform: rotate(-2deg); } 82% { transform: rotate(2deg); } 88% { transform: rotate(-1deg); } }
 .ribbon { position: absolute; z-index: 3; top: -6px; left: -6px; background: #ff3d6e; color: #fff; font-weight: 700; font-size: max(10px, calc(var(--cw) * .05)); letter-spacing: .1em; padding: .2em .7em; border-radius: 8px; transform: rotate(-6deg); box-shadow: 0 3px 8px rgba(0,0,0,.4); pointer-events: none; animation: popin .4s cubic-bezier(.2,1.6,.4,1) both; }
@@ -232,7 +241,10 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .front { transform: rotateY(180deg) translateZ(var(--th)); }
 .flip .edge { position: absolute; inset: 0; border-radius: calc(var(--cw) * .055); background: var(--frame, #cfd8dd); transform: translateZ(calc(var(--th) * var(--z) / 2.6)); }
 .flip .edge.e0 { background: #0c2f40; }
-.shade { position: absolute; left: 8%; right: 8%; top: 10%; bottom: -3%; border-radius: 12%; background: rgba(0,0,0,.5); filter: blur(calc(var(--cw) * .05)); transform: translate(calc(var(--sx, 0) * 1px - var(--gx, 0) * var(--cw) * .06), calc(var(--sy, 0) * 1px + var(--gy, 0) * var(--cw) * .05 + var(--cw) * .03)); transition: transform .5s cubic-bezier(.2,1.2,.3,1); pointer-events: none; }
+/* Every edge is its own 3D layer, so only cards you can actually tilt or flip get them: the top of the stack, and a small card while the pointer is on it. */
+.stack .slot:not(.top) .face { box-shadow: none; }
+.stack .slot:not(.top) .edge, .summary .slot:not(.live) .edge, .grid .slot:not(.live) .edge { display: none; }
+.shade { position: absolute; left: 2%; right: 2%; top: 4%; bottom: -9%; border-radius: 12%; background: radial-gradient(closest-side, rgba(0,0,0,.5) 70%, transparent); transform: translate(calc(var(--sx, 0) * 1px - var(--gx, 0) * var(--cw) * .06), calc(var(--sy, 0) * 1px + var(--gy, 0) * var(--cw) * .05 + var(--cw) * .03)); transition: transform .5s cubic-bezier(.2,1.2,.3,1); pointer-events: none; }
 .slot.live .shade { transition: transform .12s ease-out; }
 .ghost .shade, .stack .slot:not(.top) .shade { opacity: 0; }
 .front::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 4; mix-blend-mode: soft-light; background: linear-gradient(calc(125deg + var(--ry, 0deg) * 4 + var(--gx, 0) * 50deg), rgba(255,255,255,.55), rgba(255,255,255,0) 32%, rgba(0,0,0,0) 68%, rgba(0,0,0,.3)); }
@@ -358,7 +370,7 @@ body.playing .note { visibility: hidden; }
 .note b { color: var(--ink); font-weight: 600; }
 @media (max-width: 460px) { .brand { font-size: 19px; } .seg button { padding: 7px 10px; font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) {
-  .meter.hot .mbar i, .inspect.rainbow .tell, .bg i, .rays, .alive .float, .tease .back, .tease .tilt, .card[data-tier="mythic"] .front, .claim, .cuthint, .cuthint::before { animation: none !important; }
+  .meter.hot .mbar i, .inspect.rainbow .tell, .bg i, .rays, .alive .float, .tease .tilt::before, .tease .tilt, .card[data-tier="mythic"] .front, .claim::after, .cuthint, .cuthint::before { animation: none !important; }
   .flip { transition-duration: .01s; }
   .ptype .pk { animation: none; }
   .inspect .lift, .stack.rise, .summary .slot, .ribbon { animation: none; }

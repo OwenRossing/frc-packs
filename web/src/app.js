@@ -379,13 +379,18 @@ export function start(RECIPE) {
   }
   /* ---------- the wheel of 10 packs ---------- */
   var ringA = 0, ringFront = -1, ringRaf = 0, ringDragged = false;
+  /* Runs every frame while the wheel turns, so it writes plain properties on as few elements as it can. A custom
+     property set on the wheel or a pack is inherited by everything inside it, and restyling all ten packs each frame
+     is what made spinning stutter on phones. */
   function setRing(a) {
-    ringA = a; ringEl.style.setProperty("--a", a + "deg");
+    ringA = a; ringEl.style.transform = "translateZ(calc(var(--R) * -1)) rotateX(-7deg) rotateY(" + a + "deg)";
     var front = ((Math.round(-a / 36) % SHELF_N) + SHELF_N) % SHELF_N;
     Array.prototype.forEach.call(ringEl.children, function (el, i) {
-      var th = (i * 36 + a) * Math.PI / 180; el.style.setProperty("--d", ((1 - Math.cos(th)) / 2).toFixed(3));
-      el.style.setProperty("--sheen", (100 + Math.sin(th) * 110).toFixed(1) + "%");
-      el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front));
+      var th = (i * 36 + a) * Math.PI / 180, sheen = (100 + Math.sin(th) * 110).toFixed(1) + "%";
+      el.style.opacity = (1 - (1 - Math.cos(th)) / 2 * .6).toFixed(3);
+      if (!el._lit) el._lit = el.querySelectorAll(".pk-front .pk-top, .pk-front .pk-body");
+      for (var j = 0; j < el._lit.length; j++) el._lit[j].style.backgroundPositionX = sheen + ", 0, 0";
+      if (i === front !== el.classList.contains("front")) { el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front)); }
     });
     if (front !== ringFront) { if (ringFront !== -1) { sfx.tick(); buzz(4); } ringFront = front; }
   }
