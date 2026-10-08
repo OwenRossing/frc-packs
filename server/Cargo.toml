@@ -2,6 +2,8 @@
 name = "frc-packs-server"
 version = "0.1.0"
 edition = "2024"
+# The oldest Rust the locked dependencies build with. deploy/install.sh reads this.
+rust-version = "1.89"
 publish = false
 
 [dependencies]

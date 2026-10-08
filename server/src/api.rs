@@ -24,6 +24,7 @@ pub const START_PACKS: i32 = 2;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
+        .route("/health", get(health))
         .route("/session", post(session))
         .route("/state", get(state))
         .route("/claim", post(claim))
@@ -39,6 +40,12 @@ pub fn routes() -> Router<Shared> {
 
 fn err(status: StatusCode, code: &'static str) -> ApiError {
     ApiError::new(status, code)
+}
+
+/// For uptime checks and the install script: the server is up and can reach the database.
+async fn health(State(s): State<Shared>) -> ApiResult<Json<serde_json::Value>> {
+    sqlx::query("select 1").execute(&s.db).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ---------- responses ----------

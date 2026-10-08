@@ -293,3 +293,46 @@ async fn dev_tools_are_off_by_default() {
     let r = call(&app, "POST", "/api/dev/demo", Some(&c), Some(json!({ "on": true }))).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn health_check_reaches_the_database() {
+    let (app, _db) = need_db!(setup(false));
+    let r = call(&app, "GET", "/api/health", None, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.body, json!({ "ok": true }));
+}
+
+#[tokio::test]
+async fn cache_headers_suit_a_cdn() {
+    let Ok(url) = std::env::var("DATABASE_URL") else { return };
+    let db = PgPool::connect(&url).await.unwrap();
+    migrate(&db).await.unwrap();
+    let web = std::env::temp_dir().join(format!("frc-web-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(web.join("assets")).unwrap();
+    std::fs::write(web.join("index.html"), "<!doctype html>").unwrap();
+    std::fs::write(web.join("assets/app-abc123.js"), "1").unwrap();
+    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data");
+    let app = app(db, Config { data_dir, web_dir: Some(web.clone()), dev_tools: false, cookie_secure: true }).unwrap();
+    let cache = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let res = app.oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap();
+            let cc = res.headers().get(header::CACHE_CONTROL).map(|v| v.to_str().unwrap().to_string());
+            (res.status(), cc)
+        }
+    };
+    let expect = [
+        ("/", StatusCode::OK, Some("no-cache")),
+        ("/some/page", StatusCode::OK, Some("no-cache")),
+        ("/assets/app-abc123.js", StatusCode::OK, Some("public, max-age=31536000, immutable")),
+        ("/assets/missing.js", StatusCode::NOT_FOUND, None),
+        ("/packs/cmp26.json", StatusCode::OK, Some("no-cache")),
+        ("/photos/254.webp", StatusCode::OK, Some("public, max-age=86400")),
+        ("/api/health", StatusCode::OK, Some("no-store")),
+        ("/api/state", StatusCode::UNAUTHORIZED, Some("no-store")),
+    ];
+    for (path, status, cc) in expect {
+        assert_eq!(cache(path).await, (status, cc.map(str::to_string)), "{path}");
+    }
+    std::fs::remove_dir_all(web).ok();
+}

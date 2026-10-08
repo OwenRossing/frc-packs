@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Method, Request, StatusCode, header};
+use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
@@ -45,9 +45,37 @@ pub fn app(db: PgPool, cfg: Config) -> anyhow::Result<Router> {
         .nest_service("/photos", ServeDir::new(cfg.data_dir.join("photos")))
         .nest_service("/packs", ServeDir::new(cfg.data_dir.join("packs")));
     if let Some(web) = cfg.web_dir {
-        router = router.fallback_service(ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html"))));
+        // Built JS/CSS: a missing file is a 404, never the page (which would then be cached as that file).
+        router = router
+            .nest_service("/assets", ServeDir::new(web.join("assets")))
+            .fallback_service(ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html"))));
     }
-    Ok(router.layer(middleware::from_fn(json_only_writes)).layer(TraceLayer::new_for_http()).with_state(state))
+    Ok(router
+        .layer(middleware::from_fn(json_only_writes))
+        .layer(middleware::from_fn(cache_headers))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state))
+}
+
+/// Tell browsers and Cloudflare what they may keep. The page and pack recipes are checked on every visit so an update
+/// shows up at once; the built JS/CSS have the content hash in their names, so they can be kept forever.
+async fn cache_headers(req: Request<Body>, next: Next) -> Response {
+    let path = req.uri().path().to_owned();
+    let mut res = next.run(req).await;
+    let ok = res.status().is_success() || res.status() == StatusCode::NOT_MODIFIED;
+    let policy = if path.starts_with("/api/") {
+        "no-store"
+    } else if !ok {
+        return res;
+    } else if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else if path.starts_with("/photos/") {
+        "public, max-age=86400"
+    } else {
+        "no-cache"
+    };
+    res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(policy));
+    res
 }
 
 /// Writes to the API must be JSON. Browsers can't send a cross-site JSON request without permission (CORS), so

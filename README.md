@@ -49,6 +49,10 @@ To try it the way it will run in production, `npm run build` in `web/`, then ope
 | `DEV_TOOLS` | off | Testing helpers in Settings: demo luck, +1 pack, skip timer, reset. **Never turn on in production.** |
 | `COOKIE_SECURE` | off | Mark the session cookie HTTPS-only. Turn on when hosted over HTTPS. |
 
+## Host it
+
+`deploy/install.sh` installs and runs the site on an Ubuntu machine, and Cloudflare Tunnel puts it on your domain without opening any ports. Steps, backups, and moving to another machine: [deploy/README.md](deploy/README.md).
+
 ## Tests
 
 ```sh
@@ -64,6 +68,6 @@ npm test                                    # a browser bot plays packs against 
 
 ## Not done yet
 
-- Sign-in (accounts are guest-only and live in one browser's cookie), hosting and a domain.
+- Sign-in (accounts are guest-only and live in one browser's cookie).
 - Rate limiting on account creation and pack opening.
 - Trading, crafting with parts, and more packs.
