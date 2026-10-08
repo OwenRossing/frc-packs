@@ -1,0 +1,377 @@
+// The admin panel: make and share invite codes, and manage accounts. The server checks that the visitor is the admin
+// account for every request; this page only shows what it returns.
+
+import "./style.css";
+import "./admin.css";
+import { api, ApiError, explain, type AdminUser, type Invite } from "./api";
+
+type Kid = Node | string | null | undefined | false;
+
+/** Builds an element. Text always goes in as text, never HTML, so notes and names can't inject markup. */
+function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string | boolean> = {},
+  ...kids: Kid[]
+): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === true) e.setAttribute(k, "");
+    else if (v !== false) e.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid) e.append(kid);
+  return e;
+}
+
+function button(label: string, onClick: (b: HTMLButtonElement) => void, cls = "chip"): HTMLButtonElement {
+  const b = h("button", { type: "button", class: cls }, label);
+  b.onclick = () => onClick(b);
+  return b;
+}
+
+const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
+const day = (ms: number) =>
+  new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+const when = (ms: number) =>
+  new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+async function copy(text: string, b: HTMLButtonElement) {
+  const was = b.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    b.textContent = "Copied";
+  } catch {
+    window.prompt("Copy this:", text);
+  }
+  setTimeout(() => (b.textContent = was), 1400);
+}
+
+/** A button that asks for a second tap before doing something that can't be undone. */
+function confirmButton(label: string, armed: string, run: () => Promise<void>, cls = "chip"): HTMLButtonElement {
+  let timer = 0;
+  return button(
+    label,
+    async (b) => {
+      if (!b.classList.contains("armed")) {
+        b.classList.add("armed");
+        b.textContent = armed;
+        timer = window.setTimeout(() => {
+          b.classList.remove("armed");
+          b.textContent = label;
+        }, 3500);
+        return;
+      }
+      clearTimeout(timer);
+      b.disabled = true;
+      try {
+        await run();
+      } finally {
+        b.disabled = false;
+        b.classList.remove("armed");
+        b.textContent = label;
+      }
+    },
+    cls,
+  );
+}
+
+const toast = h("div", { class: "toast", role: "status", "aria-live": "polite" });
+document.body.append(toast);
+let toastTimer = 0;
+function say(text: string, bad = false) {
+  toast.textContent = text;
+  toast.classList.toggle("bad", bad);
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("show"), 3200);
+}
+const fail = (e: unknown) => say(explain(e), true);
+
+// ---------- invite codes ----------
+
+let invites: Invite[] = [];
+let fresh = new Set<string>();
+
+function inviteLink(code: string) {
+  return `${location.origin}/?invite=${code}`;
+}
+
+function inviteRow(inv: Invite): HTMLElement {
+  const full = inv.uses >= inv.maxUses;
+  return h(
+    "div",
+    { class: `item${fresh.has(inv.code) ? " fresh" : ""}${full ? " done" : ""}` },
+    h(
+      "div",
+      { class: "item-main" },
+      h("code", { class: "code" }, inv.code),
+      h(
+        "div",
+        { class: "meta" },
+        inv.note ? h("b", {}, inv.note) : null,
+        h("span", {}, `${inv.uses} of ${inv.maxUses} used`),
+        h("span", {}, `made ${day(inv.createdAt)}`),
+      ),
+      inv.usedBy.length ? h("div", { class: "meta" }, `Joined: ${inv.usedBy.join(", ")}`) : null,
+    ),
+    h(
+      "div",
+      { class: "actions" },
+      full ? null : button("Copy code", (b) => copy(inv.code, b)),
+      full ? null : button("Copy link", (b) => copy(inviteLink(inv.code), b)),
+      confirmButton("Delete", "Tap to delete", async () => {
+        try {
+          await api.admin.deleteInvite(inv.code);
+          invites = invites.filter((i) => i.code !== inv.code);
+          paintInvites();
+          say(`Deleted ${inv.code}.`);
+        } catch (e) {
+          fail(e);
+        }
+      }),
+    ),
+  );
+}
+
+let showUsed = false;
+
+function paintInvites() {
+  const open = invites.filter((i) => i.uses < i.maxUses);
+  const used = invites.filter((i) => i.uses >= i.maxUses);
+  $("#invCount").textContent = invites.length ? `${open.length} open` : "";
+  const list = $("#invites");
+  list.replaceChildren();
+  if (!open.length) list.append(h("p", { class: "empty" }, used.length ? "Every code has been used. Make a new one above." : "No invite codes yet. Make one above."));
+  for (const inv of open) list.append(inviteRow(inv));
+  if (used.length) {
+    const more = h("details", { class: "used" }, h("summary", {}, `Used codes (${used.length})`), ...used.map(inviteRow));
+    more.open = showUsed;
+    more.addEventListener("toggle", () => (showUsed = more.open));
+    list.append(more);
+  }
+}
+
+$<HTMLFormElement>("#inviteForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget as HTMLFormElement;
+  const get = (n: string) => (form.elements.namedItem(n) as HTMLInputElement).value;
+  const uses = Number(get("uses")), count = Number(get("count"));
+  const msg = $("#inviteMsg");
+  if (!(Number.isInteger(uses) && uses >= 1 && uses <= 500) || !(Number.isInteger(count) && count >= 1 && count <= 50)) {
+    msg.textContent = "People per code can be 1 to 500, and you can make 1 to 50 codes at a time.";
+    msg.hidden = false;
+    return;
+  }
+  msg.hidden = true;
+  const btn = form.querySelector("button")!;
+  btn.disabled = true;
+  try {
+    const before = new Set(invites.map((i) => i.code));
+    invites = await api.admin.makeInvites(get("note").trim(), uses, count);
+    fresh = new Set(invites.filter((i) => !before.has(i.code)).map((i) => i.code));
+    (form.elements.namedItem("note") as HTMLInputElement).value = "";
+    paintInvites();
+    say(count === 1 ? "Made a code. Copy it below." : `Made ${count} codes. Copy them below.`);
+  } catch (err) {
+    fail(err);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------- accounts ----------
+
+let users: AdminUser[] = [];
+let me = "";
+let openId = "";
+
+function badge(text: string, cls: string) {
+  return h("span", { class: `badge ${cls}` }, text);
+}
+
+function manage(u: AdminUser): HTMLElement {
+  const self = u.username === me;
+  const panel = h("div", { class: "manage" });
+  const result = h("div", { class: "result", hidden: true });
+
+  const packs = h("input", { class: "input num", type: "number", inputmode: "numeric", min: "1", max: "100", value: "1", "aria-label": "Packs to give" });
+  panel.append(
+    h(
+      "div",
+      { class: "mrow" },
+      h("span", {}, "Give packs"),
+      packs,
+      button(
+        "Give",
+        async (b) => {
+          const n = Number(packs.value);
+          if (!(Number.isInteger(n) && n >= 1 && n <= 100)) return say("Give 1 to 100 packs at a time.", true);
+          b.disabled = true;
+          try {
+            await api.admin.givePacks(u.id, n);
+            say(`Gave ${plural(n, "pack")} to ${u.username ?? "the guest"}.`);
+            await loadUsers();
+          } catch (e) {
+            fail(e);
+          } finally {
+            b.disabled = false;
+          }
+        },
+        "cta small",
+      ),
+    ),
+  );
+  if (self) {
+    panel.append(h("p", { class: "meta" }, "This is your account. Change your password in Settings on the main page."));
+    return panel;
+  }
+
+  const row = h("div", { class: "mrow wrap" });
+  if (u.username) {
+    row.append(
+      confirmButton("Reset password", "Tap to reset", async () => {
+        try {
+          const { password } = await api.admin.resetPassword(u.id);
+          result.replaceChildren(
+            h("span", {}, `New password for ${u.username}: `),
+            h("code", { class: "code" }, password),
+            button("Copy", (b) => copy(password, b)),
+            h("small", {}, "Shown once. They're signed out and can change it in Settings."),
+          );
+          result.hidden = false;
+        } catch (e) {
+          fail(e);
+        }
+      }),
+    );
+  }
+  row.append(
+    confirmButton(u.disabled ? "Turn on" : "Turn off", u.disabled ? "Tap to turn on" : "Tap to turn off", async () => {
+      try {
+        await api.admin.setDisabled(u.id, !u.disabled);
+        say(u.disabled ? `${u.username ?? "Guest"} can sign in again.` : `${u.username ?? "Guest"} is signed out and can't sign in.`);
+        await loadUsers();
+      } catch (e) {
+        fail(e);
+      }
+    }),
+  );
+  panel.append(row, result);
+
+  const name = u.username ?? "guest";
+  const confirm = h("input", { class: "input", placeholder: `Type ${name} to delete`, "aria-label": `Type ${name} to delete`, autocapitalize: "none", spellcheck: "false" });
+  panel.append(
+    h(
+      "div",
+      { class: "mrow danger" },
+      confirm,
+      button(
+        "Delete account",
+        async (b) => {
+          if (confirm.value.trim().toLowerCase() !== name.toLowerCase()) return say(`Type ${name} to delete this account.`, true);
+          b.disabled = true;
+          try {
+            await api.admin.deleteUser(u.id, confirm.value.trim());
+            say(`Deleted ${name} and their cards.`);
+            openId = "";
+            await loadUsers();
+          } catch (e) {
+            fail(e);
+          } finally {
+            b.disabled = false;
+          }
+        },
+        "chip bad",
+      ),
+    ),
+    h("p", { class: "meta" }, "Turning an account off keeps its cards. Deleting removes the account and all its cards for good."),
+  );
+  return panel;
+}
+
+function paintUsers() {
+  const q = $<HTMLInputElement>("#userFilter").value.trim().toLowerCase();
+  const shown = users.filter((u) => !q || (u.username ?? "guest").toLowerCase().includes(q) || (u.inviteNote ?? "").toLowerCase().includes(q));
+  $("#userCount").textContent = plural(users.length, "account");
+  const list = $("#users");
+  list.replaceChildren();
+  if (!shown.length) list.append(h("p", { class: "empty" }, q ? "No accounts match." : "No accounts yet."));
+  for (const u of shown) {
+    const open = openId === u.id;
+    const toggle = button(open ? "Close" : "Manage", () => {
+      openId = open ? "" : u.id;
+      paintUsers();
+    });
+    toggle.setAttribute("aria-expanded", String(open));
+    list.append(
+      h(
+        "div",
+        { class: `item${u.disabled ? " done" : ""}` },
+        h(
+          "div",
+          { class: "item-main" },
+          h(
+            "div",
+            { class: "who" },
+            h("b", {}, u.username ?? "Guest"),
+            u.admin ? badge("Admin", "admin") : null,
+            u.disabled ? badge("Off", "off") : null,
+            u.username ? null : badge("No sign-in", "off"),
+          ),
+          h(
+            "div",
+            { class: "meta" },
+            h("span", {}, `joined ${day(u.createdAt)}`),
+            u.inviteNote ? h("span", {}, `invite: ${u.inviteNote}`) : null,
+            h("span", {}, plural(u.sealed, "pack") + " to open"),
+            h("span", {}, `${u.opened} opened`),
+            h("span", {}, plural(u.cards, "card")),
+            u.lastOpenedAt ? h("span", {}, `last pack ${when(u.lastOpenedAt)}`) : null,
+          ),
+        ),
+        h("div", { class: "actions" }, toggle),
+        open ? manage(u) : null,
+      ),
+    );
+  }
+}
+$("#userFilter").addEventListener("input", paintUsers);
+
+async function loadUsers() {
+  users = await api.admin.users();
+  paintUsers();
+}
+
+// ---------- start ----------
+
+async function boot() {
+  try {
+    const [st, inv, us] = await Promise.all([api.state(), api.admin.invites(), api.admin.users()]);
+    me = st.account.username;
+    invites = inv;
+    users = us;
+    $("#panel").hidden = false;
+    paintInvites();
+    paintUsers();
+  } catch (e) {
+    const gate = $("#gate");
+    const signedOut = e instanceof ApiError && e.status === 401;
+    const notAdmin = e instanceof ApiError && e.status === 403;
+    gate.replaceChildren(
+      h("h1", {}, signedOut ? "Sign in first" : notAdmin ? "Admins only" : "Can't load the admin panel"),
+      h(
+        "p",
+        {},
+        signedOut
+          ? "Sign in with the admin account on the main page, then come back here."
+          : notAdmin
+            ? "This page is for the admin account."
+            : explain(e),
+      ),
+      h("a", { class: "cta small", href: "/" }, signedOut ? "Go to sign in" : "Back to packs"),
+    );
+    gate.hidden = false;
+  }
+}
+
+boot();

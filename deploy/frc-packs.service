@@ -1,0 +1,51 @@
+# FRC Packs web server. Installed by deploy/install.sh.
+# To change a setting, run `sudo systemctl edit frc-packs` and add lines like:
+#   [Service]
+#   Environment=BIND=127.0.0.1:3001
+[Unit]
+Description=FRC Packs web server
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+User=frcpacks
+Group=frcpacks
+ExecStart=/opt/frc-packs/bin/frc-packs-server
+# Postgres over its local socket; the database trusts the frcpacks system user, so there is no password.
+Environment=DATABASE_URL=postgres:///frcpacks?host=/var/run/postgresql
+Environment=BIND=127.0.0.1:3000
+Environment=DATA_DIR=/opt/frc-packs/data
+Environment=WEB_DIR=/opt/frc-packs/web
+# Visitors reach the site over HTTPS through Cloudflare.
+Environment=COOKIE_SECURE=1
+Environment=RUST_LOG=info
+# DEV_TOOLS stays off: on a public site it would let anyone give themselves packs.
+Restart=on-failure
+RestartSec=3
+
+# The server only reads its files and talks to Postgres and the network; lock everything else away.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly FRC Packs database backup
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=10m
+# If the machine was off at 4am, back up when it next starts.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

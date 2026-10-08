@@ -1,0 +1,13 @@
+#!/bin/sh
+# Admin commands for the installed site. Installed to /usr/local/bin by install.sh. Run with sudo:
+#   sudo frc-packs create-admin            make the admin account (once) and print its password
+#   sudo frc-packs reset-password <name>   give an account a new password, e.g. if the admin password is lost
+if [ $# -eq 0 ]; then
+  sed -n '3,4p' "$0" | sed 's/^# *//'
+  exit 2
+fi
+cd / && exec runuser -u frcpacks -- env \
+  DATABASE_URL='postgres:///frcpacks?host=/var/run/postgresql' \
+  DATA_DIR=/opt/frc-packs/data \
+  RUST_LOG=warn \
+  /opt/frc-packs/bin/frc-packs-server "$@"

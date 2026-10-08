@@ -1,0 +1,16 @@
+# Backs up the FRC Packs database to /var/backups/frc-packs. Started nightly by frc-packs-backup.timer.
+[Unit]
+Description=Back up the FRC Packs database
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=frcpacks
+Group=frcpacks
+ExecStart=/opt/frc-packs/bin/frc-packs-backup
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/backups/frc-packs
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077

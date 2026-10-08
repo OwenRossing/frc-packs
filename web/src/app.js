@@ -1,0 +1,937 @@
+import { api } from "./api";
+
+/* The game UI. Everything that matters (what's in a pack, serial numbers, timers, pity) comes from the server
+   through `api`; this file only shows it. RECIPE is the pack recipe (data/packs/<id>.json), the same file the
+   server rolls from. */
+export function start(RECIPE) {
+  var PACK_ID = RECIPE.id;
+  var TOTAL = 0, CLAIM_MS = 5 * 60 * 60 * 1000, SHELF_N = 10;
+  var $ = function (s) { return document.querySelector(s); };
+  var RM = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /* Mouse users click and drag; touch users tap and swipe. */
+  var MOUSE = !!(window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches);
+  var TAP = MOUSE ? "Click" : "Tap", SWIPE = MOUSE ? "Drag" : "Swipe";
+
+  /* ---------- data ---------- */
+  /* Teams arrive ranked and tiered by tools/build_packs.py: Mythic is the season's top 50 who came to Houston;
+     everyone else is ranked by EPA at Champs and split into Legendary, Rare, Uncommon and Common. */
+  var TEAMS = RECIPE.teams.slice(), BY_NUM = {};
+  TEAMS.forEach(function (t) { BY_NUM[t.num] = t; });
+  TOTAL = TEAMS.length;
+  function tierOf(num) { return BY_NUM[num] && BY_NUM[num].tier; }
+  var ORDER = ["mythic", "legendary", "rare", "uncommon", "common"];
+  var TIERS = {
+    common: { label: "Common", color: "#aab8c4", parts: 10, pow: 4, gems: "◆" },
+    uncommon: { label: "Uncommon", color: "#7fe0d2", parts: 26, pow: 6, gems: "◆◆" },
+    rare: { label: "Rare", color: "#ffc850", parts: 60, pow: 8, gems: "◆◆◆" },
+    legendary: { label: "Legendary", color: "#b478ff", parts: 140, pow: 11, gems: "◆◆◆◆" },
+    mythic: { label: "Mythic", color: "#3cffdc", parts: 260, pow: 13, gems: "★" }
+  };
+  var POOL = {}; ORDER.forEach(function (t) { POOL[t] = []; });
+  TEAMS.forEach(function (t) { POOL[t.tier].push(t); });
+  $("#poolN").textContent = TEAMS.length;
+  /* Division sets: own every team from one Houston division for a bonus pack. */
+  var DIVS = [], DIV_TEAMS = {};
+  TEAMS.forEach(function (t) { if (!DIV_TEAMS[t.div]) { DIV_TEAMS[t.div] = []; DIVS.push(t.div); } DIV_TEAMS[t.div].push(t); });
+  DIVS.sort();
+
+  /* ---------- odds (shown on the pack; the server does the rolling) ---------- */
+  var ODDS = RECIPE.odds, SOFT = ODDS.soft, HARD = ODDS.hard, LEG_EVERY = ODDS.legEvery;
+  function pct(x) { return +((x || 0) * 100).toFixed(2) + "%"; }
+  /* Picking your team is off for now: anyone could claim to be 254 and get a guaranteed top card in their first pack.
+     It can come back once a team is verified through an account. The code stays so turning this on restores it. */
+  var TEAM_PICK = false;
+  function myTeam() { return TEAM_PICK ? S.team : 0; }
+
+  /* ---------- state ---------- */
+  /* S mirrors the server: sealed packs, the free-pack timer, pity, the collection and the pack being revealed.
+     Only display preferences (sound, the wheel setting, which cards are marked new) are kept in this browser. */
+  var PREFS = "frcpacks.prefs";
+  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
+  try {
+    var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
+    if (prefs && typeof prefs === "object") {
+      S.muted = prefs.muted === true; S.wheel = prefs.wheel !== false;
+      if (prefs.unseen && typeof prefs.unseen === "object" && !Array.isArray(prefs.unseen)) S.unseen = prefs.unseen;
+    }
+  } catch (e) {}
+  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
+  /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
+  function applyState(st) {
+    var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank;
+    var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, opened: 0, pity: { m: 0, l: 0 } };
+    S.packs = p.sealed; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
+    S.demo = st.demo; S.devTools = st.devTools;
+  }
+  function applyCollection(col) {
+    S.inv = {}; col.cards.forEach(function (c) { if (BY_NUM[c.num]) S.inv[c.num] = c.serials.map(String); });
+    S.sets = {}; col.sets.forEach(function (d) { S.sets[d] = 1; });
+  }
+  function pendingFrom(o) {
+    if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
+    return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy }; }) };
+  }
+  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : "Something went wrong. Try again.", 3200); }
+  /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
+  function sync() {
+    if (state !== "select" && state !== "summary" && state !== "home") return;
+    Promise.all([api.state(), api.collection(PACK_ID)]).then(function (r) {
+      if (state !== "select" && state !== "summary" && state !== "home") return;
+      applyState(r[0]); applyCollection(r[1]);
+      paintStatus(); paintToggles(); paintTabDot(); if (!vBinder.hidden) paintBinder(); if (state === "select" || state === "home") paintSelectHud();
+    }, function () {});
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
+  addEventListener("focus", sync);
+
+  /* ---------- sound ---------- */
+  var ac = null;
+  function actx() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = false; } } if (ac && ac.state === "suspended") ac.resume(); return ac; }
+  function blip(f, d, type, v, when) {
+    if (S.muted) return; var a = actx(); if (!a) return;
+    var t = a.currentTime + (when || 0), o = a.createOscillator(), g = a.createGain();
+    o.type = type || "sine"; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v || .1, t + .01); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + d + .02);
+  }
+  function noise(d, v, lo) {
+    if (S.muted) return; var a = actx(); if (!a) return;
+    var n = Math.floor(a.sampleRate * d), buf = a.createBuffer(1, n, a.sampleRate), data = buf.getChannelData(0);
+    for (var i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    var s = a.createBufferSource(); s.buffer = buf;
+    var bp = a.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = lo; bp.Q.value = .7;
+    var g = a.createGain(); g.gain.value = v; s.connect(bp); bp.connect(g); g.connect(a.destination); s.start();
+  }
+  function chord(freqs, step, type, v) { freqs.forEach(function (f, i) { blip(f, .5, type, v, i * step); }); }
+  function buzz(ms) { try { if (!S.muted && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+  var sfx = {
+    tick: function () { blip(900, .03, "square", .02); },
+    pick: function () { blip(520, .08, "triangle", .08); blip(780, .1, "triangle", .06, .06); },
+    rip: function (best) {
+      noise(.4, .5, 2400); blip(180, .15, "sawtooth", .05);
+      if (best === "legendary" || best === "mythic") { chord([392, 523, 659], .06, "triangle", .07); buzz([30, 30, 60, 30, 90]); }
+      else if (best === "rare") { blip(523, .2, "triangle", .06, .05); buzz([20, 30, 50]); }
+      else buzz([20, 30, 40]);
+    },
+    tease: function (tier) { if (tier === "rare") { blip(1318, .12, "sine", .03); buzz(12); } else { blip(1318, .14, "sine", .04); blip(1760, .14, "sine", .03, .09); buzz([15, 40, 15]); } },
+    promote: function () { [523, 659, 784, 1046, 1318].forEach(function (f, i) { blip(f, .18, "triangle", .06, i * .05); }); buzz([20, 20, 20, 20, 60]); },
+    riser: function () { if (S.muted) return; var a = actx(); if (!a) return; var t = a.currentTime, o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(880, t + .45); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t + .4); g.gain.exponentialRampToValueAtTime(.0001, t + .5); o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + .55); buzz([10, 30, 10, 30, 10, 30]); },
+    mine: function () { chord([659, 784, 988, 1318], .07, "triangle", .08); buzz([40, 40, 80]); },
+    whoosh: function () { noise(.18, .18, 900); },
+    claim: function () { chord([392, 523, 659], .08, "triangle", .09); },
+    flip: function (tier) {
+      if (tier === "common") blip(440, .09, "triangle", .08);
+      else if (tier === "uncommon") chord([523, 659], .07, "triangle", .08);
+      else if (tier === "rare") { chord([523, 659, 784], .07, "triangle", .1); buzz(30); }
+      else if (tier === "legendary") { chord([392, 523, 659, 784, 988], .08, "square", .06); noise(.6, .25, 3000); buzz([30, 40, 60]); }
+      else { chord([261, 392, 523, 659, 784, 1046, 1318], .09, "square", .06); blip(65, 1.2, "sine", .3); noise(1.1, .3, 1800); buzz([40, 60, 40, 60, 120]); }
+    }
+  };
+
+  /* ---------- particles ---------- */
+  var cv = $("#fx"), cx = cv.getContext("2d"), parts = [], raf = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function size() { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; }
+  size(); addEventListener("resize", size);
+  var PALETTE = ["#ff3d9a", "#ffe14a", "#38ffd2", "#4d7bff", "#c04dff", "#ffffff"];
+  function burst(x, y, n, color, pow, rainbow) {
+    if (RM) n = Math.min(n, 12);
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, s = (.3 + Math.random()) * pow;
+      parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - pow * .35, life: 1, dec: .008 + Math.random() * .014, sz: 3 + Math.random() * 6, c: rainbow ? PALETTE[i % PALETTE.length] : color, rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
+    }
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+  function tick() {
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, innerWidth, innerHeight);
+    for (var i = parts.length - 1; i >= 0; i--) {
+      var p = parts[i]; p.x += p.vx; p.y += p.vy; p.vy += .22; p.vx *= .985; p.life -= p.dec; p.rot += p.vr;
+      if (p.life <= 0) { parts.splice(i, 1); continue; }
+      cx.save(); cx.globalAlpha = Math.max(p.life, 0); cx.translate(p.x, p.y); cx.rotate(p.rot); cx.fillStyle = p.c; cx.fillRect(-p.sz / 2, -p.sz / 3, p.sz, p.sz * .66); cx.restore();
+    }
+    raf = parts.length ? requestAnimationFrame(tick) : 0;
+    if (!raf) cx.clearRect(0, 0, innerWidth, innerHeight);
+  }
+  var stage = $("#stage"), flashEl = $("#flash"), banner = $("#banner");
+  function shake(big) { if (RM) return; var c = big ? "shake-big" : "shake"; stage.classList.remove("shake", "shake-big"); void stage.offsetWidth; stage.classList.add(c); setTimeout(function () { stage.classList.remove(c); }, big ? 850 : 550); }
+  function ripFx(r, color, rainbow, big) {
+    if (RM) return;
+    var fx = document.createElement("div"); fx.className = "ripfx" + (rainbow ? " rainbow" : "");
+    fx.style.cssText = "left:" + r.left + "px;top:" + (r.top + r.height * .13 - r.width / 2) + "px;width:" + r.width + "px;height:" + r.width + "px;--c:" + color;
+    fx.innerHTML = (big ? '<i class="rays"></i>' : "") + '<i class="ring"></i><i class="slash"></i>';
+    document.body.appendChild(fx); setTimeout(function () { fx.remove(); }, 1000);
+  }
+  function flash() { if (RM) return; flashEl.classList.remove("go"); void flashEl.offsetWidth; flashEl.classList.add("go"); }
+  function say(msg, ms) { banner.textContent = msg; banner.classList.add("show"); clearTimeout(say.t); say.t = setTimeout(function () { banner.classList.remove("show"); }, ms || 3200); }
+
+  /* ---------- art ---------- */
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  var GEAR = (function () {
+    var d = "", n = 12, R = 46, r = 38;
+    for (var i = 0; i < n; i++) {
+      var a0 = i / n * Math.PI * 2, a1 = a0 + Math.PI / n * .55, a2 = a0 + Math.PI / n, a3 = a0 + Math.PI / n * 1.55;
+      [[r, a0], [R, a1], [R, a2], [r, a3]].forEach(function (p, j) { d += (i === 0 && j === 0 ? "M" : "L") + (50 + p[0] * Math.cos(p[1])).toFixed(1) + " " + (50 + p[0] * Math.sin(p[1])).toFixed(1); });
+    }
+    return d + "Z";
+  })();
+  var BACK_SVG = '<svg viewBox="0 0 100 100" aria-hidden="true"><path d="' + GEAR + '" fill="#e9f6f4"/><circle cx="50" cy="50" r="31" fill="#0a2f45"/><circle cx="50" cy="50" r="31" fill="none" stroke="#27d3c3" stroke-width="2"/>' +
+    '<text x="50" y="47" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="15" fill="#f5fbfa">FRC</text><text x="50" y="62" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="12" fill="#27d3c3">PACKS</text></svg>';
+
+  /* A side-view FRC robot: swerve chassis, bumpers with the team number, and one of four mechanisms. */
+  function robotSVG(num) {
+    var hue = (num * 137) % 360, v = num % 4, red = num % 2 === 0;
+    var bumper = red ? "#d8343f" : "#2f6fd6", bumperDk = red ? "#9c1f29" : "#1d4a99";
+    var accent = "hsl(" + hue + " 70% 55%)", accentDk = "hsl(" + hue + " 60% 32%)", metal = "#c9d3da", K = "#0b161b";
+    var s = "";
+    if (v === 0) { // elevator + claw
+      s += '<rect x="58" y="22" width="8" height="72" fill="' + metal + '" stroke="' + K + '" stroke-width="2"/><rect x="76" y="22" width="8" height="72" fill="' + metal + '" stroke="' + K + '" stroke-width="2"/>' +
+        '<rect x="54" y="34" width="34" height="14" rx="2" fill="' + accent + '" stroke="' + K + '" stroke-width="2"/><path d="M88 36 L104 30 L106 36 L92 42 Z M88 46 L104 52 L106 46 L92 42 Z" fill="' + accentDk + '" stroke="' + K + '" stroke-width="2" stroke-linejoin="round"/>' +
+        '<circle cx="110" cy="41" r="7" fill="#ffb238" stroke="' + K + '" stroke-width="2"/>';
+    } else if (v === 1) { // pivot arm + roller intake
+      s += '<path d="M54 86 L60 80 L118 30 L126 38 L66 90 Z" fill="' + accent + '" stroke="' + K + '" stroke-width="2" stroke-linejoin="round"/><circle cx="60" cy="86" r="7" fill="' + metal + '" stroke="' + K + '" stroke-width="2"/>' +
+        '<circle cx="124" cy="32" r="9" fill="' + accentDk + '" stroke="' + K + '" stroke-width="2"/><circle cx="124" cy="32" r="3" fill="' + metal + '"/>';
+    } else if (v === 2) { // shooter turret + game piece in flight
+      s += '<rect x="44" y="52" width="40" height="34" rx="3" fill="' + accent + '" stroke="' + K + '" stroke-width="2"/><path d="M58 52 L96 26 L104 36 L70 60 Z" fill="' + accentDk + '" stroke="' + K + '" stroke-width="2" stroke-linejoin="round"/>' +
+        '<circle cx="64" cy="69" r="7" fill="' + metal + '" stroke="' + K + '" stroke-width="2"/><circle cx="118" cy="20" r="7" fill="#ffb238" stroke="' + K + '" stroke-width="2"/><path d="M104 28 L96 33 M108 34 L100 38" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".7"/>';
+    } else { // climber hooks + front intake
+      s += '<rect x="40" y="16" width="7" height="76" fill="' + metal + '" stroke="' + K + '" stroke-width="2"/><rect x="92" y="16" width="7" height="76" fill="' + metal + '" stroke="' + K + '" stroke-width="2"/>' +
+        '<path d="M40 16 Q36 8 44 8 L50 12 M92 16 Q88 8 96 8 L102 12" fill="none" stroke="' + K + '" stroke-width="3" stroke-linecap="round"/><rect x="46" y="50" width="46" height="10" rx="2" fill="' + accent + '" stroke="' + K + '" stroke-width="2"/>' +
+        '<path d="M140 78 L156 66 L160 72 L146 86 Z" fill="' + accentDk + '" stroke="' + K + '" stroke-width="2" stroke-linejoin="round"/>';
+    }
+    // chassis and electronics, swerve modules, bumpers with the number
+    s += '<rect x="30" y="80" width="118" height="14" rx="2" fill="#3c4a52" stroke="' + K + '" stroke-width="2"/><rect x="100" y="64" width="34" height="16" rx="2" fill="#2a363c" stroke="' + K + '" stroke-width="2"/><circle cx="108" cy="72" r="2.5" fill="#5cff8a"/><circle cx="116" cy="72" r="2.5" fill="#ffb238"/>';
+    s += '<rect x="34" y="104" width="16" height="16" rx="3" fill="#20292e" stroke="' + K + '" stroke-width="2"/><rect x="128" y="104" width="16" height="16" rx="3" fill="#20292e" stroke="' + K + '" stroke-width="2"/>';
+    s += '<rect x="20" y="92" width="140" height="20" rx="7" fill="' + bumper + '" stroke="' + K + '" stroke-width="2.5"/><rect x="20" y="106" width="140" height="6" rx="3" fill="' + bumperDk + '"/>' +
+      '<text x="90" y="107.5" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="15" fill="#fff" letter-spacing="1">' + num + '</text>';
+    return s;
+  }
+  function artSVG(num, tier) {
+    var full = tier === "legendary" || tier === "mythic", photo = BY_NUM[num] && BY_NUM[num].photo, s = '<svg viewBox="0 0 200 ' + (full ? 280 : 130) + '" preserveAspectRatio="xMidYMid slice" aria-hidden="true">';
+    if (full) {
+      var c = tier === "mythic" ? "#5cffe9" : "#d7b8ff", rays = "";
+      for (var i = 0; i < 12; i++) { var a = i / 12 * Math.PI * 2; rays += '<path d="M100 110 L' + (100 + 260 * Math.cos(a)).toFixed(0) + ' ' + (110 + 260 * Math.sin(a)).toFixed(0) + ' L' + (100 + 260 * Math.cos(a + .18)).toFixed(0) + ' ' + (110 + 260 * Math.sin(a + .18)).toFixed(0) + 'Z" fill="' + c + '"/>'; }
+      s += '<g opacity=".3">' + rays + '</g>';
+      s += '<text x="100" y="128" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="78" fill="#fff" opacity=".1">' + num + '</text>';
+      s += '<ellipse cx="100" cy="196" rx="118" ry="20" fill="rgba(0,0,0,.4)"/>';
+      if (!photo) s += '<g transform="translate(-12 46) scale(1.24)">' + robotSVG(num) + '</g>';
+    } else if (photo) {
+      return '<img class="ph" alt="" draggable="false" decoding="async" src="/photos/' + num + '.webp">';
+    } else {
+      s += '<path d="M0 98 L200 98 L200 130 L0 130 Z" fill="rgba(0,0,0,.14)"/><path d="M0 104 L200 104 M0 116 L200 116" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>';
+      s += '<g transform="translate(14 2) scale(.92)">' + robotSVG(num) + '</g>';
+    }
+    s += "</svg>";
+    return photo ? s + '<img class="ph" alt="" draggable="false" decoding="async" src="/photos/' + num + '.webp">' : s;
+  }
+  function nameScale(n) { var l = n.length; return l <= 10 ? 1 : l <= 13 ? .84 : l <= 17 ? .7 : l <= 22 ? .58 : .5; }
+  function attachTilt(slot) {
+    var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
+    slot.addEventListener("pointermove", function (e) {
+      if (slot.classList.contains("drag")) return;
+      var r = slot.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      tilt.classList.remove("rest"); slot.classList.add("live");
+      tilt.style.setProperty("--ry", ((px - .5) * 26) + "deg"); tilt.style.setProperty("--rx", ((.5 - py) * 22) + "deg");
+      slot.style.setProperty("--sx", ((.5 - px) * r.width * .08).toFixed(1)); slot.style.setProperty("--sy", ((.5 - py) * r.height * .06).toFixed(1));
+      inner.style.setProperty("--mx", (px * 100).toFixed(1)); inner.style.setProperty("--my", (py * 100).toFixed(1));
+    });
+    function leave() { slot.classList.remove("live"); slot.style.setProperty("--sx", 0); slot.style.setProperty("--sy", 0); tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
+    slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave);
+  }
+  var EDGES = [-2, -1, 1, 2].map(function (z) { return '<i class="edge" style="--z:' + z + '"></i>'; }).join("") + '<i class="edge e0" style="--z:0"></i>';
+  /* c = { num, tier, serial, isNew, copy } */
+  function cardEl(c, opts) {
+    opts = opts || {}; var t = BY_NUM[c.num], T = TIERS[c.tier], full = c.tier === "legendary" || c.tier === "mythic";
+    var slot = document.createElement("div");
+    slot.className = "slot" + (opts.faceUp ? " flipped" : "") + (opts.button ? " btn" : "") + (opts.alive ? " alive" : "");
+    slot.style.setProperty("--tc", T.color);
+    if (myTeam() && c.num === myTeam()) slot.classList.add("mine");
+    if (opts.button) { slot.setAttribute("role", "button"); slot.tabIndex = 0; }
+    slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
+    var art = '<div class="art">' + artSVG(t.num, c.tier) + '</div>';
+    slot.innerHTML =
+      '<div class="shade"></div><div class="float"><div class="tilt rest"><div class="flip card" data-tier="' + c.tier + '">' + EDGES +
+      '<div class="face back">' + BACK_SVG + '</div>' +
+      '<div class="face front"><div class="inner' + (full ? " full" : "") + '" style="--nl:' + nameScale(t.name) + '">' +
+      (full ? art : "") +
+      '<div class="hdr"><span class="nm">' + esc(t.name) + '</span><span class="hp"><small>EPA</small>' + (t.epa == null ? "–" : Math.round(t.epa)) + '</span></div>' +
+      (full ? "" : art) +
+      '<div class="sub-l"><span>Team ' + t.num + ' · ' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span>CMP 2026</span></div>' +
+      '<div class="moves">' +
+        '<div class="mv"><i></i><span>Champs record</span><b>' + esc(t.wl) + '</b></div>' +
+        '<div class="mv"><i></i><span>Champs EPA rank</span><b>#' + t.rank + '</b></div>' +
+      '</div>' +
+      '<div class="ft"><span class="rar">' + T.gems + '</span><span>No. ' + esc(c.serial || "------") + '</span><span>' + T.label + '</span></div>' +
+      '<div class="foil"></div><div class="spark"></div><div class="glare"></div></div></div></div></div></div>';
+    if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
+    if (opts.count > 1) { var b = document.createElement("div"); b.className = "count-badge"; b.textContent = "×" + opts.count; slot.appendChild(b); }
+    attachTilt(slot);
+    return slot;
+  }
+
+  /* ---------- packs ---------- */
+  var TROPHY = '<svg viewBox="0 0 180 130" aria-hidden="true"><g stroke="#3a2600" stroke-width="2.5" stroke-linejoin="round">' +
+    '<path d="M62 26 Q40 26 42 44 Q44 60 64 62 M118 26 Q140 26 138 44 Q136 60 116 62" fill="none" stroke-width="8"/>' +
+    '<path d="M62 18 H118 V44 Q118 78 90 84 Q62 78 62 44 Z" fill="#ffd34d"/>' +
+    '<rect x="82" y="84" width="16" height="14" fill="#e9b52f"/><rect x="66" y="98" width="48" height="14" rx="3" fill="#ffd34d"/><rect x="58" y="112" width="64" height="10" rx="3" fill="#e9b52f"/></g>' +
+    '<path d="M62 26 Q40 26 42 44 Q44 60 64 62 M118 26 Q140 26 138 44 Q136 60 116 62" fill="none" stroke="#ffd34d" stroke-width="3"/>' +
+    '<path d="M70 26 Q72 56 86 70" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round" opacity=".55"/>' +
+    '<text x="90" y="56" text-anchor="middle" font-family="Lilita One, Arial Rounded MT Bold, sans-serif" font-size="20" fill="#3a2600">2026</text></svg>';
+  var PACK_HUE = 222;
+  /* Pack system: every pack (set) the binder tracks. Only the 2026 Championship pack exists so far;
+     future packs add an entry here with their own team list and inventory. */
+  var PACKS = [{ id: PACK_ID, name: RECIPE.name, where: RECIPE.where, teams: TEAMS }], curPack = PACKS[0];
+  function packHTML(back) {
+    var front = '<div class="pk-face pk-front"><div class="pk-top"></div><div class="pk-body"><div class="pk-cover">' +
+      '<div class="pk-set">2026 Championship</div><div class="pk-logo">FRC<br>PACKS</div>' +
+      '<div class="pk-hero"><div class="burst"></div>' + TROPHY + '</div>' +
+      '<div class="pk-feat">Houston · 8 divisions</div></div></div></div>';
+    var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Championship</h3>' +
+      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better (Legendary ' + pct(ODDS.last.legendary) + ').</div>' +
+      '<div class="odds"><span>Common</span><b>' + pct(ODDS.slots.common) + '</b><span>Uncommon</span><b>' + pct(ODDS.slots.uncommon) + '</b><span>Rare</span><b>' + pct(ODDS.slots.rare) + '</b><span>Legendary</span><b>' + pct(ODDS.slots.legendary) + '</b><span>Mythic</span><b>1 in ' + Math.round(1 / (S.demo ? ODDS.demoMythic : ODDS.mythicBase)) + (S.demo ? "*" : "") + '</b></div>' +
+      '<small>Per card in slots 1 to 4, Mythic per pack. The Mythic meter guarantees one by pack ' + HARD + ', and Legendary or better comes at least every ' + LEG_EVERY + ' packs.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
+    var edges = [-3, -2, -1, 0, 1, 2, 3].map(function (z) { return '<i class="pk-edge" style="--z:' + z + '"></i>'; }).join("");
+    return '<div class="pk" style="--h:' + PACK_HUE + '">' + edges + front + b + '</div>';
+  }
+
+  /* ---------- status bar, timer, claim ---------- */
+  var packCount = $("#packCount"), timerEl = $("#timer"), claimBtn = $("#claim");
+  function fmt(ms) { var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0"); }
+  /* Free packs bank up to 2, so missing one timer overnight doesn't cost a pack. */
+  var BANK = 2;
+  function banked(now) { return now < S.nextClaimAt ? 0 : Math.min(BANK, 1 + Math.floor((now - S.nextClaimAt) / CLAIM_MS)); }
+  function paintStatus() {
+    var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS;
+    packCount.textContent = S.packs;
+    var n = banked(now);
+    if (n >= BANK) { timerEl.textContent = BANK + " free packs are ready"; claimBtn.hidden = false; claimBtn.textContent = "Claim " + BANK + " packs"; }
+    else if (n === 1) { timerEl.innerHTML = "A free pack is ready · another in <b>" + fmt(S.nextClaimAt + CLAIM_MS - now) + "</b>"; claimBtn.hidden = false; claimBtn.textContent = "Claim pack"; }
+    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(S.nextClaimAt - now) + "</b>"; claimBtn.hidden = true; }
+    paintMeter();
+  }
+  function paintMeter() {
+    var n = S.pity.m, el = $("#meter");
+    $("#meterBar").style.width = (Math.min(n, HARD) / HARD * 100) + "%";
+    $("#meterTxt").textContent = n + " / " + HARD;
+    el.classList.toggle("hot", n >= SOFT);
+    el.title = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + ".";
+  }
+  setInterval(function () { paintStatus(); if (state === "select" || state === "home") paintSelectHud(); }, 1000);
+  var claiming = false;
+  claimBtn.addEventListener("click", function () {
+    if (claiming || !banked(Date.now())) return; actx(); claiming = true;
+    api.claim().then(function (st) {
+      applyState(st); paintStatus(); sfx.claim();
+      var r = claimBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 18, "#27d3c3", 5);
+      if (state === "select" || state === "home") paintSelectHud();
+    }, function (e) { if (e && e.code === "not_ready") sync(); else offline(e); }).then(function () { claiming = false; });
+  });
+
+  /* ---------- open flow: select -> inspect -> cut -> stack -> summary ---------- */
+  var hint = $("#hint"), sub = $("#sub"), ringwrap = $("#ringwrap"), ringEl = $("#ring"), homeView = $("#homeView"), collectionEl = $("#collection");
+  var selectView = $("#selectView"), inspectView = $("#inspectView"), inspectEl = $("#inspect"), stackView = $("#stackView"), stackEl = $("#stack"), counterEl = $("#counter");
+  var summaryEl = $("#summary"), inspectBtns = $("#inspectBtns"), sumBtns = $("#sumBtns"), againBtn = $("#again"), skipBtn = $("#skipBtn");
+  var state = "home", chosen = -1, deck = [], idx = 0;
+  function setHud(h, s) { hint.textContent = h; sub.textContent = s; }
+  function showOnly(which) {
+    homeView.hidden = which !== "home"; selectView.hidden = which !== "select"; inspectView.hidden = which !== "inspect"; inspectBtns.hidden = which !== "inspect";
+    stackView.hidden = which !== "stack"; counterEl.hidden = which !== "stack"; summaryEl.hidden = which !== "summary"; sumBtns.hidden = which !== "summary";
+    document.body.classList.toggle("focus", which === "inspect");
+    document.body.classList.toggle("playing", which === "inspect" || which === "stack");
+    document.body.classList.remove("cutting"); skipBtn.hidden = which !== "stack";
+  }
+  function packsLeftHud(title, more) {
+    if (S.packs > 0) setHud(title, more);
+    else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
+  }
+  function paintSelectHud() {
+    if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · tap one");
+    else packsLeftHud("Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    ringwrap.classList.toggle("out", S.packs < 1);
+    var tile = collectionEl.querySelector(".ptype"); if (tile) paintTile(tile, PACKS[0]);
+  }
+  /* ---------- home: your pack collection ---------- */
+  function paintTile(b, pk) {
+    var n = S.packs; // every pack you own is a 2026 Championship pack for now
+    b.classList.toggle("empty", n < 1); b.querySelector(".cnt").textContent = "×" + n;
+    b.querySelector(".pt-sub").textContent = n ? "Tap to open" : "None left";
+    b.setAttribute("aria-label", pk.name + " pack, " + n + " to open");
+  }
+  function paintHome() {
+    state = "home"; showOnly("home");
+    collectionEl.innerHTML = ""; collectionEl.classList.toggle("one", PACKS.length === 1);
+    PACKS.forEach(function (pk) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "ptype"; b.setAttribute("role", "listitem");
+      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
+      paintTile(b, pk);
+      b.addEventListener("click", function () { openRing(b); });
+      b.addEventListener("pointermove", function (e) {
+        var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+        b.style.setProperty("--gx", ((px - .5) * 2).toFixed(3)); b.style.setProperty("--gy", ((py - .5) * 2).toFixed(3));
+      });
+      b.addEventListener("pointerleave", function () { b.style.removeProperty("--gx"); b.style.removeProperty("--gy"); });
+      collectionEl.appendChild(b);
+    });
+    paintSelectHud(); paintStatus();
+  }
+  function openRing(tile) {
+    if (state !== "home") return; actx();
+    if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    sfx.pick(); paintSelect(true);
+  }
+  /* ---------- the wheel of 10 packs ---------- */
+  var ringA = 0, ringFront = -1, ringRaf = 0, ringDragged = false;
+  function setRing(a) {
+    ringA = a; ringEl.style.setProperty("--a", a + "deg");
+    var front = ((Math.round(-a / 36) % SHELF_N) + SHELF_N) % SHELF_N;
+    Array.prototype.forEach.call(ringEl.children, function (el, i) {
+      var th = (i * 36 + a) * Math.PI / 180; el.style.setProperty("--d", ((1 - Math.cos(th)) / 2).toFixed(3));
+      el.style.setProperty("--sheen", (100 + Math.sin(th) * 110).toFixed(1) + "%");
+      el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front));
+    });
+    if (front !== ringFront) { if (ringFront !== -1) { sfx.tick(); buzz(4); } ringFront = front; }
+  }
+  function spinTo(target, ms, done) {
+    cancelAnimationFrame(ringRaf);
+    if (RM || !ms) { setRing(target); if (done) done(); return; }
+    var from = ringA, t0 = performance.now();
+    (function step(now) {
+      var t = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - t, 3);
+      setRing(from + (target - from) * e);
+      if (t < 1) ringRaf = requestAnimationFrame(step); else if (done) done();
+    })(t0);
+  }
+  function snap() { spinTo(Math.round(ringA / 36) * 36, 380); }
+  function paintSelect(spinIn, toIdx) {
+    state = "select"; showOnly("select");
+    if (!ringEl.children.length) {
+      for (var i = 0; i < SHELF_N; i++) (function (i) {
+        var b = document.createElement("button"); b.type = "button"; b.className = "pick"; b.setAttribute("role", "option"); b.tabIndex = -1;
+        b.style.setProperty("--i", i);
+        b.setAttribute("aria-label", "2026 Championship pack " + (i + 1) + " of " + SHELF_N);
+        b.innerHTML = packHTML(false);
+        b.addEventListener("click", function () { if (ringDragged) return; choose(i); });
+        ringEl.appendChild(b);
+      })(i);
+    }
+    var target = -36 * (toIdx == null ? Math.floor(SHELF_N / 2) : toIdx);
+    ringFront = -1;
+    /* Packs shuffle around the wheel on the way in, then settle with one in front. */
+    if (spinIn && !RM) { setRing(target + 540); spinTo(target, 1100); } else setRing(target);
+    paintSelectHud(); paintStatus();
+  }
+  var rg = null;
+  ringwrap.addEventListener("pointerdown", function (e) {
+    if (state !== "select") return; cancelAnimationFrame(ringRaf); ringDragged = false;
+    rg = { x: e.clientX, a: ringA, t: performance.now(), v: 0, lx: e.clientX, id: e.pointerId, cap: false };
+  });
+  ringwrap.addEventListener("pointermove", function (e) {
+    if (!rg) return; var dx = e.clientX - rg.x;
+    if (!rg.cap && Math.abs(dx) > 6) { rg.cap = true; ringDragged = true; ringwrap.classList.add("drag"); try { ringwrap.setPointerCapture(rg.id); } catch (er) {} }
+    if (!rg.cap) return;
+    var now = performance.now(), dt = Math.max(1, now - rg.t); rg.v = (e.clientX - rg.lx) * .32 / dt; rg.lx = e.clientX; rg.t = now;
+    setRing(rg.a + dx * .32);
+  });
+  function ringUp() {
+    if (!rg) return; var was = rg; rg = null; ringwrap.classList.remove("drag");
+    if (!was.cap) return;
+    setTimeout(function () { ringDragged = false; }, 0);
+    /* Let it coast with the flick's speed, then click into place on the nearest pack. */
+    var v = Math.max(-2.5, Math.min(2.5, was.v)); if (RM) return snap();
+    var last = performance.now();
+    (function coast(now) {
+      var dt = now - last; last = now; v *= Math.pow(.94, dt / 16); setRing(ringA + v * dt);
+      if (Math.abs(v) > .05) ringRaf = requestAnimationFrame(coast); else snap();
+    })(last);
+  }
+  ringwrap.addEventListener("pointerup", ringUp); ringwrap.addEventListener("pointercancel", ringUp);
+  ringwrap.addEventListener("keydown", function (e) {
+    if (state !== "select") return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); spinTo(Math.round(ringA / 36) * 36 + (e.key === "ArrowLeft" ? -36 : 36), 260); }
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(ringFront < 0 ? Math.floor(SHELF_N / 2) : ringFront); }
+  });
+  $("#ringBack").addEventListener("click", function () { if (state === "select") { cancelAnimationFrame(ringRaf); paintHome(); } });
+
+  var rotY = 0, rotX = 0, g = null;
+  function choose(i) {
+    if (state !== "select") return; actx();
+    if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    chosen = i; state = "inspect"; sfx.pick();
+    inspectEl.className = "inspect"; rotY = 0; rotX = 0;
+    /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
+    promoted = false; nextBest = "common"; openReq = null; inspectEl.style.setProperty("--tp", 0);
+    holdPack();
+    cancelAnimationFrame(ringRaf);
+    var fromR = ringEl.children[i] && ringEl.children[i].getBoundingClientRect();
+    inspectEl.innerHTML = '<div class="tell"></div><div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div>';
+    showOnly("inspect");
+    if (fromR && fromR.width) flyFrom(inspectEl.querySelector(".lift"), fromR, 460);
+    setHud(SWIPE + " across the top to open", "Drag the pack to turn it over");
+    try { $("#openBtn").focus({ preventScroll: true }); } catch (e) {}
+  }
+  /* FLIP helper: animate el from where `from` (a rect) was to where it sits now. */
+  function flyFrom(el, from, ms, delay, mid) {
+    if (RM || !el.animate) return null;
+    var to = el.getBoundingClientRect(); if (!to.width) return null;
+    el.style.animation = "none";
+    var dx = (from.left + from.width / 2) - (to.left + to.width / 2), dy = (from.top + from.height / 2) - (to.top + to.height / 2), sc = from.width / to.width;
+    var frames = [{ transform: "translate(" + dx + "px," + dy + "px) scale(" + sc + ")" }];
+    if (mid) frames.push(mid(dx, dy, sc));
+    frames.push({ transform: "none" });
+    return el.animate(frames, { duration: ms, delay: delay || 0, easing: "cubic-bezier(.22,.9,.28,1)", fill: "backwards" });
+  }
+  var promoted = false, nextBest = "common", openReq = null, holdN = 0;
+  /* Picking up a pack asks the server to decide its cards (they stay fixed if you put it back). Only the best
+     rarity comes back, so the glow while you swipe tells the truth without revealing the cards. */
+  function holdPack() {
+    var n = ++holdN;
+    inspectEl.style.setProperty("--tell", TIERS.common.color);
+    api.hand(PACK_ID).then(function (r) {
+      if (n !== holdN || state !== "inspect") return;
+      nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
+    }, function (e) { if (n === holdN && e && e.code === "no_packs") sync(); });
+  }
+  /* Like opening a loot pack: the light leaking out of the tear gets brighter the further you swipe, in the best card's color. A Mythic starts gold and flips to rainbow past halfway. */
+  function glow(t) {
+    inspectEl.style.setProperty("--tp", t.toFixed(3));
+    if (nextBest === "mythic" && t > .55 && !promoted) { promoted = true; inspectEl.classList.add("rainbow"); sfx.promote(); }
+  }
+  function facingFront() { var d = ((rotY % 360) + 360) % 360; return Math.min(d, 360 - d) < 35; }
+  function setRot(live) {
+    var r = $("#rot"); if (!r) return;
+    r.classList.toggle("live", !!live); r.style.setProperty("--ry", rotY + "deg"); r.style.setProperty("--rx", rotX + "deg");
+    r.classList.remove("idle"); r.style.setProperty("--sheen", (100 - Math.sin(rotY * Math.PI / 180) * 90).toFixed(1) + "%");
+    var away = !facingFront(); inspectEl.classList.toggle("away", away);
+    if (!live && state === "inspect") setHud(away ? "Pack odds" : SWIPE + " across the top to open", away ? "Turn it back over to open it" : "Drag the pack to turn it over");
+  }
+  inspectEl.addEventListener("pointerdown", function (e) {
+    if (state !== "inspect") return;
+    var r = inspectEl.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
+    g = { x: e.clientX, y: e.clientY, ry: rotY, cut: facingFront() && y < .26, w: r.width, left: r.left, moved: false };
+    try { inspectEl.setPointerCapture(e.pointerId); } catch (er) {}
+  });
+  inspectEl.addEventListener("pointermove", function (e) {
+    if (!g || state !== "inspect") return;
+    var dx = e.clientX - g.x, dy = e.clientY - g.y; if (Math.abs(dx) + Math.abs(dy) > 6) g.moved = true;
+    if (g.cut) {
+      var p = Math.max(0, Math.min(1, (e.clientX - g.left) / g.w)), from = Math.max(0, Math.min(1, (g.x - g.left) / g.w));
+      var line = $("#cutline"); line.style.left = (Math.min(from, p) * 100) + "%"; line.style.width = (Math.abs(p - from) * 100) + "%";
+      inspectEl.classList.add("swiping"); glow(Math.min(1, Math.abs(p - from) / .6));
+      if (Math.abs(p - from) > .45) startOpen(); // ask the server early so the cards are ready when the tear finishes
+      if (Math.abs(p - from) > .6) { g = null; cut(); }
+    } else { rotY = g.ry + dx * .7; rotX = Math.max(-18, Math.min(18, -dy * .15)); setRot(true); }
+  });
+  function endGesture() {
+    if (!g) return; var was = g; g = null;
+    if (was.cut) { inspectEl.classList.remove("swiping"); var line = $("#cutline"); if (line) line.style.width = "0"; if (!promoted) glow(0); if (!was.moved) say(SWIPE + " all the way across the top", 1600); return; }
+    rotY = Math.round(rotY / 180) * 180; rotX = 0; setRot(false);
+    if (was.moved) sfx.whoosh();
+  }
+  inspectEl.addEventListener("pointerup", endGesture); inspectEl.addEventListener("pointercancel", endGesture);
+  function back() {
+    if (state !== "inspect") return;
+    if (openReq) { cut(); return; } // already torn far enough to open; finish it
+    paintSelect(false, chosen);
+    try { ringwrap.focus({ preventScroll: true }); } catch (e) {}
+  }
+  $("#turnBtn").addEventListener("click", function () { if (state !== "inspect") return; rotY += 180; setRot(false); sfx.whoosh(); });
+  $("#openBtn").addEventListener("click", function () { if (state !== "inspect") return; var turned = !facingFront(); rotY = Math.round(rotY / 360) * 360; setRot(false); if (turned) setTimeout(cut, 350); else cut(); });
+  $("#backBtn").addEventListener("click", back);
+
+  /* Opens the pack on the server, once, even if the swipe and the button both ask. */
+  function startOpen() {
+    if (!openReq) openReq = api.open(PACK_ID);
+    return openReq;
+  }
+  function cut() {
+    if (state !== "inspect") return; state = "cutting";
+    startOpen().then(function (res) {
+      openReq = null;
+      var o = res.opening;
+      o.cards.forEach(function (c) { (S.inv[c.num] || (S.inv[c.num] = [])).push(String(c.serial)); if (c.isNew) S.unseen[c.num] = 1; });
+      o.sets.forEach(function (d) { S.sets[d] = 1; });
+      applyState(res.state); save();
+      S.pending = pendingFrom(o);
+      ripOpen();
+    }, function (e) {
+      openReq = null; state = "inspect"; inspectEl.classList.remove("swiping"); glow(0);
+      var line = $("#cutline"); if (line) line.style.width = "0";
+      if (e && e.code === "no_packs") { sync(); paintHome(); say("Out of packs", 2000); } else offline(e);
+    });
+  }
+  function ripOpen() {
+    /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
+    var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
+    paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
+    nextBest = best; glow(1); inspectEl.classList.add("told");
+    var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, promo ? null : TIERS[best].color, 7, promo);
+    ripFx(r, promo ? "#ffd34d" : TIERS[best].color, promo, big);
+    setHud("", "");
+    buildStack(0, r);
+  }
+  /* fromPack = the torn pack's rect: the real cards rise out of it, fanned, and settle into the stack while the empty pack drops away. */
+  function buildStack(from, fromPack) {
+    deck = S.pending.cards; idx = from; stackEl.innerHTML = ""; summaryEl.innerHTML = "";
+    for (var i = deck.length - 1; i >= from; i--) {
+      var c = deck[i], hidden = c.tier !== "common" && c.tier !== "uncommon";
+      var el = cardEl(c, { faceUp: !hidden, ribbon: true });
+      if (hidden) el.classList.add("tease");
+      if (c.tier === "mythic") { el.style.setProperty("--tc", TIERS.legendary.color); el._promo = true; }
+      el._c = c; el._hidden = hidden;
+      stackEl.appendChild(el);
+    }
+    showOnly("stack");
+    stackEl.classList.remove("rise"); void stackEl.offsetWidth;
+    paintCounter(); sfx.whoosh();
+    var flight = fromPack && !RM ? dealFromPack(fromPack) : 0;
+    if (!flight) stackEl.classList.add("rise");
+    if (flight) { state = "dealing"; setTimeout(function () { if (state !== "dealing") return; state = "stack"; armTop(); }, flight); }
+    else { state = "stack"; armTop(); }
+    try { stackEl.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function dealFromPack(pr) {
+    /* The empty pack: a copy of the torn pack, drawn on top so the cards come up out of its open top. */
+    var gp = document.createElement("div"); gp.className = "ghostpack inspect told"; gp.setAttribute("aria-hidden", "true");
+    gp.style.cssText = "left:" + pr.left + "px;top:" + pr.top + "px;width:" + pr.width + "px;min-width:0;--tp:1;--tell:" + inspectEl.style.getPropertyValue("--tell");
+    gp.innerHTML = '<div class="lift" style="animation:none"><div class="rot">' + packHTML(false) + '</div></div>';
+    document.body.appendChild(gp);
+    requestAnimationFrame(function () { requestAnimationFrame(function () { gp.classList.add("drop"); }); });
+    setTimeout(function () { gp.remove(); }, 900);
+    /* Start inside the pack (same width as the pack, sunk below its top), rise above it, then glide down into place. */
+    var start = { left: pr.left + pr.width * .08, top: pr.top + pr.height * .2, width: pr.width * .84, height: pr.width * .84 * 1.4 };
+    var all = stackEl.children, n = all.length;
+    for (var i = 0; i < n; i++) all[i].style.setProperty("--k", n - 1 - i);
+    stackEl.classList.add("fan");
+    flyFrom(stackEl, start, 720, 0, function (dx, dy, sc) { return { offset: .42, transform: "translate(" + (dx * .5) + "px," + (dy - pr.height * .42) + "px) scale(" + ((sc + 1) / 2) + ")" }; });
+    setTimeout(function () { stackEl.classList.remove("fan"); }, 380);
+    return 720;
+  }
+  function paintCounter() { counterEl.innerHTML = deck.map(function (c, i) { return '<i class="' + (i < idx ? "done" : i === idx ? "now" : "") + '"></i>'; }).join(""); }
+  function topEl() { return stackEl.lastElementChild; }
+  function armTop() {
+    var el = topEl(); if (!el) return;
+    var all = stackEl.children;
+    for (var i = 0; i < all.length; i++) { all[i].style.setProperty("--k", all.length - 1 - i); all[i].classList.toggle("top", all[i] === el); }
+    var c = el._c;
+    if (el._hidden) {
+      setHud("Something shiny…", TAP + " to flip it");
+      if (!el._teased) { el._teased = true; sfx.tease(c.tier); }
+      if (el._promo) setTimeout(function () { if (!el._promo || !el._hidden || el !== topEl()) return; promoteCard(el); setHud("Something very shiny…", TAP + " to flip it"); }, RM ? 0 : 900);
+    }
+    else { showRibbon(el); setHud(c.isNew ? "New card" : TIERS[c.tier].label, NEXT); if (isMine(c)) celebrateMine(el); }
+  }
+  function promoteCard(el) { el._promo = false; el.style.setProperty("--tc", TIERS.mythic.color); sfx.promote(); var r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, null, 7, true); }
+  function isMine(c) { return myTeam() && c.num === myTeam(); }
+  function celebrateMine(el) {
+    if (el._cheered) return; el._cheered = true; sfx.mine();
+    var r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 50, "#ffd34d", 8);
+    say("Your team! " + BY_NUM[el._c.num].name + " (" + el._c.num + ")", 3000);
+  }
+  var NEXT = MOUSE ? "Click or press → for the next card" : "Swipe or tap for the next card";
+  function showRibbon(el) { if (el._ribbon) el._ribbon.hidden = false; }
+  function reveal(el) {
+    if (el._c.tier !== "mythic" || RM) return doReveal(el);
+    /* A Mythic gets a beat of build-up before the flip. */
+    state = "flipping"; if (el._promo) promoteCard(el); sfx.riser();
+    setTimeout(function () { if (state === "flipping") doReveal(el); }, 450);
+  }
+  function doReveal(el) {
+    var c = el._c, T = TIERS[c.tier], t = BY_NUM[c.num];
+    el._promo = false; el.style.setProperty("--tc", T.color);
+    el._hidden = false; el.classList.add("flipped"); el.classList.remove("tease"); sfx.flip(c.tier); state = "flipping";
+    setTimeout(function () {
+      if (state === "summary") return; // skipped ahead
+      showRibbon(el);
+      var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (c.tier === "rare") { burst(x, y, T.parts, T.color, T.pow); shake(false); }
+      else if (c.tier === "legendary") { burst(x, y, T.parts, T.color, T.pow); burst(x, y, 60, null, 9, true); shake(true); flash(); takeover("rgba(190,140,255,.16)"); say("LEGENDARY · " + t.name + " (" + t.num + ")", 3000); }
+      else if (c.tier === "mythic") {
+        takeover("rgba(120,255,240,.16)"); flash(); shake(true); burst(x, y, 120, null, 14, true);
+        setTimeout(function () { burst(x - 60, y - 40, 90, null, 11, true); burst(x + 60, y - 40, 90, null, 11, true); }, 350);
+        setTimeout(function () { burst(x, y - 80, 140, null, 12, true); }, 800);
+        say("MYTHIC PULL · " + t.name + " (" + t.num + ") · No. " + c.serial, 5200);
+      }
+      setHud(T.label + (c.isNew ? " · new" : ""), NEXT);
+      if (isMine(c)) setTimeout(function () { celebrateMine(el); }, c.tier === "mythic" || c.tier === "legendary" ? 1600 : 200);
+    }, 380);
+    setTimeout(function () { if (state === "flipping") state = "stack"; }, RM ? 400 : 850);
+  }
+  function takeover(ray) { document.documentElement.style.setProperty("--ray", ray); document.body.classList.add("takeover"); }
+  function fling(el, dir) {
+    if (state !== "stack" || el !== topEl()) return;
+    state = "flinging"; sfx.whoosh();
+    el.classList.remove("drag"); el.classList.add("gone");
+    el.style.transform = "translate(" + (dir * 130) + "vw, -10vh) rotate(" + (dir * 30) + "deg)";
+    document.body.classList.remove("takeover");
+    idx++; S.pending.revealed = idx; api.progress(S.pending.id, idx).catch(function () {}); paintCounter();
+    setTimeout(function () {
+      el.remove();
+      if (idx >= deck.length) summary(); else { state = "stack"; armTop(); }
+    }, RM ? 60 : 380);
+  }
+  function tapTop() { var el = topEl(); if (!el || state !== "stack") return; if (el._hidden) reveal(el); else fling(el, 1); }
+  var sg = null;
+  stackEl.tabIndex = 0; stackEl.setAttribute("role", "button"); stackEl.setAttribute("aria-label", "Card stack. Enter flips or deals the next card.");
+  stackEl.addEventListener("pointerdown", function (e) {
+    var el = topEl(); if (!el || state !== "stack") return; actx();
+    sg = { x: e.clientX, y: e.clientY, el: el, moved: false };
+    try { stackEl.setPointerCapture(e.pointerId); } catch (er) {}
+  });
+  stackEl.addEventListener("pointermove", function (e) {
+    if (!sg || state !== "stack") return;
+    var dx = e.clientX - sg.x, dy = e.clientY - sg.y;
+    if (!sg.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
+    sg.moved = true;
+    if (sg.el._hidden) dx *= .25; // face-down cards resist; tap to flip them
+    sg.el.classList.add("drag"); sg.el.style.transform = "translate(" + dx + "px," + (dy * .3) + "px) rotate(" + (dx * .06) + "deg)";
+  });
+  stackEl.addEventListener("pointerup", function (e) {
+    if (!sg) return; var s = sg; sg = null;
+    if (!s.moved) { tapTop(); return; }
+    var dx = e.clientX - s.x;
+    if (!s.el._hidden && Math.abs(dx) > 70) fling(s.el, dx > 0 ? 1 : -1);
+    else { s.el.classList.remove("drag"); s.el.style.transform = ""; if (s.el._hidden) say(TAP + " to flip it", 1400); }
+  });
+  stackEl.addEventListener("pointercancel", function () { if (sg) { sg.el.classList.remove("drag"); sg.el.style.transform = ""; sg = null; } });
+  stackEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tapTop(); }
+    else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { var el = topEl(); if (el && !el._hidden) fling(el, e.key === "ArrowRight" ? 1 : -1); }
+  });
+
+  function nearSet() {
+    var best = null;
+    DIVS.forEach(function (d) {
+      if (S.sets[d]) return;
+      var miss = DIV_TEAMS[d].filter(function (t) { return !(S.inv[t.num] && S.inv[t.num].length); }).length;
+      if (miss > 0 && miss <= 3 && (!best || miss < best.miss)) best = { d: d, miss: miss };
+    });
+    return best;
+  }
+  function summary(skipped) {
+    var sets = (S.pending && S.pending.sets) || [], fromR = !stackView.hidden && stackEl.getBoundingClientRect();
+    state = "summary"; if (S.pending) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover");
+    summaryEl.innerHTML = "";
+    deck.forEach(function (c, i) {
+      var el = cardEl(c, { faceUp: true, button: true, ribbon: true }); el.style.setProperty("--n", i); showRibbon(el);
+      if (i === deck.length - 1 && c.tier !== "common" && c.tier !== "uncommon") el.classList.add("best");
+      el.addEventListener("click", function () { inspect(BY_NUM[c.num]); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(BY_NUM[c.num]); } });
+      summaryEl.appendChild(el);
+    });
+    showOnly("summary");
+    if (fromR && fromR.width && !RM) { summaryEl.classList.add("flow"); Array.prototype.forEach.call(summaryEl.children, function (el, i) { flyFrom(el, fromR, 560, i * 70); }); }
+    else summaryEl.classList.remove("flow");
+    var best = deck[deck.length - 1], bt = BY_NUM[best.num], news = deck.filter(function (c) { return c.isNew; }).length;
+    var have = Object.keys(S.inv).filter(function (k) { return BY_NUM[k] && S.inv[k].length; }).length;
+    var near = nearSet();
+    setHud(best.tier === "mythic" ? bt.name + ". Mythic." : "Best pull: " + bt.name, (news ? news + " new · " : "No new teams · ") + have + " of " + TEAMS.length + " collected" + (near ? " · " + near.miss + " away from the " + near.d + " set" : ""));
+    paintTabDot(); paintStatus();
+    if (sets.length) setTimeout(function () { if (state !== "summary") return; sfx.claim(); say((sets.length > 1 ? sets.slice(0, -1).join(", ") + " and " + sets[sets.length - 1] : sets[0]) + " set complete! +" + sets.length + (sets.length === 1 ? " pack" : " packs"), 4200); }, skipped ? 1800 : 400);
+    if (skipped) {
+      /* Skipping still gets the big moment for the best hidden card. */
+      sfx.flip(skipped.tier);
+      setTimeout(function () {
+        var el = summaryEl.lastElementChild; if (!el || state !== "summary") return;
+        var r = el.getBoundingClientRect(), T = TIERS[skipped.tier];
+        burst(r.left + r.width / 2, r.top + r.height / 2, T.parts, T.color, T.pow, skipped.tier === "mythic");
+        if (skipped.tier === "legendary" || skipped.tier === "mythic") { flash(); shake(true); say(T.label.toUpperCase() + " · " + BY_NUM[skipped.num].name + " (" + skipped.num + ")", 3000); }
+      }, RM ? 0 : 520);
+    }
+    againBtn.textContent = S.packs > 0 ? "Open another pack" : "Back to the packs";
+    try { againBtn.focus({ preventScroll: true }); } catch (e) {}
+  }
+  /* With packs left, go straight to a fresh pack in hand; "Pick another" there goes back to the wheel. */
+  againBtn.addEventListener("click", function () {
+    if (state !== "summary") return;
+    if (S.packs > 0 && S.wheel !== false) { sfx.pick(); paintSelect(true); }
+    else if (S.packs > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
+  });
+  function revealAll() {
+    if (state !== "stack" && state !== "flipping") return;
+    var last = stackEl.firstElementChild, unflipped = last && last._hidden ? last._c : null; // the pack's best card sits at the bottom
+    idx = deck.length; S.pending.revealed = idx;
+    summary(unflipped);
+  }
+  skipBtn.addEventListener("click", revealAll);
+  $("#toBinder").addEventListener("click", function () { show("binder"); });
+
+  /* ---------- binder ---------- */
+  var gridEl = $("#grid"), tiersEl = $("#tiers"), moreBtn = $("#more"), missingBtn = $("#missingBtn"), filter = "all", shown = 48, showMissing = false;
+  missingBtn.addEventListener("click", function () { showMissing = !showMissing; shown = 48; paintBinder(); });
+  function ownedList() {
+    var out = [];
+    Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length) out.push(t); });
+    out.sort(function (a, b) { return (b.num === myTeam()) - (a.num === myTeam()) || ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    return out;
+  }
+  function paintBinder() {
+    var owned = ownedList(), counts = {}; ORDER.forEach(function (t) { counts[t] = 0; });
+    owned.forEach(function (t) { counts[t.tier]++; });
+    var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
+    $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
+    $("#binderTitle").textContent = "Cards";
+    paintPacks(owned, counts);
+    tiersEl.innerHTML = "";
+    var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
+    all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
+    all.onclick = function () { filter = "all"; shown = 48; paintBinder(); }; tiersEl.appendChild(all);
+    ORDER.forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (filter === t ? " on" : ""); b.setAttribute("aria-pressed", String(filter === t));
+      b.style.setProperty("--tc", TIERS[t].color);
+      b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b><em>' + counts[t] + '/' + POOL[t].length + '</em><span class="bar"><i style="width:' + (POOL[t].length ? counts[t] / POOL[t].length * 100 : 0) + '%"></i></span>';
+      b.onclick = function () { filter = t; shown = 48; paintBinder(); }; tiersEl.appendChild(b);
+    });
+    var divsEl = $("#divs"); divsEl.innerHTML = "";
+    DIVS.forEach(function (d) {
+      var have = DIV_TEAMS[d].filter(function (t) { return S.inv[t.num] && S.inv[t.num].length; }).length, key = "div:" + d;
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (filter === key ? " on" : "") + (S.sets[d] ? " done" : ""); b.setAttribute("aria-pressed", String(filter === key));
+      b.innerHTML = '<b>' + esc(d) + '</b><em>' + have + '/' + DIV_TEAMS[d].length + '</em><span class="bar"><i style="width:' + (have / DIV_TEAMS[d].length * 100) + '%"></i></span>';
+      b.title = S.sets[d] ? "Set complete" : "Collect every team in " + d + " for a bonus pack";
+      b.onclick = function () { filter = key; shown = 48; paintBinder(); }; divsEl.appendChild(b);
+    });
+    var isDiv = filter.indexOf("div:") === 0, dname = filter.slice(4);
+    missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
+    var list = (showMissing && filter !== "all") ? (isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; })
+      : owned.filter(function (t) { return filter === "all" || (isDiv ? t.div === dname : t.tier === filter); });
+    gridEl.innerHTML = "";
+    if (!list.length) {
+      var e = document.createElement("div"); e.className = "empty-binder"; e.style.gridColumn = "1 / -1";
+      e.innerHTML = owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
+      gridEl.appendChild(e);
+    }
+    list.slice(0, shown).forEach(function (t) {
+      var serials = S.inv[t.num] || [];
+      if (!serials.length) { var gh = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); gh.classList.add("ghost"); gridEl.appendChild(gh); return; }
+      var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
+      if (S.unseen[t.num]) showRibbon(el);
+      el.addEventListener("click", function () { inspect(t); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(t); } });
+      gridEl.appendChild(el);
+    });
+    moreBtn.hidden = list.length <= shown;
+  }
+  moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
+  function paintPacks(owned, counts) {
+    var row = $("#packRow"); row.innerHTML = "";
+    PACKS.forEach(function (pk) {
+      var have = owned.length, total = pk.teams.length, pct = total ? Math.floor(have / total * 100) : 0;
+      var b = document.createElement("button"); b.type = "button"; b.className = "ptile" + (pk === curPack ? " on" : ""); b.setAttribute("aria-pressed", String(pk === curPack));
+      b.setAttribute("aria-label", pk.name + " pack, " + have + " of " + total + " teams collected");
+      b.innerHTML = '<div class="pmini" aria-hidden="true">' + packHTML(false) + '</div><div class="pinfo">' +
+        '<div class="pname"><b>' + esc(pk.name) + '</b><span class="pct"><em>' + pct + '%</em> · ' + have + ' of ' + total + '</span></div>' +
+        '<div class="pbar"><i style="width:' + (have / total * 100) + '%"></i></div>' +
+        '<div class="ptiers">' + ORDER.map(function (t) { return '<span style="color:' + TIERS[t].color + '">' + TIERS[t].label + ' <i>' + counts[t] + '/' + POOL[t].length + '</i></span>'; }).join("") + '</div></div>';
+      b.onclick = function () { curPack = pk; filter = "all"; shown = 48; paintBinder(); };
+      row.appendChild(b);
+    });
+  }
+
+  var modal = $("#modal"), modalIn = $("#modalIn"), lastFocus = null;
+  function paintTabDot() {
+    var dot = $("#tabDot"), n = Object.keys(S.unseen || {}).length;
+    dot.hidden = !n; dot.textContent = n > 99 ? "99+" : n;
+    tabBinder.setAttribute("aria-label", n ? "Binder, " + n + " new" : "Binder");
+  }
+  function inspect(t) {
+    var serials = S.inv[t.num] || [];
+    modalIn.innerHTML = "";
+    modalIn.appendChild(cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true, alive: true }));
+    var info = document.createElement("div"); info.className = "serials";
+    info.innerHTML = "<b>" + serials.length + (serials.length === 1 ? " copy" : " copies") + "</b> owned<br>Serials: " + serials.map(function (s) { return "No. " + esc(s); }).join(" · ");
+    modalIn.appendChild(info);
+    var row = document.createElement("div"); row.className = "cta-row";
+    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    if (t.tier === "mythic" || t.tier === "legendary") {
+      var cp = document.createElement("button"); cp.type = "button"; cp.className = "cta ghost"; cp.textContent = "Copy brag text";
+      cp.onclick = function () {
+        var txt = "I own " + t.name + " (team " + t.num + "), a " + TIERS[t.tier].label + " 2026 Championship card, No. " + serials[0] + ", on FRC Packs.";
+        try { navigator.clipboard.writeText(txt).then(function () { cp.textContent = "Copied"; }, function () { cp.textContent = txt; }); } catch (e) { cp.textContent = txt; }
+      };
+      row.appendChild(cp);
+    }
+    modalIn.appendChild(row);
+    lastFocus = document.activeElement; modal.hidden = false; close.focus();
+  }
+  function closeModal() { modal.hidden = true; modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (!modal.hidden) closeModal(); else if (state === "inspect") back(); else if (state === "select") paintHome();
+  });
+
+  /* ---------- tabs and settings ---------- */
+  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder");
+  function show(which) {
+    var b = which === "binder";
+    banner.classList.remove("show");
+    vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
+    $("#status").hidden = b; paintTeamPick(b); document.body.classList.toggle("focus", !b && state === "inspect");
+    if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} }
+    else { try { history.replaceState(null, "", "#open"); } catch (e) {} }
+    if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
+    vBinder._was = b; paintTabDot();
+  }
+  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); };
+  var gear = $("#gear"), settings = $("#settings");
+  gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
+  var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
+  wheelBtn.onclick = function () { S.wheel = S.wheel === false; save(); paintToggles(); };
+  function paintToggles() { muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === false ? "Off" : "On"; wheelBtn.setAttribute("aria-pressed", String(S.wheel !== false));
+    ["#demoLuck", "#demoPack", "#reset"].forEach(function (id) { $(id).closest(".line").hidden = !S.devTools; });
+  }
+  muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
+  function devDone(st) { applyState(st); paintToggles(); paintStatus(); if (state === "select" || state === "home") paintSelectHud(); }
+  demoBtn.onclick = function () { api.dev.demo(!S.demo).then(devDone, offline); };
+  $("#demoPack").onclick = function () { api.dev.pack(PACK_ID).then(devDone, offline); };
+  $("#skipTimer").onclick = function () { api.dev.skipTimer().then(devDone, offline); };
+  /* ---------- my team ---------- */
+  var teamPick = $("#teamPick"), teamInput = $("#teamInput"), teamMsg = $("#teamMsg");
+  function paintTeamPick(inBinder) {
+    if (inBinder === undefined) inBinder = !vBinder.hidden;
+    teamPick.hidden = !TEAM_PICK || S.teamAsked || inBinder;
+    $("#changeTeam").closest(".line").hidden = !TEAM_PICK;
+    var t = S.team && BY_NUM[S.team];
+    $("#myTeamTxt").textContent = !S.team ? "Not picked yet." : "Team " + S.team + (t ? " · " + t.name : " · not in the 2026 Championship pack");
+  }
+  $("#teamForm").addEventListener("submit", function (e) {
+    e.preventDefault(); var n = parseInt(teamInput.value, 10);
+    if (!(n > 0 && n < 100000)) { teamMsg.hidden = false; teamMsg.textContent = "Enter your team number, like 254."; return; }
+    S.team = n; S.teamAsked = true; save(); teamMsg.hidden = true; paintTeamPick(); actx(); sfx.mine();
+    var t = BY_NUM[n];
+    say(t ? "Team " + n + ", " + t.name + ", is your team" + (S.opened === 0 ? ". It's in your first pack." : ".") : "Saved team " + n + ". It wasn't at Champs 2026, so it isn't in this pack.", 4200);
+    if (state === "select" || state === "home") paintSelectHud(); if (!vBinder.hidden) paintBinder();
+  });
+  $("#teamSkip").onclick = function () { S.teamAsked = true; save(); teamMsg.hidden = true; paintTeamPick(); };
+  $("#changeTeam").onclick = function () {
+    S.teamAsked = false; save(); settings.hidden = true; gear.setAttribute("aria-expanded", "false"); show("open");
+    teamInput.value = S.team || ""; try { teamInput.focus(); } catch (e) {}
+  };
+  var resetBtn = $("#reset"), armed = 0;
+  resetBtn.onclick = function () {
+    if (!armed) { armed = 1; resetBtn.textContent = "Tap again to delete"; setTimeout(function () { armed = 0; resetBtn.textContent = "Reset collection"; }, 3500); return; }
+    armed = 0; resetBtn.textContent = "Reset collection";
+    api.dev.reset().then(function (st) {
+      applyState(st); S.inv = {}; S.sets = {}; S.unseen = {}; S.pending = null; save(); paintToggles(); paintTabDot(); paintTeamPick();
+      document.body.classList.remove("takeover"); paintHome(); if (!vBinder.hidden) paintBinder();
+    }, offline);
+  };
+  paintToggles();
+
+  /* ---------- boot ---------- */
+  function boot() {
+    var hash = (location.hash || "").replace("#", "");
+    showOnly("home"); setHud("Loading your packs…", "");
+    api.session().then(function (st) {
+      applyState(st); S.pending = pendingFrom(st.pending);
+      return api.collection(PACK_ID);
+    }).then(function (col) {
+      applyCollection(col); paintToggles(); paintTabDot();
+      if (S.pending) { say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
+      else paintHome();
+      paintStatus(); show(hash === "binder" ? "binder" : "open");
+      document.body.classList.add("ready");
+    }, function (e) {
+      setHud(e && e.status === 0 ? "Can't reach the server" : "Something went wrong", "Reload the page to try again");
+    });
+  }
+  window.__frc = { S: function () { return S; }, tierOf: tierOf, POOL: POOL, TEAMS: TEAMS, DIVS: DIVS, DIV_TEAMS: DIV_TEAMS, state: function () { return state; }, cardEl: cardEl };
+  boot();
+}

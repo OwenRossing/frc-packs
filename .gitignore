@@ -1,0 +1,6 @@
+prototype/test/out/
+node_modules/
+server/target/
+web/dist/
+*.log
+.env
