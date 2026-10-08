@@ -88,11 +88,15 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   check(/Legendary|Mythic/.test(await p.locator('#summary .slot').last().getAttribute('aria-label')), 'first pack ends in Legendary or better');
   check((await p.evaluate(() => window.__frc.S().pity.m)) <= 1, 'Mythic meter counts the pack');
   check(await p.locator('#packCount').textContent() === '2', 'opening a pack uses one');
-  await p.click('#again'); await waitState(p, 'inspect');
-  check(true, 'open another pack goes straight to a pack in hand');
-  await p.click('#backBtn'); await waitState(p, 'select');
+  await p.click('#again'); await waitState(p, 'select');
+  check((await p.locator('.pick').count()) === 10, 'open another pack brings the wheel back');
   await openOne(p, { swipe: true, swipeCards: true });
+  await p.evaluate(() => { document.querySelector('#wheelAgain').click(); });
+  check(await p.locator('#wheelAgain').textContent() === 'Off' && (await p.evaluate(() => window.__frc.S().wheel)) === false, 'wheel setting turns off and saves');
   await p.click('#again'); await waitState(p, 'inspect');
+  check(true, 'with the wheel off, open another pack goes straight to a pack in hand');
+  check(await p.evaluate(() => { const i = document.querySelector('.inspect'); return getComputedStyle(i.querySelector('.tell')).opacity === '0' && getComputedStyle(i.querySelector('.lift')).filter === 'none' && getComputedStyle(i.querySelector('.cutline')).opacity === '0'; }), 'no glow on the pack until you start swiping');
+  await p.evaluate(() => { document.querySelector('#wheelAgain').click(); });
   // reveal all: skip the rest of the stack and land on the summary with every card
   await p.click('#openBtn'); await waitState(p, 'stack');
   check(await p.locator('#skipBtn').isVisible(), 'reveal all is offered during the stack');
