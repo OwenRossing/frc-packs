@@ -586,28 +586,39 @@ export function start(RECIPE) {
     showOnly("stack");
     stackEl.classList.remove("rise"); void stackEl.offsetWidth;
     paintCounter(); sfx.whoosh();
-    var flight = fromPack && !RM ? dealFromPack(fromPack) : 0;
-    if (!flight) stackEl.classList.add("rise");
-    if (flight) { state = "dealing"; setTimeout(function () { if (state !== "dealing") return; state = "stack"; armTop(); }, flight); }
-    else { state = "stack"; armTop(); }
+    var flight = fromPack && !RM && dealFromPack(fromPack, function () { if (state !== "dealing") return; state = "stack"; armTop(); });
+    if (flight) state = "dealing";
+    else { stackEl.classList.add("rise"); state = "stack"; armTop(); }
     try { stackEl.focus({ preventScroll: true }); } catch (e) {}
   }
-  function dealFromPack(pr) {
+  /* Calls done when the cards have landed. Returns false when there's nothing to animate. */
+  function dealFromPack(pr, done) {
     /* The empty pack: a copy of the torn pack, drawn on top so the cards come up out of its open top. */
     var gp = document.createElement("div"); gp.className = "ghostpack inspect told"; gp.setAttribute("aria-hidden", "true");
     gp.style.cssText = "left:" + pr.left + "px;top:" + pr.top + "px;width:" + pr.width + "px;min-width:0;--tp:1;--tell:" + inspectEl.style.getPropertyValue("--tell");
     gp.innerHTML = '<div class="lift" style="animation:none"><div class="rot">' + packHTML(false) + '</div></div>';
     document.body.appendChild(gp);
-    requestAnimationFrame(function () { requestAnimationFrame(function () { gp.classList.add("drop"); }); });
-    setTimeout(function () { gp.remove(); }, 900);
     /* Start inside the pack (same width as the pack, sunk below its top), rise above it, then glide down into place. */
     var start = { left: pr.left + pr.width * .08, top: pr.top + pr.height * .2, width: pr.width * .84, height: pr.width * .84 * 1.4 };
     var all = stackEl.children, n = all.length;
     for (var i = 0; i < n; i++) all[i].style.setProperty("--k", n - 1 - i);
     stackEl.classList.add("fan");
-    flyFrom(stackEl, start, 720, 0, function (dx, dy, sc) { return { offset: .42, transform: "translate(" + (dx * .5) + "px," + (dy - pr.height * .42) + "px) scale(" + ((sc + 1) / 2) + ")" }; });
-    setTimeout(function () { stackEl.classList.remove("fan"); }, 380);
-    return 720;
+    var anim = flyFrom(stackEl, start, 720, 0, function (dx, dy, sc) { return { offset: .42, transform: "translate(" + (dx * .5) + "px," + (dy - pr.height * .42) + "px) scale(" + ((sc + 1) / 2) + ")" }; });
+    if (!anim) { gp.remove(); stackEl.classList.remove("fan"); return false; }
+    /* The first frame with five new cards on screen takes the browser a while to draw (100ms+ on a laptop). The
+       animation's clock would keep running through it and the cards would skip the rise out of the pack, so they
+       wait, hidden inside the pack, until frames are coming smoothly again, then go. */
+    anim.pause();
+    var last = performance.now(), t0 = last, slow = false;
+    requestAnimationFrame(function wait(now) {
+      var smooth = now - last < 30; last = now; if (!smooth) slow = true;
+      if (now - t0 < 600 && !(smooth && (slow || now - t0 > 150))) return requestAnimationFrame(wait);
+      gp.classList.add("drop"); anim.play();
+      setTimeout(function () { stackEl.classList.remove("fan"); }, 380);
+      setTimeout(function () { gp.remove(); }, 900);
+      setTimeout(done, 720);
+    });
+    return true;
   }
   function paintCounter() { counterEl.innerHTML = deck.map(function (c, i) { return '<i class="' + (i < idx ? "done" : i === idx ? "now" : "") + '"></i>'; }).join(""); }
   function topEl() { return stackEl.lastElementChild; }
