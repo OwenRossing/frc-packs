@@ -50,6 +50,8 @@ In the Cloudflare dashboard:
 
 Sign in on the site as `admin`, open **Settings → Admin → Open panel** (or go to `/admin`), and make invite codes. Each code can be for one person or for a group (set **People per code**), with a note so you remember who it's for. Send people the code or the link; the link opens the sign-up form with the code filled in. They pick a username and password once, and after that they sign in with those on any device.
 
+Under **Free packs** at the top of the panel you set how many hours between free packs, how many packs each one gives, how many missed timers wait to be claimed, and how many packs new accounts start with. Out of the box it's 1 pack every 5 hours, 2 missed timers kept, and 2 starting packs.
+
 From the same panel you can see every account, give packs, reset someone's password (the panel shows the new one once), turn an account off (it's signed out and can't sign in, but keeps its cards) or delete it.
 
 Lost the admin password? On the machine:
