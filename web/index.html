@@ -4,11 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FRC Packs</title>
+<meta name="description" content="Open packs of FRC robot cards and collect every team from the Championship.">
+<meta name="theme-color" content="#06161d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='7' y='3' width='18' height='26' rx='3' fill='%2306161d' stroke='%2327d3c3' stroke-width='2.5'/%3E%3Cpath d='M16 10l2 4.2 4.5.5-3.4 3 1 4.5L16 20l-4.1 2.2 1-4.5-3.4-3 4.5-.5z' fill='%2327d3c3'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Chakra+Petch:wght@500;600;700&display=swap">
 </head>
-<body>
+<body class="signed-out">
 
 <div class="bg"><i></i><i></i><i></i></div>
 <div class="rays"></div>
@@ -29,13 +32,48 @@
     </div>
   </div>
 
+  <div class="auth" id="auth" hidden>
+    <div class="auth-card">
+      <div class="seg auth-tabs" role="tablist" aria-label="Sign in or join">
+        <button type="button" role="tab" id="authInTab" aria-selected="true" aria-controls="signInForm">Sign in</button>
+        <button type="button" role="tab" id="authJoinTab" aria-selected="false" aria-controls="joinForm">Join with invite</button>
+      </div>
+      <form class="auth-form" id="signInForm" novalidate>
+        <h1>Welcome back</h1>
+        <label>Username<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="128"></label>
+        <button type="submit" class="cta">Sign in</button>
+        <p class="auth-alt">New here? You need an invite code. <button type="button" class="textbtn" id="toJoin">Join with invite</button></p>
+      </form>
+      <form class="auth-form" id="joinForm" novalidate hidden>
+        <h1>Join FRC Packs</h1>
+        <p class="auth-note" id="guestNote" hidden>This browser has cards from before accounts existed. Join here and they come with you.</p>
+        <label>Invite code<input name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" placeholder="ABCD-EFGH-JKMN"></label>
+        <label>Username<small>3 to 20 letters, numbers or underscores. Other players see it.</small><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20"></label>
+        <label>Password<small>At least 8 characters.</small><input name="password" type="password" autocomplete="new-password" maxlength="128"></label>
+        <button type="submit" class="cta">Create account</button>
+        <p class="auth-alt">You only need the code once. After this, sign in with your username and password.</p>
+      </form>
+      <div class="auth-msg" id="authMsg" role="alert" hidden></div>
+    </div>
+  </div>
+
   <div class="settings" id="settings" hidden>
+    <div class="line"><span>Account<small id="acctTxt">Signed in.</small></span><button type="button" class="chip" id="signOut">Sign out</button></div>
+    <div class="line"><span>Password<small>Change it here. Your other devices get signed out.</small></span><button type="button" class="chip" id="pwBtn" aria-expanded="false" aria-controls="pwForm">Change</button></div>
+    <form class="pwform" id="pwForm" hidden novalidate>
+      <input name="current" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password" maxlength="128">
+      <input name="next" type="password" autocomplete="new-password" placeholder="New password" aria-label="New password, at least 8 characters" maxlength="128">
+      <button type="submit" class="cta small">Save</button>
+      <div class="msg" id="pwMsg" role="status" hidden></div>
+    </form>
+    <div class="line" id="adminLine" hidden><span>Admin<small>Make invite codes and manage accounts.</small></span><a class="chip" href="/admin">Open panel</a></div>
     <div class="line"><span>Sound<small>Chimes, rip and reveal stings.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
     <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 400, and the Mythic meter guarantees one by pack 200.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
-    <div class="line"><span>Extra packs<small>Testing only. Real packs come from the 5-hour claim.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
+    <div class="line"><span>Extra packs<small>Developer tools. Real packs come from the 5-hour claim.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
     <div class="line"><span>Pack wheel every time<small>Pick from the wheel of 10 packs each time you open another pack.</small></span><button type="button" class="chip" id="wheelAgain" aria-pressed="true">On</button></div>
     <div class="line"><span>My team<small id="myTeamTxt">Not picked yet.</small></span><button type="button" class="chip" id="changeTeam">Change</button></div>
-    <div class="line"><span>Start over<small>Testing only. Deletes this account's cards and packs.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
+    <div class="line"><span>Start over<small>Developer tools. Deletes this account's cards and packs.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
   </div>
 
   <div class="status" id="status">
@@ -103,7 +141,7 @@
     <div class="more"><button type="button" class="cta small ghost" id="more" hidden>Show more</button></div>
   </section>
 
-  <details class="note" id="note"><summary>About FRC Packs</summary><p><b>Early version.</b> The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robot photos come from The Blue Alliance; the few teams without one get a drawing. Packs, serial numbers and the free-pack timer are decided by the server, and your cards are saved to a guest account in this browser. Sign-in comes later.</p></details>
+  <details class="note" id="note"><summary>About FRC Packs</summary><p>The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robot photos come from The Blue Alliance; the few teams without one get a drawing. Every pack, serial number and free-pack timer is decided by the server, and your cards are saved to your account, so you can sign in from any device.</p></details>
 </div>
 
 <div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-label="Card details"><div class="modal-in" id="modalIn"></div></div>

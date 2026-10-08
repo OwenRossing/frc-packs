@@ -11,6 +11,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::Shared;
+use crate::accounts;
 use crate::auth::{self, User};
 use crate::error::{ApiError, ApiResult};
 use crate::packs::{Pack, Tier};
@@ -26,6 +27,10 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/health", get(health))
         .route("/session", post(session))
+        .route("/signup", post(signup))
+        .route("/login", post(login))
+        .route("/logout", post(logout))
+        .route("/password", post(change_password))
         .route("/state", get(state))
         .route("/claim", post(claim))
         .route("/hand", post(hand))
@@ -36,6 +41,7 @@ pub fn routes() -> Router<Shared> {
         .route("/dev/pack", post(dev_pack))
         .route("/dev/skip-timer", post(dev_skip_timer))
         .route("/dev/reset", post(dev_reset))
+        .route("/dev/invite", post(dev_invite))
 }
 
 fn err(status: StatusCode, code: &'static str) -> ApiError {
@@ -53,6 +59,7 @@ async fn health(State(s): State<Shared>) -> ApiResult<Json<serde_json::Value>> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StateOut {
+    account: AccountOut,
     /// Server time, so the site can show timers without trusting the device clock.
     now: i64,
     next_claim_at: i64,
@@ -63,6 +70,12 @@ pub struct StateOut {
     packs: Vec<PackState>,
     /// A pack that was opened but not fully revealed (for example, the page closed mid-reveal).
     pending: Option<OpeningOut>,
+}
+
+#[derive(Serialize)]
+struct AccountOut {
+    username: String,
+    admin: bool,
 }
 
 #[derive(Serialize)]
@@ -182,8 +195,11 @@ async fn load_opening(
 }
 
 pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResult<StateOut> {
-    let (next, demo): (DateTime<Utc>, bool) =
-        sqlx::query_as("select next_claim_at, demo from users where id = $1").bind(user).fetch_one(&mut *c).await?;
+    let (next, demo, username, admin): (DateTime<Utc>, bool, Option<String>, bool) =
+        sqlx::query_as("select next_claim_at, demo, username, is_admin from users where id = $1")
+            .bind(user)
+            .fetch_one(&mut *c)
+            .await?;
     let rows: Vec<(String, i32, i32, i32, i32)> =
         sqlx::query_as("select pack_id, sealed, opened, pity_m, pity_l from user_packs where user_id = $1")
             .bind(user)
@@ -210,6 +226,7 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         None => None,
     };
     Ok(StateOut {
+        account: AccountOut { username: username.unwrap_or_default(), admin },
         now: Utc::now().timestamp_millis(),
         next_claim_at: next.timestamp_millis(),
         claim_ms: CLAIM_MS,
@@ -228,35 +245,201 @@ async fn state_json(s: &Shared, user: Uuid) -> ApiResult<Json<StateOut>> {
 
 // ---------- handlers ----------
 
-/// Returns the current account, creating a guest account (and its cookie) on first visit.
-async fn session(State(s): State<Shared>, headers: HeaderMap) -> ApiResult<impl IntoResponse> {
-    if let Some(token) = auth::token_from(&headers) {
-        let id: Option<Uuid> = sqlx::query_scalar("select id from users where token_hash = $1")
-            .bind(auth::hash(&token))
+/// The signed-in account's state. Without one: 401 `sign_in`, or 401 `guest` when this browser has a guest account
+/// from before sign-in existed (signing up from it keeps its cards).
+async fn session(State(s): State<Shared>, headers: HeaderMap) -> ApiResult<Json<StateOut>> {
+    let mut c = s.db.acquire().await?;
+    match auth::session(&mut c, &headers).await? {
+        Some(u) if u.username.is_some() && !u.disabled => Ok(Json(load_state(&s, &mut c, u.id).await?)),
+        Some(u) if u.username.is_none() => Err(err(StatusCode::UNAUTHORIZED, "guest")),
+        _ => Err(err(StatusCode::UNAUTHORIZED, "sign_in")),
+    }
+}
+
+/// Failed sign-ins allowed per username, and per visitor (a whole school can share one IP), every 15 minutes.
+const USER_FAILS: u32 = 10;
+const VISITOR_FAILS: u32 = 50;
+/// Wrong invite codes allowed per visitor every 15 minutes.
+const INVITE_FAILS: u32 = 20;
+
+fn too_many() -> ApiError {
+    err(StatusCode::TOO_MANY_REQUESTS, "too_many_attempts")
+}
+
+fn signed_in(s: &Shared, token: &str, state: StateOut) -> (HeaderMap, Json<StateOut>) {
+    let mut h = HeaderMap::new();
+    h.insert(header::SET_COOKIE, auth::cookie(token, s.cookie_secure).parse().unwrap());
+    (h, Json(state))
+}
+
+#[derive(Deserialize)]
+struct SignupReq {
+    code: String,
+    username: String,
+    password: String,
+}
+
+/// Makes an account with an invite code and signs it in. From a browser with an old guest account, that account
+/// becomes the new one and keeps its cards.
+async fn signup(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    Json(req): Json<SignupReq>,
+) -> ApiResult<(HeaderMap, Json<StateOut>)> {
+    let visitor = format!("invite:{}", auth::visitor(&headers));
+    if s.limiter.blocked(&visitor, INVITE_FAILS) {
+        return Err(too_many());
+    }
+    let username = req.username.trim();
+    if !accounts::valid_username(username) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_username"));
+    }
+    if !accounts::valid_password(&req.password) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_password"));
+    }
+    let code = accounts::normalize_code(&req.code);
+    let invite: Option<(i32, i32)> =
+        sqlx::query_as("select max_uses, uses from invites where code = $1").bind(&code).fetch_optional(&s.db).await?;
+    match invite {
+        None => {
+            s.limiter.fail(&visitor);
+            return Err(err(StatusCode::BAD_REQUEST, "bad_invite"));
+        }
+        Some((max, uses)) if uses >= max => return Err(err(StatusCode::BAD_REQUEST, "invite_used")),
+        _ => {}
+    }
+    let password_hash = accounts::hash(req.password).await;
+
+    let mut tx = s.db.begin().await?;
+    // Lock the code so two people can't both take its last use.
+    let (max, uses): (i32, i32) = sqlx::query_as("select max_uses, uses from invites where code = $1 for update")
+        .bind(&code)
+        .fetch_one(&mut *tx)
+        .await?;
+    if uses >= max {
+        return Err(err(StatusCode::BAD_REQUEST, "invite_used"));
+    }
+    let guest = auth::session(&mut tx, &headers).await?.filter(|u| u.username.is_none()).map(|u| u.id);
+    let made = match guest {
+        Some(id) => sqlx::query("update users set username = $2, password_hash = $3, invite_code = $4 where id = $1")
+            .bind(id)
+            .bind(username)
+            .bind(&password_hash)
+            .bind(&code)
+            .execute(&mut *tx)
+            .await
+            .map(|_| id),
+        None => {
+            let pack = s.catalog.claimable().id();
+            accounts::create(&mut tx, username, &password_hash, Some(&code), false, pack, START_PACKS).await
+        }
+    };
+    let id = match made {
+        Ok(id) => id,
+        Err(e) if accounts::is_unique_violation(&e) => return Err(err(StatusCode::CONFLICT, "username_taken")),
+        Err(e) => return Err(e.into()),
+    };
+    sqlx::query("update invites set uses = uses + 1 where code = $1").bind(&code).execute(&mut *tx).await?;
+    sqlx::query("delete from sessions where user_id = $1").bind(id).execute(&mut *tx).await?;
+    let token = accounts::new_session(&mut tx, id).await?;
+    let state = load_state(&s, &mut tx, id).await?;
+    tx.commit().await?;
+    Ok(signed_in(&s, &token, state))
+}
+
+#[derive(Deserialize)]
+struct LoginReq {
+    username: String,
+    password: String,
+}
+
+async fn login(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    Json(req): Json<LoginReq>,
+) -> ApiResult<(HeaderMap, Json<StateOut>)> {
+    let name = format!("user:{}", req.username.trim().to_lowercase());
+    let visitor = format!("login:{}", auth::visitor(&headers));
+    if s.limiter.blocked(&name, USER_FAILS) || s.limiter.blocked(&visitor, VISITOR_FAILS) {
+        return Err(too_many());
+    }
+    let row: Option<(Uuid, Option<String>, bool)> =
+        sqlx::query_as("select id, password_hash, disabled from users where lower(username) = lower($1)")
+            .bind(req.username.trim())
             .fetch_optional(&s.db)
             .await?;
-        if let Some(id) = id {
-            return Ok((HeaderMap::new(), state_json(&s, id).await?));
-        }
+    let ok = match &row {
+        Some((_, Some(hash), _)) => accounts::verify(req.password, hash.clone()).await,
+        _ => false,
+    };
+    let Some((id, _, disabled)) = row.filter(|_| ok) else {
+        s.limiter.fail(&name);
+        s.limiter.fail(&visitor);
+        return Err(err(StatusCode::UNAUTHORIZED, "bad_login"));
+    };
+    if disabled {
+        return Err(err(StatusCode::FORBIDDEN, "disabled"));
     }
-    let token = auth::new_token();
-    let id = Uuid::new_v4();
+    s.limiter.clear(&name);
     let mut tx = s.db.begin().await?;
-    sqlx::query("insert into users (id, token_hash, next_claim_at) values ($1, $2, now())")
-        .bind(id)
+    let token = accounts::new_session(&mut tx, id).await?;
+    let state = load_state(&s, &mut tx, id).await?;
+    tx.commit().await?;
+    Ok(signed_in(&s, &token, state))
+}
+
+/// Signs this browser out. Other devices stay signed in.
+async fn logout(State(s): State<Shared>, headers: HeaderMap) -> ApiResult<impl IntoResponse> {
+    if let Some(token) = auth::token_from(&headers) {
+        sqlx::query("delete from sessions where token_hash = $1").bind(auth::hash(&token)).execute(&s.db).await?;
+    }
+    let mut h = HeaderMap::new();
+    h.insert(header::SET_COOKIE, auth::clear_cookie(s.cookie_secure).parse().unwrap());
+    Ok((StatusCode::NO_CONTENT, h))
+}
+
+#[derive(Deserialize)]
+struct PasswordReq {
+    current: String,
+    new: String,
+}
+
+/// Changes your password and signs out your other devices.
+async fn change_password(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    user: User,
+    Json(req): Json<PasswordReq>,
+) -> ApiResult<StatusCode> {
+    let key = format!("password:{}", user.id);
+    if s.limiter.blocked(&key, USER_FAILS) {
+        return Err(too_many());
+    }
+    if !accounts::valid_password(&req.new) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_password"));
+    }
+    let hash: Option<String> =
+        sqlx::query_scalar("select password_hash from users where id = $1").bind(user.id).fetch_one(&s.db).await?;
+    if !accounts::verify(req.current, hash.unwrap_or_default()).await {
+        s.limiter.fail(&key);
+        return Err(err(StatusCode::UNAUTHORIZED, "bad_login"));
+    }
+    let new_hash = accounts::hash(req.new).await;
+    let token = auth::token_from(&headers).unwrap_or_default();
+    let mut tx = s.db.begin().await?;
+    sqlx::query("update users set password_hash = $2 where id = $1")
+        .bind(user.id)
+        .bind(new_hash)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("delete from sessions where user_id = $1 and token_hash <> $2")
+        .bind(user.id)
         .bind(auth::hash(&token))
         .execute(&mut *tx)
         .await?;
-    sqlx::query("insert into user_packs (user_id, pack_id, sealed) values ($1, $2, $3)")
-        .bind(id)
-        .bind(s.catalog.claimable().id())
-        .bind(START_PACKS)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
-    let mut h = HeaderMap::new();
-    h.insert(header::SET_COOKIE, auth::cookie(&token, s.cookie_secure).parse().unwrap());
-    Ok((h, state_json(&s, id).await?))
+    s.limiter.clear(&key);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn state(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
@@ -569,4 +752,12 @@ async fn dev_reset(State(s): State<Shared>, user: User) -> ApiResult<Json<StateO
     sqlx::query("update users set next_claim_at = now() where id = $1").bind(user.id).execute(&mut *tx).await?;
     tx.commit().await?;
     state_json(&s, user.id).await
+}
+
+/// A single-use invite code, for automated tests and local development.
+async fn dev_invite(State(s): State<Shared>) -> ApiResult<Json<serde_json::Value>> {
+    dev(&s)?;
+    let code = accounts::new_invite_code();
+    sqlx::query("insert into invites (code, note) values ($1, 'dev tools')").bind(&code).execute(&s.db).await?;
+    Ok(Json(serde_json::json!({ "code": accounts::show_code(&code) })))
 }

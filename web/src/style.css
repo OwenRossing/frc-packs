@@ -367,3 +367,27 @@ body.playing .note { visibility: hidden; }
 
 /* ---------- site ---------- */
 .fatal { position: fixed; inset: 0 0 auto; z-index: 50; padding: 14px 16px; background: #5b1a24; color: #fff; text-align: center; font-weight: 700; }
+
+/* Signed out: only the brand and the sign-in card. */
+body.signed-out .app > :not(.top):not(.auth), body.signed-out .top .tools { display: none !important; }
+.auth { flex: 1; display: grid; place-items: center; padding-block: 24px 40px; }
+.auth-card { width: min(100%, 400px); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: grid; gap: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.auth-tabs { width: 100%; }
+.auth-tabs button { flex: 1; }
+.auth-form { display: grid; gap: 12px; }
+.auth-form h1 { margin: 2px 0 0; font-family: var(--display); font-weight: 400; font-size: 26px; color: var(--foam); }
+.auth-form label, .field { display: grid; gap: 5px; font-size: 13px; font-weight: 700; letter-spacing: .04em; color: var(--ink); }
+.auth-form label small, .field small { font-weight: 500; letter-spacing: 0; color: var(--ink-dim); }
+.input, .auth-form input, .pwform input { width: 100%; min-width: 0; background: var(--bg); color: var(--foam); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 16px; }
+.input:focus, .auth-form input:focus, .pwform input:focus { outline: 2px solid var(--tide); outline-offset: 1px; border-color: transparent; }
+.auth-form input[name="code"] { font-variant-numeric: tabular-nums; letter-spacing: .08em; text-transform: uppercase; }
+.auth-form .cta { margin-top: 4px; }
+.auth-alt, .auth-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-dim); }
+.auth-note { color: #ffd27a; }
+.textbtn { background: none; border: 0; padding: 0; color: var(--tide); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.auth-msg { font-size: 13px; line-height: 1.4; color: #ffb4a2; background: rgba(255,120,100,.08); border: 1px solid rgba(255,140,120,.3); border-radius: 10px; padding: 8px 10px; }
+a.chip { text-decoration: none; display: inline-block; }
+.pwform { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
+.pwform .msg { grid-column: 1 / -1; font-size: 12px; color: #ffb4a2; }
+.pwform .msg.ok { color: var(--tide); }
+@media (max-width: 520px) { .pwform { grid-template-columns: 1fr; } }

@@ -1,13 +1,24 @@
 import "./style.css";
-import { api, ApiError } from "./api";
+import { api, ApiError, type State } from "./api";
+import { accountSettings } from "./account";
+import { signIn } from "./auth";
 import { start } from "./app.js";
 
 const PACK = "cmp26";
 
 async function main() {
   try {
-    const recipe = await api.recipe(PACK);
-    start(recipe);
+    const recipe = api.recipe(PACK);
+    let state: State;
+    try {
+      state = await api.session();
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 401) throw e;
+      state = await signIn(e.code === "guest");
+    }
+    document.body.classList.remove("signed-out");
+    accountSettings(state.account);
+    start(await recipe);
   } catch (e) {
     const offline = e instanceof ApiError && e.status === 0;
     document.body.insertAdjacentHTML(

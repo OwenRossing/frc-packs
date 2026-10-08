@@ -71,7 +71,7 @@ export function start(RECIPE) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
     return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy }; }) };
   }
-  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : "Something went wrong. Try again.", 3200); }
+  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : "Something went wrong. Try again.", 3200); }
   /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
   function sync() {
     if (state !== "select" && state !== "summary" && state !== "home") return;

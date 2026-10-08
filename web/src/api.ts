@@ -60,7 +60,13 @@ export interface PackState {
   pity: { m: number; l: number };
 }
 
+export interface Account {
+  username: string;
+  admin: boolean;
+}
+
 export interface State {
+  account: Account;
   /** Server time in ms, so timers don't depend on the device clock. */
   now: number;
   nextClaimAt: number;
@@ -76,6 +82,31 @@ export interface Collection {
   pack: string;
   cards: { num: number; serials: number[] }[];
   sets: string[];
+}
+
+export interface Invite {
+  /** Shown as ABCD-EFGH-JKMN. */
+  code: string;
+  note: string;
+  maxUses: number;
+  uses: number;
+  createdAt: number;
+  usedBy: string[];
+}
+
+export interface AdminUser {
+  id: string;
+  /** null for a guest account from before sign-in existed. */
+  username: string | null;
+  admin: boolean;
+  disabled: boolean;
+  createdAt: number;
+  invite: string | null;
+  inviteNote: string | null;
+  sealed: number;
+  opened: number;
+  cards: number;
+  lastOpenedAt: number | null;
 }
 
 /** status 0 means the server couldn't be reached. */
@@ -104,8 +135,13 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
 }
 
 export const api = {
-  /** Current account, creating a guest account on first visit. */
+  /** The signed-in account's state. Fails with 401 `sign_in`, or `guest` for a guest account from before sign-in. */
   session: () => call<State>("POST", "/api/session"),
+  signup: (code: string, username: string, password: string) =>
+    call<State>("POST", "/api/signup", { code, username, password }),
+  login: (username: string, password: string) => call<State>("POST", "/api/login", { username, password }),
+  logout: () => call<void>("POST", "/api/logout"),
+  changePassword: (current: string, next: string) => call<void>("POST", "/api/password", { current, new: next }),
   state: () => call<State>("GET", "/api/state"),
   claim: () => call<State>("POST", "/api/claim"),
   /** Pick up a pack: its cards are decided now; only the best rarity comes back, for the glow. */
@@ -120,6 +156,39 @@ export const api = {
     skipTimer: () => call<State>("POST", "/api/dev/skip-timer"),
     reset: () => call<State>("POST", "/api/dev/reset"),
   },
+  admin: {
+    invites: () => call<Invite[]>("GET", "/api/admin/invites"),
+    makeInvites: (note: string, uses: number, count: number) =>
+      call<Invite[]>("POST", "/api/admin/invites", { note, uses, count }),
+    deleteInvite: (code: string) => call<void>("POST", `/api/admin/invites/${encodeURIComponent(code)}/delete`),
+    users: () => call<AdminUser[]>("GET", "/api/admin/users"),
+    resetPassword: (id: string) => call<{ password: string }>("POST", `/api/admin/users/${id}/password`),
+    givePacks: (id: string, count: number) => call<void>("POST", `/api/admin/users/${id}/packs`, { count }),
+    setDisabled: (id: string, disabled: boolean) => call<void>("POST", `/api/admin/users/${id}/disabled`, { disabled }),
+    deleteUser: (id: string, confirm: string) => call<void>("POST", `/api/admin/users/${id}/delete`, { confirm }),
+  },
 };
+
+/** Friendly words for the server's error codes. */
+export function explain(e: unknown): string {
+  if (!(e instanceof ApiError)) return "Something went wrong. Try again.";
+  const words: Record<string, string> = {
+    offline: "Can't reach FRC Packs. Check your connection.",
+    bad_login: "That username and password don't match.",
+    disabled: "This account is turned off. Ask the person who invited you.",
+    too_many_attempts: "Too many tries. Wait 15 minutes and try again.",
+    bad_invite: "That invite code doesn't exist. Check it and try again.",
+    invite_used: "That invite code has already been used.",
+    username_taken: "That username is taken. Try another.",
+    bad_username: "Usernames are 3 to 20 letters, numbers or underscores.",
+    bad_password: "Passwords need at least 8 characters.",
+    no_session: "You've been signed out. Reload to sign in again.",
+    not_admin: "Only the admin account can do that.",
+    not_yourself: "You can't do that to your own account.",
+    confirm_mismatch: "The name you typed doesn't match.",
+    not_found: "That no longer exists. Reload the page.",
+  };
+  return words[e.code] ?? "Something went wrong. Try again.";
+}
 
 export type Api = typeof api;

@@ -1,6 +1,7 @@
 // End-to-end checks of the real site: a browser bot plays packs against the Rust server.
-// Needs the server running with DEV_TOOLS=1 and the built site (see the README):
+// Needs the server running with DEV_TOOLS=1 (it hands out invite codes to the bot) and the built site (see the README):
 //   BASE_URL=http://127.0.0.1:3000 npm test
+// With ADMIN_USER and ADMIN_PASSWORD set to the admin account, the admin panel is checked too.
 const fs = require('fs');
 const { chromium } = require('playwright');
 
@@ -19,8 +20,27 @@ async function fresh(b, viewport = { width: 390, height: 844 }) {
   const p = await c.newPage(); p.errs = [];
   p.on('pageerror', e => p.errs.push(String(e)));
   p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) p.errs.push(m.text()); });
-  await p.goto(BASE); await ready(p);
+  await p.goto(BASE); p.user = await join(p); await ready(p);
   return { c, p };
+}
+const PASSWORD = 'e2e-password';
+const newName = () => 'e2e_' + Math.random().toString(36).slice(2, 12);
+async function devInvite(p) {
+  return p.evaluate(async () => (await (await fetch('/api/dev/invite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json()).code);
+}
+// Sign up on the sign-in screen with a fresh invite code.
+async function join(p, name = newName()) {
+  await p.waitForSelector('#auth', { state: 'visible', timeout: 8000 });
+  const code = await devInvite(p);
+  await p.click('#authJoinTab');
+  await p.fill('#joinForm [name=code]', code); await p.fill('#joinForm [name=username]', name); await p.fill('#joinForm [name=password]', PASSWORD);
+  await p.click('#joinForm button[type=submit]');
+  return name;
+}
+async function signInAs(p, name, password) {
+  await p.waitForSelector('#signInForm', { state: 'visible', timeout: 8000 });
+  await p.fill('#signInForm [name=username]', name); await p.fill('#signInForm [name=password]', password);
+  await p.click('#signInForm button[type=submit]');
 }
 async function dev(p, path, body = {}) {
   return p.evaluate(async ([path, body]) => (await fetch('/api/dev/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status, [path, body]);
@@ -56,7 +76,44 @@ async function noScroll(p, label) {
 (async () => {
   const b = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 
-  // 1. A first visit makes a guest account with 2 packs and a free pack to claim.
+  // 0. Signing in: an invite code makes an account; after that, username and password.
+  {
+    const c0 = await b.newContext({ viewport: { width: 320, height: 700 } });
+    const p0 = await c0.newPage(); const errs = []; p0.on('pageerror', e => errs.push(String(e)));
+    await p0.goto(BASE); await p0.waitForSelector('#auth', { state: 'visible' });
+    check(!(await p0.locator('#status').isVisible()) && !(await p0.locator('#gear').isVisible()), 'signed out: only the sign-in card shows');
+    await noScroll(p0, 'sign-in at 320px');
+    await p0.click('#authJoinTab');
+    await p0.fill('#joinForm [name=code]', 'ZZZZ-ZZZZ-ZZZZ'); await p0.fill('#joinForm [name=username]', newName()); await p0.fill('#joinForm [name=password]', PASSWORD);
+    await p0.click('#joinForm button[type=submit]'); await p0.waitForSelector('#authMsg', { state: 'visible' });
+    check(/doesn't exist/.test(await p0.locator('#authMsg').textContent()), 'a wrong invite code says so');
+    const code = await devInvite(p0);
+    await p0.goto(BASE + '?invite=' + code); await p0.waitForSelector('#joinForm', { state: 'visible' });
+    check(await p0.locator('#joinForm [name=code]').inputValue() === code, 'an invite link opens the join form with the code filled in');
+    const name = newName();
+    await p0.fill('#joinForm [name=username]', name); await p0.fill('#joinForm [name=password]', PASSWORD);
+    await p0.click('#joinForm button[type=submit]'); await ready(p0);
+    check(!p0.url().includes('invite='), 'the code leaves the address bar after joining');
+    await p0.click('#gear');
+    check((await p0.locator('#acctTxt').textContent()).includes(name), 'settings say who is signed in');
+    check(!(await p0.locator('#adminLine').isVisible()), 'players don\'t see the admin panel link');
+    await p0.click('#signOut'); await p0.waitForSelector('#signInForm', { state: 'visible' });
+    check(true, 'signing out goes back to the sign-in screen');
+    await signInAs(p0, name, 'wrong-password'); await p0.waitForSelector('#authMsg', { state: 'visible' });
+    check(/don't match/.test(await p0.locator('#authMsg').textContent()), 'a wrong password says so');
+    await signInAs(p0, name.toUpperCase(), PASSWORD); await ready(p0);
+    check(await packs(p0) === 2, 'signing in again (any case, no invite code) gets the same account back');
+    const c1 = await b.newContext(); const p1 = await c1.newPage();
+    await p1.goto(BASE); await signInAs(p1, name, PASSWORD); await ready(p1);
+    check(await packs(p1) === 2, 'the same account works on a second device');
+    await p1.goto(BASE + 'admin'); await p1.waitForSelector('#gate', { state: 'visible' });
+    check(/Admins only/.test(await p1.locator('#gate').textContent()), 'the admin panel turns players away');
+    await c1.close();
+    check(errs.length === 0, 'no errors signing in: ' + JSON.stringify(errs));
+    await c0.close();
+  }
+
+  // 1. A new account starts with 2 packs and a free pack to claim.
   const { c, p } = await fresh(b);
   check(await packs(p) === 2, 'new account starts with 2 packs');
   check(await p.locator('#claim').isVisible(), 'a free pack is ready to claim');
@@ -152,7 +209,51 @@ async function noScroll(p, label) {
   check(p.errs.length === 0, 'no errors in the page: ' + JSON.stringify(p.errs));
   await c.close();
 
-  // 11. Layouts.
+  // 11. The admin panel (needs ADMIN_USER and ADMIN_PASSWORD).
+  if (process.env.ADMIN_USER && process.env.ADMIN_PASSWORD) {
+    const player = await fresh(b);
+    const ca = await b.newContext({ viewport: { width: 390, height: 844 } });
+    const pa = await ca.newPage(); const errs = []; pa.on('pageerror', e => errs.push(String(e)));
+    await pa.goto(BASE); await signInAs(pa, process.env.ADMIN_USER, process.env.ADMIN_PASSWORD); await ready(pa);
+    await pa.click('#gear');
+    check(await pa.locator('#adminLine').isVisible(), 'the admin sees the admin panel link');
+    await pa.click('#adminLine a'); await pa.waitForSelector('#panel', { state: 'visible' });
+    const note = 'e2e ' + newName();
+    await pa.fill('#inviteForm [name=note]', note); await pa.fill('#inviteForm [name=uses]', '2'); await pa.fill('#inviteForm [name=count]', '2');
+    await pa.click('#inviteForm button[type=submit]'); await pa.waitForSelector('#invites .item.fresh');
+    check(await pa.locator('#invites .item.fresh').count() === 2, 'making 2 codes lists 2 new codes');
+    const made = (await pa.locator('#invites .item.fresh code').first().textContent()).trim();
+    check(/^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(made), `codes look like ABCD-EFGH-JKMN (${made})`);
+    await noScroll(pa, 'admin panel at 390px');
+    // Someone joins with it, and the admin sees who.
+    const cj = await b.newContext(); const pj = await cj.newPage();
+    await pj.goto(BASE + '?invite=' + made); await pj.waitForSelector('#joinForm', { state: 'visible' });
+    const joiner = newName();
+    await pj.fill('#joinForm [name=username]', joiner); await pj.fill('#joinForm [name=password]', PASSWORD);
+    await pj.click('#joinForm button[type=submit]'); await ready(pj);
+    await pa.reload(); await pa.waitForSelector('#panel', { state: 'visible' });
+    check((await pa.locator('#invites .item', { hasText: made }).textContent()).includes('Joined: ' + joiner), 'the code shows who joined with it');
+    // Give packs to a player.
+    await pa.fill('#userFilter', player.p.user);
+    const row = pa.locator('#users .item', { hasText: player.p.user });
+    await row.locator('button', { hasText: 'Manage' }).click();
+    await row.locator('.manage input.num').fill('3'); await row.locator('.manage button', { hasText: 'Give' }).click();
+    await pa.waitForTimeout(500);
+    await player.p.reload(); await ready(player.p);
+    check(await packs(player.p) === 5, 'giving 3 packs shows up for the player');
+    // Turn the joiner off: they're signed out.
+    await pa.fill('#userFilter', joiner);
+    const jrow = pa.locator('#users .item', { hasText: joiner });
+    await jrow.locator('button', { hasText: 'Manage' }).click();
+    await jrow.locator('button', { hasText: 'Turn off' }).click(); await jrow.locator('button', { hasText: 'Tap to turn off' }).click();
+    await pa.waitForSelector('#users .badge.off');
+    await pj.reload(); await pj.waitForSelector('#signInForm', { state: 'visible' });
+    check(true, 'turning an account off signs it out');
+    check(errs.length === 0, 'no errors in the admin panel: ' + JSON.stringify(errs));
+    await cj.close(); await ca.close(); await player.c.close();
+  } else console.log('skip admin panel checks (set ADMIN_USER and ADMIN_PASSWORD)');
+
+  // 12. Layouts.
   for (const w of [320, 768, 1440]) {
     const { c, p } = await fresh(b, { width: w, height: w > 800 ? 900 : 760 });
     await noScroll(p, `home at ${w}px`);

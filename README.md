@@ -18,7 +18,7 @@ server/ (Rust: Axum + sqlx)  ──►  Postgres
 
 - **Packs are data.** `data/packs/cmp26.json` holds the 2026 Championship pack: its 515 teams with their rarity, the odds and the Mythic meter rules. `tools/build_packs.py` builds it from `data/cmp-2026.txt`. Adding a pack means adding a recipe there, not code.
 - **The server owns everything that matters.** It rolls packs, mints serial numbers (No. 1, No. 2, ... per card), runs the free-pack timer and the Mythic meter, and stores every card. The browser can't change any of it.
-- **Guest accounts.** The first visit creates an account and keeps it in a cookie (the database stores only a hash of it). Sign-in comes later and will attach to this account.
+- **Accounts by invite.** New players join with an invite code, then sign in with a username and password on any device. Passwords are stored as argon2 hashes and sessions as hashes of a cookie token; repeated wrong guesses get blocked for 15 minutes. One admin account makes invite codes and manages accounts at `/admin`.
 
 ## Run it locally
 
@@ -38,6 +38,13 @@ npm run dev                                # open http://localhost:5173 (proxies
 
 To try it the way it will run in production, `npm run build` in `web/`, then open http://127.0.0.1:3000: the server serves the built site itself.
 
+To sign in, make the admin account (it prints the password), then make invite codes for other test accounts at `/admin`:
+
+```sh
+cd server
+DATABASE_URL=postgres://frc:frc@localhost:5432/frcpacks cargo run -- create-admin
+```
+
 ### Server settings
 
 | Variable | Default | What it does |
@@ -46,7 +53,7 @@ To try it the way it will run in production, `npm run build` in `web/`, then ope
 | `BIND` | `127.0.0.1:3000` | Address to listen on |
 | `DATA_DIR` | `../data` | Where `packs/` and `photos/` are |
 | `WEB_DIR` | `../web/dist` | The built site; skipped if it isn't there |
-| `DEV_TOOLS` | off | Testing helpers in Settings: demo luck, +1 pack, skip timer, reset. **Never turn on in production.** |
+| `DEV_TOOLS` | off | Testing helpers in Settings (demo luck, +1 pack, skip timer, reset) and free invite codes for the browser test. **Never turn on in production.** |
 | `COOKIE_SECURE` | off | Mark the session cookie HTTPS-only. Turn on when hosted over HTTPS. |
 
 ## Host it
@@ -58,16 +65,17 @@ To try it the way it will run in production, `npm run build` in `web/`, then ope
 ```sh
 cd server && DATABASE_URL=postgres://frc:frc@localhost:5432/frcpacks cargo test
 ```
-Odds over 200,000 simulated packs, the pity guarantees, and API tests against a real database (claims, packs in hand, opening, serial numbers, division sets, two tabs opening at once, resuming a pack mid-reveal). The API tests are skipped without `DATABASE_URL`.
+Odds over 200,000 simulated packs, the pity guarantees, and API tests against a real database (claims, packs in hand, opening, serial numbers, division sets, two tabs opening at once, resuming a pack mid-reveal, invite codes, signing in on two devices, password guessing, the admin panel). The API tests are skipped without `DATABASE_URL`.
 
 ```sh
 cd web && npx playwright install chromium   # once
 npm run build                               # then start the server with DEV_TOOLS=1 (it serves web/dist)
-npm test                                    # a browser bot plays packs against the server
+npm test                                    # a browser bot signs up and plays packs against the server
 ```
+Set `ADMIN_USER` and `ADMIN_PASSWORD` to the admin account to check the admin panel too.
 
 ## Not done yet
 
-- Sign-in (accounts are guest-only and live in one browser's cookie).
-- Rate limiting on account creation and pack opening.
+- Signing in with Google (needs a Google Cloud OAuth client) or the 7028 portal.
+- Rate limiting on pack opening (sign-in and invite codes are limited already).
 - Trading, crafting with parts, and more packs.

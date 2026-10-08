@@ -1,5 +1,7 @@
 //! FRC Packs server: owns accounts, packs, rolls and collections. The browser only shows what the server decided.
 
+pub mod accounts;
+pub mod admin;
 pub mod api;
 pub mod auth;
 pub mod error;
@@ -33,20 +35,29 @@ pub struct AppState {
     pub catalog: packs::Catalog,
     pub dev_tools: bool,
     pub cookie_secure: bool,
+    pub limiter: accounts::Limiter,
 }
 
 pub type Shared = Arc<AppState>;
 
 pub fn app(db: PgPool, cfg: Config) -> anyhow::Result<Router> {
     let catalog = packs::Catalog::load(&cfg.data_dir.join("packs"))?;
-    let state = Arc::new(AppState { db, catalog, dev_tools: cfg.dev_tools, cookie_secure: cfg.cookie_secure });
+    let state = Arc::new(AppState {
+        db,
+        catalog,
+        dev_tools: cfg.dev_tools,
+        cookie_secure: cfg.cookie_secure,
+        limiter: accounts::Limiter::default(),
+    });
     let mut router = Router::new()
+        .nest("/api/admin", admin::routes())
         .nest("/api", api::routes())
         .nest_service("/photos", ServeDir::new(cfg.data_dir.join("photos")))
         .nest_service("/packs", ServeDir::new(cfg.data_dir.join("packs")));
     if let Some(web) = cfg.web_dir {
         // Built JS/CSS: a missing file is a 404, never the page (which would then be cached as that file).
         router = router
+            .route_service("/admin", ServeFile::new(web.join("admin.html")))
             .nest_service("/assets", ServeDir::new(web.join("assets")))
             .fallback_service(ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html"))));
     }

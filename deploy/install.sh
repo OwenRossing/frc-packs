@@ -9,6 +9,7 @@
 #   - Postgres, with a database "frcpacks" that only the "frcpacks" system user can reach (no password to keep)
 #   - the server and site in /opt/frc-packs, run by systemd as "frc-packs" on 127.0.0.1:3000 (this machine only)
 #   - a nightly database backup to /var/backups/frc-packs, kept for two weeks
+#   - the admin account, the first time (its password is printed at the end), and the `frc-packs` admin command
 # Putting it on your domain is a separate step with Cloudflare Tunnel: see deploy/README.md.
 set -euo pipefail
 
@@ -81,6 +82,7 @@ step "Installing to $prefix"
 sudo install -d -m 755 "$prefix" "$prefix/bin" "$prefix/data" "$prefix/web"
 sudo install -d -m 700 -o "$svc_user" -g "$svc_user" /var/backups/frc-packs
 sudo install -m 755 "$repo/deploy/backup.sh" "$prefix/bin/frc-packs-backup"
+sudo install -m 755 "$repo/deploy/frc-packs" /usr/local/bin/frc-packs
 sudo install -m 644 "$repo"/deploy/frc-packs{,-backup}.service "$repo/deploy/frc-packs-backup.timer" /etc/systemd/system/
 sudo systemctl daemon-reload
 if systemctl is-active --quiet frc-packs; then
@@ -104,6 +106,8 @@ for _ in $(seq 1 30); do
     printf '\n\033[1mFRC Packs is running at http://%s\033[0m (reachable from this machine only).\n' "$bind"
     echo "Next: point a Cloudflare Tunnel at http://$bind. See deploy/README.md."
     echo "Logs: journalctl -u frc-packs -f"
+    echo
+    sudo frc-packs create-admin
     exit 0
   fi
   sleep 1
