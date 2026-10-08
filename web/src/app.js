@@ -103,7 +103,8 @@ export function start(RECIPE) {
     var g = a.createGain(); g.gain.value = v; s.connect(bp); bp.connect(g); g.connect(a.destination); s.start();
   }
   function chord(freqs, step, type, v) { freqs.forEach(function (f, i) { blip(f, .5, type, v, i * step); }); }
-  function buzz(ms) { try { if (!S.muted && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+  /* Chrome refuses (and logs an error) if the page vibrates before the first tap, e.g. a wheel tick after a reload. */
+  function buzz(ms) { try { if (!S.muted && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(ms); } catch (e) {} }
   var sfx = {
     tick: function () { blip(900, .03, "square", .02); },
     pick: function () { blip(520, .08, "triangle", .08); blip(780, .1, "triangle", .06, .06); },
@@ -864,9 +865,9 @@ export function start(RECIPE) {
       row.appendChild(cp);
     }
     modalIn.appendChild(row);
-    lastFocus = document.activeElement; modal.hidden = false; close.focus();
+    lastFocus = document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
   }
-  function closeModal() { modal.hidden = true; modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;

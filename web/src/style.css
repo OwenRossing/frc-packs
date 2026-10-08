@@ -11,13 +11,18 @@
   --panel: #0a222b;
   --display: "Lilita One", "Arial Rounded MT Bold", system-ui, sans-serif;
   --body: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
-  --cw: clamp(170px, min(74vw, 290px, calc((100svh - 322px) / 1.4)), 290px);
+  /* The card in the stack is as big as the screen allows after the header, status bar, hint and buttons (about 380px), so short phones don't have to scroll. */
+  --cw: clamp(170px, min(74vw, 290px, calc((100svh - 380px) / 1.4)), 290px);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; overflow-x: hidden; }
 button { font: inherit; color: inherit; }
+/* Phones flash a blue box on whatever you tap and offer to select text or save images on a long press; the packs and cards are things you play with, not text. */
+html { -webkit-tap-highlight-color: transparent; }
+.ptype, .ringwrap, .inspect, .stack, .slot, .collection, .summary, .grid { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.slot img, .pk svg { -webkit-user-drag: none; pointer-events: none; }
 .bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; background: radial-gradient(120% 90% at 50% 0%, var(--bg-2), var(--bg) 70%); }
 /* Soft blobs are radial gradients, not blurred circles: a moving blur(60px) layer this big costs the GPU every frame, a gradient is drawn once and slid. */
 .bg i { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; background: radial-gradient(closest-side, var(--c) 45%, transparent); opacity: .35; animation: drift 26s ease-in-out infinite alternate; will-change: transform; }
@@ -60,7 +65,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .status .timer b { color: var(--foam); }
 .claim { position: relative; background: var(--tide); color: #02211d; border: 0; border-radius: 10px; padding: 9px 16px; font-family: var(--display); font-size: 18px; cursor: pointer; box-shadow: 0 4px 0 #138a80; }
 /* The pulse is a halo behind the button that grows and fades (transform and opacity only, so nothing repaints). */
-.claim::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: rgba(39,211,195,.5); animation: pulse 1.6s ease-out infinite; pointer-events: none; }
+.claim::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; box-shadow: 0 0 0 3px rgba(39,211,195,.6); animation: pulse 1.6s ease-out infinite; pointer-events: none; }
 .meter { flex-basis: 100%; display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); padding-right: 6px; }
 .meter .mbar { flex: 1; height: 6px; background: #14323b; border-radius: 6px; overflow: hidden; position: relative; }
 .meter .mbar i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #27d3c3, #3cffdc, #c9fff6); border-radius: 6px; transition: width .6s cubic-bezier(.2,1,.3,1); }
@@ -106,7 +111,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 @keyframes shock { 0% { transform: translateY(-50%) scale(.2); opacity: 1; } 100% { transform: translateY(-50%) scale(4.5); opacity: 0; } }
 @keyframes rays { 0% { transform: translateY(-50%) rotate(0) scale(.3); opacity: 0; } 25% { opacity: .55; } 100% { transform: translateY(-50%) rotate(40deg) scale(1); opacity: 0; } }
 .claim:active { transform: translateY(3px); box-shadow: 0 1px 0 #138a80; }
-@keyframes pulse { 0% { transform: none; opacity: 0; } 10% { opacity: 1; } 70%, 100% { transform: scale(1.14, 1.45); opacity: 0; } }
+@keyframes pulse { 0% { transform: none; opacity: 0; } 10% { opacity: 1; } 70%, 100% { transform: scale(1.1, 1.3); opacity: 0; } }
 
 .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding-block: 12px 4px; position: relative; z-index: 3; min-height: 0; }
 .stage.shake { animation: shake .5s cubic-bezier(.36,.07,.19,.97); }
@@ -360,7 +365,10 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .empty-binder { text-align: center; color: var(--ink-dim); padding: 36px 8px; line-height: 1.5; }
 .empty-binder b { display: block; font-family: var(--display); font-weight: inherit; font-size: 22px; color: var(--foam); margin-bottom: 6px; }
 .more { display: flex; justify-content: center; margin-top: 12px; }
-.modal { position: fixed; inset: 0; z-index: 80; background: rgba(2,8,12,.84); display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.modal { position: fixed; inset: 0; z-index: 80; background: rgba(2,8,12,.84); display: grid; place-items: center; padding: 16px; overflow-y: auto; overscroll-behavior: contain; }
+/* While a card is open the binder behind it stays put, and a finger on the card tilts it instead of scrolling. */
+body.modal-open { overflow: hidden; }
+.modal-in .slot { touch-action: none; }
 .modal-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 420px; width: 100%; --cw: clamp(200px, min(78vw, 320px, calc((100svh - 220px) / 1.4)), 320px); }
 .serials { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; font-size: 13px; color: var(--ink-dim); text-align: center; line-height: 1.6; font-variant-numeric: tabular-nums; }
 .serials b { color: var(--foam); }
@@ -368,7 +376,9 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .note summary { cursor: pointer; list-style: none; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 11px; padding: 6px; }
 .note summary::-webkit-details-marker { display: none; }
 .note p { margin: 4px 0 0; }
-body.playing .note { visibility: hidden; }
+/* While a pack is being opened the page fits the screen and doesn't scroll or bounce under your finger. */
+body.playing .note { display: none; }
+html:has(body.playing) { overscroll-behavior: none; }
 .note b { color: var(--ink); font-weight: 600; }
 @media (max-width: 460px) { .brand { font-size: 19px; } .seg button { padding: 7px 10px; font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) {
