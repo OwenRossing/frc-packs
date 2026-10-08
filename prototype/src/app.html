@@ -120,6 +120,23 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .pk-hero svg { position: relative; width: 104%; filter: drop-shadow(0 2cqw 2cqw rgba(0,0,0,.4)); }
 .pk-feat { font-weight: 700; font-size: 4.4cqw; letter-spacing: .14em; text-transform: uppercase; background: rgba(0,0,0,.35); color: var(--foam); padding: 1.4cqw 4cqw; border-radius: 99px; white-space: nowrap; }
 .pk-back .pk-body { top: 0; border-radius: 4cqw; }
+/* Foil pouch: puffy shading over the art, darker sides, a crimped seal along the bottom, and a sheen that moves with the light. */
+.pk-body::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: repeating-linear-gradient(90deg, rgba(255,255,255,.22) 0 1.2cqw, rgba(0,0,0,.18) 1.2cqw 2.4cqw) bottom / 100% 4.5% no-repeat,
+    radial-gradient(90% 55% at 50% 42%, rgba(255,255,255,.2), rgba(255,255,255,0) 70%),
+    linear-gradient(90deg, rgba(0,0,0,.42), rgba(0,0,0,0) 13%, rgba(0,0,0,0) 87%, rgba(0,0,0,.42)),
+    linear-gradient(180deg, rgba(255,255,255,.1), rgba(0,0,0,0) 20%, rgba(0,0,0,0) 85%, rgba(0,0,0,.3)); }
+.pk-top::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,.4), rgba(0,0,0,0) 13%, rgba(0,0,0,0) 87%, rgba(0,0,0,.4)); pointer-events: none; }
+/* In your hand the pack has thickness: front and back sit apart with edge layers between. */
+.rot .pk { --pth: 2.2cqw; }
+.rot .pk-front { transform: translateZ(var(--pth)); }
+.rot .pk-back { transform: rotateY(180deg) translateZ(var(--pth)); }
+.pk-edge { position: absolute; left: .4%; right: .4%; top: 12.5%; bottom: .3%; border-radius: 0 0 4cqw 4cqw; background: hsl(calc(var(--h) + 25) 60% 20%); transform: translateZ(calc(var(--pth) * var(--z) / 4)); }
+.inspect.cut .pk-edge { opacity: 0; transition: opacity .15s; }
+.ptype { perspective: 900px; }
+.ptype .pk { transform: rotateX(var(--prx, 0deg)) rotateY(var(--pry, 0deg)); }
+.ptype:hover .pk, .ptype:focus-visible .pk { transform: translateY(-6px) rotateX(var(--prx, 0deg)) rotateY(var(--pry, 0deg)); }
+.ptype.live .pk { transition: transform .1s ease-out; }
 .pk-back .pk-info { position: absolute; inset: 0; padding: 12cqw 9cqw; display: flex; flex-direction: column; gap: 3cqw; color: var(--foam); font-size: 4.8cqw; line-height: 1.35; }
 .pk-back .pk-info h3 { margin: 0; font-family: var(--display); font-weight: inherit; font-size: 9cqw; }
 .pk-back .odds { display: grid; grid-template-columns: 1fr auto; gap: 1cqw 4cqw; background: rgba(0,0,0,.3); border-radius: 3cqw; padding: 4cqw; font-variant-numeric: tabular-nums; }
@@ -156,7 +173,6 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .rot { position: relative; transform-style: preserve-3d; transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: transform .5s cubic-bezier(.2,1.3,.4,1); cursor: grab; }
 .rot.live { transition: none; cursor: grabbing; }
 .rot .pk { transform-style: preserve-3d; }
-.rot .pk-back { transform: rotateY(180deg); }
 .cutline { position: absolute; left: 0; top: 13%; height: 4px; width: 0; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,.2), #fff); box-shadow: 0 0 12px #fff, 0 0 24px var(--tide); pointer-events: none; z-index: 5; }
 .cuthint { position: absolute; left: 6%; right: 6%; top: 8%; height: 10%; border: 2px dashed rgba(255,255,255,.6); border-radius: 10px; pointer-events: none; z-index: 4; animation: blink 1.6s ease-in-out infinite; display: grid; place-items: center; transition: opacity .25s; }
 .cuthint span { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #fff; background: rgba(0,0,0,.45); padding: 3px 8px; border-radius: 99px; white-space: nowrap; }
@@ -196,6 +212,17 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 @keyframes popin { from { transform: scale(0) rotate(-20deg); } to { transform: scale(1) rotate(-6deg); } }
 
 .front { transform: rotateY(180deg); padding: calc(var(--cw) * .03); background: var(--frame); box-shadow: 0 18px 40px rgba(0,0,0,.55), 0 0 30px -6px var(--glow); color: #0a1a20; }
+/* Depth: the two faces sit a card's thickness apart with stacked edge layers between them, so tilts and flips show a solid edge.
+   A soft shadow on the table slides opposite the tilt, a rim light follows it, and the robot photo shifts a little behind its window. */
+.slot { --th: calc(var(--cw) * .011); }
+.back { transform: translateZ(var(--th)); }
+.front { transform: rotateY(180deg) translateZ(var(--th)); }
+.flip .edge { position: absolute; inset: 0; border-radius: calc(var(--cw) * .055); background: var(--frame, #cfd8dd); transform: translateZ(calc(var(--th) * var(--z) / 2.6)); }
+.flip .edge.e0 { background: #0c2f40; }
+.shade { position: absolute; left: 8%; right: 8%; top: 10%; bottom: -3%; border-radius: 12%; background: rgba(0,0,0,.5); filter: blur(calc(var(--cw) * .05)); transform: translate(calc(var(--sx, 0) * 1px), calc(var(--sy, 0) * 1px + var(--cw) * .03)); transition: transform .5s cubic-bezier(.2,1.2,.3,1); pointer-events: none; }
+.slot.live .shade { transition: transform .12s ease-out; }
+.ghost .shade, .stack .slot:not(.top) .shade { opacity: 0; }
+.front::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 4; mix-blend-mode: soft-light; background: linear-gradient(calc(125deg + var(--ry, 0deg) * 4), rgba(255,255,255,.55), rgba(255,255,255,0) 32%, rgba(0,0,0,0) 68%, rgba(0,0,0,.3)); }
 .inner { position: relative; height: 100%; border-radius: calc(var(--cw) * .035); background: var(--paper); display: flex; flex-direction: column; padding: calc(var(--cw) * .035) calc(var(--cw) * .04); gap: calc(var(--cw) * .02); overflow: hidden; }
 .hdr { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; position: relative; z-index: 2; }
 .nm { font-family: var(--display); font-size: calc(var(--cw) * .1 * var(--nl, 1)); line-height: 1.1; color: var(--ink-card); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -203,7 +230,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .hp small { font-family: var(--body); font-weight: 700; font-size: calc(var(--cw) * .036); letter-spacing: .06em; margin-right: .25em; color: var(--ink-card); opacity: .75; }
 .art { position: relative; flex: 0 0 auto; height: 47%; border-radius: calc(var(--cw) * .02); overflow: hidden; background: var(--art); box-shadow: inset 0 0 0 calc(var(--cw) * .012) var(--art-edge, #c9a33a), 0 2px 0 rgba(0,0,0,.15); }
 .art svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.art .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; }
+.art .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; transform: translate(calc((var(--mx, 50) - 50) * -.07%), calc((var(--my, 50) - 50) * -.07%)) scale(1.08); transition: transform .12s ease-out; }
 .inner.full .art .ph { inset: 17% 5% auto; width: 90%; height: 41%; border-radius: calc(var(--cw) * .03); box-shadow: 0 0 0 calc(var(--cw) * .012) var(--gem), 0 0 calc(var(--cw) * .08) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
 .sub-l { display: flex; justify-content: space-between; gap: 6px; font-size: calc(var(--cw) * .033); font-weight: 700; letter-spacing: .04em; color: var(--ink-card); opacity: .8; position: relative; z-index: 2; white-space: nowrap; overflow: hidden; }
 .sub-l span:first-child { overflow: hidden; text-overflow: ellipsis; }
@@ -691,13 +718,15 @@ body.playing .note { visibility: hidden; }
     slot.addEventListener("pointermove", function (e) {
       if (slot.classList.contains("drag")) return;
       var r = slot.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
-      tilt.classList.remove("rest");
+      tilt.classList.remove("rest"); slot.classList.add("live");
       tilt.style.setProperty("--ry", ((px - .5) * 26) + "deg"); tilt.style.setProperty("--rx", ((.5 - py) * 22) + "deg");
+      slot.style.setProperty("--sx", ((.5 - px) * r.width * .08).toFixed(1)); slot.style.setProperty("--sy", ((.5 - py) * r.height * .06).toFixed(1));
       inner.style.setProperty("--mx", (px * 100).toFixed(1)); inner.style.setProperty("--my", (py * 100).toFixed(1));
     });
-    function leave() { tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
+    function leave() { slot.classList.remove("live"); slot.style.setProperty("--sx", 0); slot.style.setProperty("--sy", 0); tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
     slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave);
   }
+  var EDGES = [-2, -1, 1, 2].map(function (z) { return '<i class="edge" style="--z:' + z + '"></i>'; }).join("") + '<i class="edge e0" style="--z:0"></i>';
   /* c = { num, tier, serial, isNew, copy } */
   function cardEl(c, opts) {
     opts = opts || {}; var t = BY_NUM[c.num], T = TIERS[c.tier], full = c.tier === "legendary" || c.tier === "mythic";
@@ -709,7 +738,7 @@ body.playing .note { visibility: hidden; }
     slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
     var art = '<div class="art">' + artSVG(t.num, c.tier) + '</div>';
     slot.innerHTML =
-      '<div class="float"><div class="tilt rest"><div class="flip card" data-tier="' + c.tier + '">' +
+      '<div class="shade"></div><div class="float"><div class="tilt rest"><div class="flip card" data-tier="' + c.tier + '">' + EDGES +
       '<div class="face back">' + BACK_SVG + '</div>' +
       '<div class="face front"><div class="inner' + (full ? " full" : "") + '" style="--nl:' + nameScale(t.name) + '">' +
       (full ? art : "") +
@@ -749,7 +778,8 @@ body.playing .note { visibility: hidden; }
       '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better (Legendary 7%).</div>' +
       '<div class="odds"><span>Common</span><b>70.5%</b><span>Uncommon</span><b>22%</b><span>Rare</span><b>7%</b><span>Legendary</span><b>0.5%</b><span>Mythic</span><b>' + (S.demo ? "1 in 5*" : "1 in 400") + '</b></div>' +
       '<small>Per card in slots 1 to 4, Mythic per pack. The Mythic meter guarantees one by pack ' + HARD + ', and Legendary or better comes at least every ' + LEG_EVERY + ' packs.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
-    return '<div class="pk" style="--h:' + PACK_HUE + '">' + front + b + '</div>';
+    var edges = !back ? "" : [-3, -2, -1, 0, 1, 2, 3].map(function (z) { return '<i class="pk-edge" style="--z:' + z + '"></i>'; }).join("");
+    return '<div class="pk" style="--h:' + PACK_HUE + '">' + edges + front + b + '</div>';
   }
 
   /* ---------- status bar, timer, claim ---------- */
@@ -820,6 +850,12 @@ body.playing .note { visibility: hidden; }
       b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
       paintTile(b, pk);
       b.addEventListener("click", function () { openRing(b); });
+      b.addEventListener("pointermove", function (e) {
+        var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+        b.classList.add("live"); b.style.setProperty("--pry", ((px - .5) * 24).toFixed(1) + "deg"); b.style.setProperty("--prx", ((.5 - py) * 18).toFixed(1) + "deg");
+        b.style.setProperty("--sheen", (160 - px * 160).toFixed(1) + "%");
+      });
+      b.addEventListener("pointerleave", function () { b.classList.remove("live"); b.style.setProperty("--pry", "0deg"); b.style.setProperty("--prx", "0deg"); b.style.removeProperty("--sheen"); });
       collectionEl.appendChild(b);
     });
     paintSelectHud(); paintStatus();
@@ -836,6 +872,7 @@ body.playing .note { visibility: hidden; }
     var front = ((Math.round(-a / 36) % SHELF_N) + SHELF_N) % SHELF_N;
     Array.prototype.forEach.call(ringEl.children, function (el, i) {
       var th = (i * 36 + a) * Math.PI / 180; el.style.setProperty("--d", ((1 - Math.cos(th)) / 2).toFixed(3));
+      el.style.setProperty("--sheen", (100 + Math.sin(th) * 110).toFixed(1) + "%");
       el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front));
     });
     if (front !== ringFront) { if (ringFront !== -1) { sfx.tick(); buzz(4); } ringFront = front; }
@@ -944,6 +981,7 @@ body.playing .note { visibility: hidden; }
   function setRot(live) {
     var r = $("#rot"); if (!r) return;
     r.classList.toggle("live", !!live); r.style.setProperty("--ry", rotY + "deg"); r.style.setProperty("--rx", rotX + "deg");
+    r.style.setProperty("--sheen", (100 - Math.sin(rotY * Math.PI / 180) * 90).toFixed(1) + "%");
     var away = !facingFront(); inspectEl.classList.toggle("away", away);
     if (!live && state === "inspect") setHud(away ? "Pack odds" : SWIPE + " across the top to open", away ? "Turn it back over to open it" : "Drag the pack to turn it over");
   }
