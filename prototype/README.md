@@ -16,7 +16,7 @@ What it does:
 What it is not:
 
 - Not cheat-proof. Rolls, timers and serials run in the browser, so the real build needs a server (see the plan doc).
-- Data came from the Statbotics API through a summarizing fetch, so small transcription errors are possible. `data/cmp-2026.txt` is the Champs roster (division, Champs EPA and record); `data/teams-2026-sample.txt` holds season ranks for the top 613 teams and is used to find the top 50 and team locations.
+- Data came from the Statbotics API through a summarizing fetch, so small transcription errors are possible. `../data/cmp-2026.txt` is the Champs roster (division, Champs EPA and record); `../data/teams-2026-sample.txt` holds season ranks for the top 613 teams and is used to find the top 50 and team locations.
 - Robot photos come from The Blue Alliance (504 of 515 teams), embedded as 240x180 WebP thumbnails so the page stays self-contained (about 5 MB). Each team gets its newest season's photo, preferring TBA's "preferred" picks; 429 are from 2026. The 11 teams with no photo on TBA keep a drawn robot. Legendary and Mythic cards use a full-art holo layout with the photo in a framed window.
 - Mythic meter: real Mythic odds are 1 in 400 packs. The meter under the pack counter counts packs since your last Mythic; odds climb after 150 and a Mythic is guaranteed at 200. Legendary or better is guaranteed at least every 20 packs, and lands in about 1 pack in 10 overall.
 - Opening: a pack's contents are fixed when you pick it up (putting it back doesn't reroll it). As you swipe the top, the pack glows brighter in the color of its best card, then the cards slide straight out of the pack with no wait.
@@ -27,9 +27,9 @@ What it is not:
 ## Files
 
 - `src/app.html`: the app (HTML, CSS and JS in one file, with a data placeholder)
-- `data/cmp-2026.txt`: the pack's teams, one `team|name|champs EPA|W-L|division|season rank|location` line per team
-- `data/teams-2026-sample.txt`: 2026 season data, one `rank|team|name|epa|W-L|place` line per team
-- `data/photos/<team>.webp` and `data/photos.txt`: robot thumbnails and where each came from (`team|season|source image`)
+- `../data/cmp-2026.txt`: the pack's teams, one `team|name|champs EPA|W-L|division|season rank|location` line per team
+- `../data/teams-2026-sample.txt`: 2026 season data, one `rank|team|name|epa|W-L|place` line per team
+- `../data/photos/<team>.webp` and `../data/photos.txt`: robot thumbnails and where each came from (`team|season|source image`)
 - `fetch_photos.py`: downloads the photos (`TBA_KEY=... python3 fetch_photos.py`; skips teams it already has unless `--refresh`)
 - `build.py`: inlines the data and photos into `src/app.html` and writes `index.html`
 - `test/play.js`: bot that plays packs through the UI, simulates 200,000 packs for odds, and checks layouts

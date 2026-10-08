@@ -1,0 +1,16 @@
+{
+  "name": "frc-packs-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "node test/e2e.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3"
+  }
+}

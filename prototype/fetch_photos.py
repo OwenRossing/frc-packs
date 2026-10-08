@@ -2,7 +2,7 @@
 """Download one robot photo per Champs team from The Blue Alliance and save a small WebP thumbnail.
 
 Run: TBA_KEY=... python3 fetch_photos.py
-Writes data/photos/<team>.webp and data/photos.txt (team|year|source url). Teams already in photos.txt are skipped
+Writes ../data/photos/<team>.webp and ../data/photos.txt (team|year|source url). Teams already in photos.txt are skipped
 unless --refresh is passed. Picks the newest season with a photo, preferring TBA's "preferred" imgur photos.
 """
 import concurrent.futures, io, json, os, pathlib, sys, urllib.request
@@ -12,8 +12,8 @@ root = pathlib.Path(__file__).parent
 KEY = os.environ.get("TBA_KEY") or sys.exit("set TBA_KEY")
 YEARS = range(2026, 2015, -1)
 W, H, Q = 240, 180, 58  # 4:3 thumbnail; cards crop it with object-fit
-out_dir = root / "data" / "photos"; out_dir.mkdir(parents=True, exist_ok=True)
-index_path = root / "data" / "photos.txt"
+out_dir = root.parent / "data" / "photos"; out_dir.mkdir(parents=True, exist_ok=True)
+index_path = root.parent / "data" / "photos.txt"
 
 def get(url, headers=None, timeout=30):
     req = urllib.request.Request(url, headers={"User-Agent": "frc-packs-prototype", **(headers or {})})
@@ -49,7 +49,7 @@ def fetch(num):
                 continue
     return num, None, "no photo"
 
-teams = [int(l.split("|")[0]) for l in (root / "data" / "cmp-2026.txt").read_text().splitlines() if l and l[0].isdigit()]
+teams = [int(l.split("|")[0]) for l in (root.parent / "data" / "cmp-2026.txt").read_text().splitlines() if l and l[0].isdigit()]
 done = {}
 if index_path.exists() and "--refresh" not in sys.argv:
     for l in index_path.read_text().splitlines():
