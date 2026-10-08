@@ -58,10 +58,9 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
   await p.click('#claim', { force: true }).catch(() => {});
   check(await p.locator('#packCount').textContent() === '3', 'double claim does nothing');
 
-  // pick your team on first visit; the first pack then includes it
-  check(await p.locator('#teamPick').isVisible(), 'asks for your team on first visit');
-  await p.fill('#teamInput', '254'); await p.click('#teamForm button[type=submit]'); await p.waitForTimeout(150);
-  check((await p.evaluate(() => window.__frc.S().team)) === 254 && !(await p.locator('#teamPick').isVisible()), 'saving a team hides the question');
+  // picking your team is off for now (anyone could claim 254 and get a guaranteed top card)
+  check(!(await p.locator('#teamPick').isVisible()) && !(await p.locator('#changeTeam').isVisible()), 'team picking is off');
+  await p.evaluate(() => { const s = window.__frc.S(); s.team = 254; s.teamAsked = true; s.next = null; localStorage.setItem('frcpacks.cmp26', JSON.stringify(s)); }); await p.reload(); await p.waitForTimeout(300);
 
   // 3. play three packs through the UI (button, swipe-cut + swipe cards, button), demo luck on
   check((await p.locator('.ptype').count()) === 1 && /×3/.test(await p.locator('.ptype .cnt').textContent()), 'home shows your pack collection with a count');
@@ -84,7 +83,7 @@ const check = (ok, msg) => { if (!ok) { fails.push(msg); console.log('FAIL', msg
     await p.click('#backBtn'); await waitState(p, 'select'); }
   await openOne(p); await p.waitForTimeout(700); await p.screenshot({ path: out + '/02-pack1-done.png' });
   check((await p.locator('#summary .slot').count()) === 5, 'summary shows all 5 cards');
-  check((await p.locator('#summary .slot.mine').count()) === 1, 'first pack includes your team with the gold border');
+  check((await p.locator('#summary .slot.mine').count()) === 0, 'an old saved team gets no gold border or first-pack slot');
   check(/Legendary|Mythic/.test(await p.locator('#summary .slot').last().getAttribute('aria-label')), 'first pack ends in Legendary or better');
   check((await p.evaluate(() => window.__frc.S().pity.m)) <= 1, 'Mythic meter counts the pack');
   check(await p.locator('#packCount').textContent() === '2', 'opening a pack uses one');

@@ -1047,6 +1047,10 @@ body.playing .note { visibility: hidden; }
   /* Mythic meter: 1 in 400 per pack, ramping up after pack 150 without one, guaranteed at pack 200.
      Legendary or better is guaranteed if 19 packs in a row had none. That works out to about 1 pack in 10. */
   var MYTHIC_BASE = 1 / 400, SOFT = 150, HARD = 200, LEG_EVERY = 20;
+  /* Picking your team is off for now: anyone could claim to be 254 and get a guaranteed top card in their first pack.
+     It can come back once a team is verified through an account. The code stays so turning this on restores it. */
+  var TEAM_PICK = false;
+  function myTeam() { return TEAM_PICK ? S.team : 0; }
   function mythicChance(demo, n) { var p = demo ? .2 : MYTHIC_BASE; if (n > SOFT) p = Math.max(p, Math.min(1, (n - SOFT) / (HARD - SOFT))); return p; }
   /* o = { pity: { m, l } packs since the last Mythic and Legendary+, first: the scripted first pack, team: your team, slipped in } */
   function rollPack(demo, rng, o) {
@@ -1275,7 +1279,7 @@ body.playing .note { visibility: hidden; }
     var slot = document.createElement("div");
     slot.className = "slot" + (opts.faceUp ? " flipped" : "") + (opts.button ? " btn" : "") + (opts.alive ? " alive" : "");
     slot.style.setProperty("--tc", T.color);
-    if (S.team && c.num === S.team) slot.classList.add("mine");
+    if (myTeam() && c.num === myTeam()) slot.classList.add("mine");
     if (opts.button) { slot.setAttribute("role", "button"); slot.tabIndex = 0; }
     slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
     var art = '<div class="art">' + artSVG(t.num, c.tier) + '</div>';
@@ -1510,7 +1514,7 @@ body.playing .note { visibility: hidden; }
   var promoted = false, nextBest = "common";
   function bestTier(cards) { var b = "common"; cards.forEach(function (c) { if (ORDER.indexOf(c.tier) < ORDER.indexOf(b)) b = c.tier; }); return b; }
   function ensureNext() {
-    if (!validCards(S.next)) { var first = S.opened === 0; S.next = rollPack(S.demo, null, { pity: S.pity, first: first, team: first ? S.team : 0 }); save(); }
+    if (!validCards(S.next)) { var first = S.opened === 0; S.next = rollPack(S.demo, null, { pity: S.pity, first: first, team: first ? myTeam() : 0 }); save(); }
     return S.next;
   }
   /* Like opening a loot pack: the light leaking out of the tear gets brighter the further you swipe, in the best card's color. A Mythic starts gold and flips to rainbow past halfway. */
@@ -1642,7 +1646,7 @@ body.playing .note { visibility: hidden; }
     else { showRibbon(el); setHud(c.isNew ? "New card" : TIERS[c.tier].label, NEXT); if (isMine(c)) celebrateMine(el); }
   }
   function promoteCard(el) { el._promo = false; el.style.setProperty("--tc", TIERS.mythic.color); sfx.promote(); var r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, null, 7, true); }
-  function isMine(c) { return S.team && c.num === S.team; }
+  function isMine(c) { return myTeam() && c.num === myTeam(); }
   function celebrateMine(el) {
     if (el._cheered) return; el._cheered = true; sfx.mine();
     var r = el.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 50, "#ffd34d", 8);
@@ -1782,7 +1786,7 @@ body.playing .note { visibility: hidden; }
   function ownedList() {
     var out = [];
     Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length) out.push(t); });
-    out.sort(function (a, b) { return (b.num === S.team) - (a.num === S.team) || ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    out.sort(function (a, b) { return (b.num === myTeam()) - (a.num === myTeam()) || ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
     return out;
   }
   function paintBinder() {
@@ -1906,7 +1910,8 @@ body.playing .note { visibility: hidden; }
   var teamPick = $("#teamPick"), teamInput = $("#teamInput"), teamMsg = $("#teamMsg");
   function paintTeamPick(inBinder) {
     if (inBinder === undefined) inBinder = !vBinder.hidden;
-    teamPick.hidden = S.teamAsked || inBinder;
+    teamPick.hidden = !TEAM_PICK || S.teamAsked || inBinder;
+    $("#changeTeam").closest(".line").hidden = !TEAM_PICK;
     var t = S.team && BY_NUM[S.team];
     $("#myTeamTxt").textContent = !S.team ? "Not picked yet." : "Team " + S.team + (t ? " · " + t.name : " · not in the 2026 Championship pack");
   }
