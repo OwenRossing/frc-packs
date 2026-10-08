@@ -77,11 +77,21 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .teampick .msg { font-size: 13px; color: #ffd27a; }
 .slot.mine .front { box-shadow: 0 0 0 3px #ffd34d, 0 14px 30px rgba(0,0,0,.5); }
 .slot.mine::after { content: "MY TEAM"; position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%); background: #ffd34d; color: #2a1c00; font-size: 10px; font-weight: 700; letter-spacing: .1em; padding: 2px 8px; border-radius: 6px; z-index: 6; white-space: nowrap; }
-.tell { position: absolute; left: -20%; right: -20%; top: -22%; bottom: -22%; border-radius: 50%; background: radial-gradient(closest-side, var(--tell, transparent), transparent); opacity: 0; transition: opacity .25s, background .3s; pointer-events: none; z-index: -1; }
-.inspect.told .tell { opacity: .9; }
+.tell { position: absolute; left: -20%; right: -20%; top: -22%; bottom: -22%; border-radius: 50%; background: radial-gradient(closest-side at 50% 35%, var(--tell, transparent), transparent); opacity: 0; transition: opacity .25s, background .3s; pointer-events: none; z-index: -1; }
+.inspect .tell { opacity: calc(var(--tp, 0) * 1); }
+.inspect .lift { filter: drop-shadow(0 0 calc(var(--tp, 0) * 26px) var(--tell, transparent)); }
+.inspect.told .tell { opacity: .95; }
+.inspect .lift { position: relative; z-index: 1; }
+.peek { position: absolute; left: 10%; right: 10%; top: 18%; aspect-ratio: 5 / 7; z-index: 0; pointer-events: none; transition: transform .38s cubic-bezier(.2,.9,.3,1.1); }
+.peek i { position: absolute; inset: 0; border-radius: 6%; background: radial-gradient(circle at 50% 45%, #1b6f7a, #0a2f45 60%, #061c2a); border: 3px solid #e9f6f4; box-shadow: 0 0 calc(var(--tp, 0) * 34px) var(--tell, transparent); }
+.peek i:nth-child(2) { transform: translate(4px, 4px) rotate(1.5deg); }
+.peek i:nth-child(1) { transform: translate(8px, 8px) rotate(3deg); }
+.inspect.out .peek { transform: translateY(-58%); }
+.stack.fresh { animation: settle .22s ease-out both; }
+@keyframes settle { from { transform: translateY(-4%) scale(.97); } to { transform: none; } }
 .inspect.rainbow .tell { background: radial-gradient(closest-side, #ff3d9a, transparent); opacity: .85; animation: hue 1.6s linear infinite; }
 @keyframes hue { to { filter: hue-rotate(360deg); } }
-.inspect.told .cutline { background: var(--tell); box-shadow: 0 0 14px var(--tell), 0 0 30px var(--tell); }
+.inspect .cutline { background: var(--tell); box-shadow: 0 0 14px var(--tell), 0 0 30px var(--tell); }
 .claim:active { transform: translateY(3px); box-shadow: 0 1px 0 #138a80; }
 @keyframes pulse { 0%,100% { box-shadow: 0 4px 0 #138a80, 0 0 0 0 rgba(39,211,195,.5); } 50% { box-shadow: 0 4px 0 #138a80, 0 0 0 9px rgba(39,211,195,0); } }
 
@@ -298,7 +308,8 @@ body.playing .note { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .meter.hot .mbar i, .inspect.rainbow .tell, .bg i, .rays, .alive .float, .tease .back, .tease .tilt, .card[data-tier="mythic"] .front, .claim, .cuthint, .cuthint::before { animation: none !important; }
   .flip { transition-duration: .01s; }
-  .inspect .lift, .stack.rise, .summary .slot, .ribbon { animation: none; }
+  .peek { transition: none; }
+  .inspect .lift, .stack.rise, .stack.fresh, .summary .slot, .ribbon { animation: none; }
   .stage.shake, .stage.shake-big, .flash.go { animation: none; }
 }
 </style>
@@ -1000,7 +1011,7 @@ body.playing .note { visibility: hidden; }
 
   /* ---------- storage ---------- */
   var KEY = "frcpacks.cmp26", storageOk = true, S;
-  function fresh() { return { v: 1, packs: 2, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, muted: false, demo: true, unseen: {}, pity: { m: 0, l: 0 }, team: 0, teamAsked: false, sets: {} }; }
+  function fresh() { return { v: 1, packs: 2, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, muted: false, demo: true, unseen: {}, pity: { m: 0, l: 0 }, team: 0, teamAsked: false, sets: {}, next: null }; }
   function cleanObj(o) { return o && typeof o === "object" && !Array.isArray(o) ? o : {}; }
   function readSave() {
     try {
@@ -1014,6 +1025,7 @@ body.playing .note { visibility: hidden; }
           o.team = isFinite(o.team) && o.team > 0 && o.team < 100000 ? Math.floor(o.team) : 0;
           if (typeof o.teamAsked !== "boolean") o.teamAsked = true; // older saves skip the question
           o.sets = cleanObj(o.sets);
+          if (!validCards(o.next)) o.next = null;
           Object.keys(o.inv).forEach(function (k) { if (!Array.isArray(o.inv[k])) delete o.inv[k]; else o.inv[k] = o.inv[k].filter(function (x) { return /^\d{1,6}$/.test(x); }); });
           return o;
         }
@@ -1022,6 +1034,7 @@ body.playing .note { visibility: hidden; }
     return null;
   }
   function load() { return readSave() || fresh(); }
+  function validCards(c) { return Array.isArray(c) && c.length === 5 && c.every(function (x) { return x && BY_NUM[x.num] && TIERS[x.tier]; }); }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); storageOk = true; } catch (e) { storageOk = false; } $("#storageWarn").hidden = storageOk; }
   S = load();
   try { localStorage.setItem(KEY + ".probe", "1"); localStorage.removeItem(KEY + ".probe"); } catch (e) { storageOk = false; }
@@ -1324,10 +1337,24 @@ body.playing .note { visibility: hidden; }
     if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
     inspectEl.className = "inspect"; rotY = 0; rotX = 0;
-    inspectEl.innerHTML = '<div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div><div class="tell"></div>';
+    /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
+    var best = bestTier(ensureNext()); promoted = false; nextBest = best;
+    inspectEl.style.setProperty("--tell", TIERS[best === "mythic" ? "legendary" : best].color); inspectEl.style.setProperty("--tp", 0);
+    inspectEl.innerHTML = '<div class="tell"></div><div class="peek" aria-hidden="true"><i></i><i></i><i></i></div><div class="lift"><div class="rot" id="rot">' + packHTML(true) + '</div></div><div class="cuthint"><span>' + SWIPE + ' to open</span></div><div class="cutline" id="cutline"></div>';
     showOnly("inspect");
     setHud(SWIPE + " across the top to open", "Drag the pack to turn it over");
     try { $("#openBtn").focus({ preventScroll: true }); } catch (e) {}
+  }
+  var promoted = false, nextBest = "common";
+  function bestTier(cards) { var b = "common"; cards.forEach(function (c) { if (ORDER.indexOf(c.tier) < ORDER.indexOf(b)) b = c.tier; }); return b; }
+  function ensureNext() {
+    if (!validCards(S.next)) { var first = S.opened === 0; S.next = rollPack(S.demo, null, { pity: S.pity, first: first, team: first ? S.team : 0 }); save(); }
+    return S.next;
+  }
+  /* Like opening a loot pack: the light leaking out of the tear gets brighter the further you swipe, in the best card's color. A Mythic starts gold and flips to rainbow past halfway. */
+  function glow(t) {
+    inspectEl.style.setProperty("--tp", t.toFixed(3));
+    if (nextBest === "mythic" && t > .55 && !promoted) { promoted = true; inspectEl.classList.add("rainbow"); sfx.promote(); }
   }
   function facingFront() { var d = ((rotY % 360) + 360) % 360; return Math.min(d, 360 - d) < 35; }
   function setRot(live) {
@@ -1348,12 +1375,13 @@ body.playing .note { visibility: hidden; }
     if (g.cut) {
       var p = Math.max(0, Math.min(1, (e.clientX - g.left) / g.w)), from = Math.max(0, Math.min(1, (g.x - g.left) / g.w));
       var line = $("#cutline"); line.style.left = (Math.min(from, p) * 100) + "%"; line.style.width = (Math.abs(p - from) * 100) + "%";
+      glow(Math.min(1, Math.abs(p - from) / .6));
       if (Math.abs(p - from) > .6) { g = null; cut(); }
     } else { rotY = g.ry + dx * .7; rotX = Math.max(-18, Math.min(18, -dy * .15)); setRot(true); }
   });
   function endGesture() {
     if (!g) return; var was = g; g = null;
-    if (was.cut) { var line = $("#cutline"); if (line) line.style.width = "0"; if (!was.moved) say(SWIPE + " all the way across the top", 1600); return; }
+    if (was.cut) { var line = $("#cutline"); if (line) line.style.width = "0"; if (!promoted) glow(0); if (!was.moved) say(SWIPE + " all the way across the top", 1600); return; }
     rotY = Math.round(rotY / 180) * 180; rotX = 0; setRot(false);
     if (was.moved) sfx.whoosh();
   }
@@ -1370,8 +1398,7 @@ body.playing .note { visibility: hidden; }
   function commitRip() {
     var latest = readSave(); if (latest && !latest.pending) S = latest;
     if (S.packs < 1) return false;
-    var first = S.opened === 0;
-    var cards = rollPack(S.demo, null, { pity: S.pity, first: first, team: first ? S.team : 0 }).map(function (c) {
+    var cards = ensureNext().map(function (c) {
       var arr = S.inv[c.num] || (S.inv[c.num] = []);
       var serial = newSerial(arr), isNew = arr.length === 0; arr.push(serial);
       if (isNew) S.unseen[c.num] = 1;
@@ -1386,7 +1413,7 @@ body.playing .note { visibility: hidden; }
       if (S.sets[d] || done.indexOf(d) >= 0) return;
       if (DIV_TEAMS[d].every(function (t) { return S.inv[t.num] && S.inv[t.num].length; })) { S.sets[d] = 1; S.packs++; done.push(d); }
     });
-    S.packs--; S.opened++; S.pending = { cards: cards, revealed: 0, sets: done }; save();
+    S.packs--; S.opened++; S.next = null; S.pending = { cards: cards, revealed: 0, sets: done }; save();
     return true;
   }
   function cut() {
@@ -1395,13 +1422,12 @@ body.playing .note { visibility: hidden; }
     /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
     var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
     paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
-    inspectEl.style.setProperty("--tell", TIERS[promo ? "legendary" : best].color); inspectEl.classList.add("cut", "told");
-    var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, TIERS[promo ? "legendary" : best].color, 7);
-    if (promo) setTimeout(function () { if (state !== "cutting") return; inspectEl.classList.add("rainbow"); sfx.promote(); burst(r.left + r.width / 2, r.top + r.height * .3, 50, null, 8, true); }, RM ? 0 : 480);
+    nextBest = best; glow(1); inspectEl.classList.add("cut", "told", "out");
+    var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, promo ? null : TIERS[best].color, 7, promo);
     setHud("", ""); shelfPacks = [];
-    setTimeout(function () { buildStack(0); }, RM ? 100 : big ? 1150 : 750);
+    setTimeout(function () { buildStack(0, true); }, RM ? 60 : 380);
   }
-  function buildStack(from) {
+  function buildStack(from, fromPack) {
     deck = S.pending.cards; idx = from; stackEl.innerHTML = ""; summaryEl.innerHTML = "";
     for (var i = deck.length - 1; i >= from; i--) {
       var c = deck[i], hidden = c.tier !== "common" && c.tier !== "uncommon";
@@ -1412,7 +1438,7 @@ body.playing .note { visibility: hidden; }
       stackEl.appendChild(el);
     }
     showOnly("stack");
-    stackEl.classList.remove("rise"); void stackEl.offsetWidth; stackEl.classList.add("rise");
+    stackEl.classList.remove("rise", "fresh"); void stackEl.offsetWidth; stackEl.classList.add(fromPack ? "fresh" : "rise");
     state = "stack"; sfx.whoosh(); paintCounter(); armTop();
     try { stackEl.focus({ preventScroll: true }); } catch (e) {}
   }
@@ -1684,7 +1710,7 @@ body.playing .note { visibility: hidden; }
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck");
   function paintToggles() { muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); }
   muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
-  demoBtn.onclick = function () { S.demo = !S.demo; save(); paintToggles(); };
+  demoBtn.onclick = function () { S.demo = !S.demo; S.next = null; save(); paintToggles(); };
   $("#demoPack").onclick = function () { S.packs++; save(); paintStatus(); if (state === "select") paintSelectHud(); };
   $("#skipTimer").onclick = function () { S.nextClaimAt = Math.min(S.nextClaimAt - CLAIM_MS, Date.now()); save(); paintStatus(); if (state === "select") paintSelectHud(); };
   /* ---------- my team ---------- */
@@ -1698,7 +1724,7 @@ body.playing .note { visibility: hidden; }
   $("#teamForm").addEventListener("submit", function (e) {
     e.preventDefault(); var n = parseInt(teamInput.value, 10);
     if (!(n > 0 && n < 100000)) { teamMsg.hidden = false; teamMsg.textContent = "Enter your team number, like 254."; return; }
-    S.team = n; S.teamAsked = true; save(); teamMsg.hidden = true; paintTeamPick(); actx(); sfx.mine();
+    S.team = n; S.teamAsked = true; if (S.opened === 0) S.next = null; save(); teamMsg.hidden = true; paintTeamPick(); actx(); sfx.mine();
     var t = BY_NUM[n];
     say(t ? "Team " + n + ", " + t.name + ", is your team" + (S.opened === 0 ? ". It's in your first pack." : ".") : "Saved team " + n + ". It wasn't at Champs 2026, so it isn't in this pack.", 4200);
     if (state === "select") paintSelect(); if (!vBinder.hidden) paintBinder();
