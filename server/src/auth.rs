@@ -68,7 +68,7 @@ pub async fn session(c: &mut PgConnection, headers: &HeaderMap) -> sqlx::Result<
     let Some(token) = token_from(headers) else { return Ok(None) };
     let row: Option<(Uuid, Option<String>, bool, bool)> = sqlx::query_as(
         "select u.id, u.username, u.is_admin, u.disabled from sessions s join users u on u.id = s.user_id
-         where s.token_hash = $1",
+         where s.token_hash = $1 and s.created_at > now() - interval '400 days'",
     )
     .bind(hash(&token))
     .fetch_optional(c)

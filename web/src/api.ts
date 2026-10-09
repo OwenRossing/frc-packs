@@ -136,6 +136,8 @@ export interface AdminUser {
 export interface Scrapped {
   gained: number;
   scrapped: number;
+  /** Extra copies held back: in a pack still being revealed, or in an open trade offer. */
+  held: number;
   state: State;
   collection: Collection;
 }
@@ -266,6 +268,7 @@ export function explain(e: unknown): string {
     not_found: "That no longer exists. Reload the page.",
     not_enough_parts: "Not enough parts yet. Scrap some extra copies first.",
     no_extras: "No extra copies of that card to scrap.",
+    extras_held: "Those copies are in a pack you're still opening or in a trade offer. Finish the pack or cancel the offer first.",
     unknown_player: "There's no player with that username.",
     not_owned: "One of those cards isn't available to trade any more.",
     trade_stale: "One of the cards in that trade isn't there any more, so the trade was called off.",

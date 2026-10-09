@@ -413,9 +413,14 @@ async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> ApiResult<(HeaderMap, Json<StateOut>)> {
-    let name = format!("user:{}", req.username.trim().to_lowercase());
-    let visitor = format!("login:{}", auth::visitor(&headers));
-    if s.limiter.blocked(&name, USER_FAILS) || s.limiter.blocked(&visitor, VISITOR_FAILS) {
+    let who = auth::visitor(&headers);
+    let user_name = req.username.trim().to_lowercase();
+    // Per username from this visitor, so someone else guessing wrong can't lock you out; per username overall at a
+    // much higher cap, so guessing spread across many addresses still stops; and per visitor.
+    let name = format!("user:{user_name}:{who}");
+    let name_all = format!("user:{user_name}");
+    let visitor = format!("login:{who}");
+    if s.limiter.blocked(&name, USER_FAILS) || s.limiter.blocked(&name_all, USER_FAILS * 10) || s.limiter.blocked(&visitor, VISITOR_FAILS) {
         return Err(too_many());
     }
     let row: Option<(Uuid, Option<String>, bool)> =
@@ -429,6 +434,7 @@ async fn login(
     };
     let Some((id, _, disabled)) = row.filter(|_| ok) else {
         s.limiter.fail(&name);
+        s.limiter.fail(&name_all);
         s.limiter.fail(&visitor);
         return Err(err(StatusCode::UNAUTHORIZED, "bad_login"));
     };
@@ -437,6 +443,10 @@ async fn login(
     }
     s.limiter.clear(&name);
     let mut tx = s.db.begin().await?;
+    // Signing in again on this browser replaces its old session instead of leaving it behind.
+    if let Some(old) = auth::token_from(&headers) {
+        sqlx::query("delete from sessions where token_hash = $1").bind(auth::hash(&old)).execute(&mut *tx).await?;
+    }
     let token = accounts::new_session(&mut tx, id).await?;
     let state = load_state(&s, &mut tx, id).await?;
     tx.commit().await?;
@@ -794,6 +804,8 @@ struct ScrapOut {
     gained: i32,
     /// Copies scrapped.
     scrapped: i64,
+    /// Extra copies that matched but were held back: in a pack still being revealed, or in an open trade offer.
+    held: i64,
     state: StateOut,
     collection: CollectionOut,
 }
@@ -808,40 +820,55 @@ async fn scrap_copies(
     teams: Option<&[i32]>,
     tiers: &[Tier],
     limit: i64,
-) -> ApiResult<(i32, i64)> {
-    let tiers: Vec<&str> = tiers.iter().map(|t| t.as_str()).collect();
-    let gone: Vec<String> = sqlx::query_scalar(
-        "with ranked as (
-           select c.id, c.tier, row_number() over (partition by c.team order by c.id) as n,
-                  count(*) over (partition by c.team) as total
-           from cards c left join openings o on o.id = c.opening_id
-           where c.user_id = $1 and c.pack_id = $2 and c.tier = any($3)
-             and ($4::int[] is null or c.team = any($4))
-             and (o.id is null or o.revealed >= 5)
-             and not exists (select 1 from trades t where t.status = 'open' and (c.id = any(t.give) or c.id = any(t.want)))
-         ),
-         pick as (select id, tier from ranked where n > 1 and n > total - $5)
-         delete from cards where id in (select id from pick) returning tier",
+) -> ApiResult<(i32, i64, i64)> {
+    // Teams by their tier in the recipe (the stored tier on an old card could differ if the pack was re-tiered).
+    let teams: Vec<i32> = tiers
+        .iter()
+        .flat_map(|t| pack.pools.get(t).into_iter().flatten().copied())
+        .filter(|n| teams.is_none_or(|only| only.contains(n)))
+        .collect();
+    // Extra copies counting every card, so the player hears about any that were held back.
+    let extras: i64 = sqlx::query_scalar(
+        "select coalesce(sum(least(greatest(n - 1, 0), $4)), 0)::bigint from (
+           select count(*) as n from cards where user_id = $1 and pack_id = $2 and team = any($3) group by team) t",
     )
     .bind(user)
     .bind(pack.id())
-    .bind(&tiers)
-    .bind(teams)
+    .bind(&teams)
+    .bind(limit)
+    .fetch_one(&mut *c)
+    .await?;
+    let gone: Vec<i32> = sqlx::query_scalar(
+        "with ranked as (
+           select c.id, c.team, row_number() over (partition by c.team order by c.id) as n,
+                  count(*) over (partition by c.team) as total
+           from cards c left join openings o on o.id = c.opening_id
+           where c.user_id = $1 and c.pack_id = $2 and c.team = any($3)
+             and (o.id is null or o.revealed >= 5)
+             and not exists (select 1 from trades t where t.status = 'open' and (c.id = any(t.give) or c.id = any(t.want)))
+         ),
+         pick as (select id from ranked where n > 1 and n > total - $4)
+         delete from cards where id in (select id from pick) returning team",
+    )
+    .bind(user)
+    .bind(pack.id())
+    .bind(&teams)
     .bind(limit)
     .fetch_all(&mut *c)
     .await?;
-    let gained: i32 = gone.iter().filter_map(|t| Tier::parse(t)).map(Tier::scrap_parts).sum();
+    let gained: i32 = gone.iter().filter_map(|n| pack.team_tier.get(n)).map(|t| t.scrap_parts()).sum();
     if gained > 0 {
         sqlx::query("update users set parts = parts + $2 where id = $1").bind(user).bind(gained).execute(&mut *c).await?;
     }
-    Ok((gained, gone.len() as i64))
+    let scrapped = gone.len() as i64;
+    Ok((gained, scrapped, (extras - scrapped).max(0)))
 }
 
-async fn scrapped(s: &Shared, mut tx: sqlx::Transaction<'_, sqlx::Postgres>, user: Uuid, pack: &Pack, r: (i32, i64)) -> ApiResult<Json<ScrapOut>> {
+async fn scrapped(s: &Shared, mut tx: sqlx::Transaction<'_, sqlx::Postgres>, user: Uuid, pack: &Pack, r: (i32, i64, i64)) -> ApiResult<Json<ScrapOut>> {
     let state = load_state(s, &mut tx, user).await?;
     let collection = load_collection(&mut tx, user, pack).await?;
     tx.commit().await?;
-    Ok(Json(ScrapOut { gained: r.0, scrapped: r.1, state, collection }))
+    Ok(Json(ScrapOut { gained: r.0, scrapped: r.1, held: r.2, state, collection }))
 }
 
 /// Scraps extra copies of one team.
@@ -855,7 +882,7 @@ async fn scrap(State(s): State<Shared>, user: User, Json(req): Json<ScrapReq>) -
     sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
     let r = scrap_copies(&mut tx, user.id, pack, Some(&[req.num]), &[tier], i64::from(req.count)).await?;
     if r.1 == 0 {
-        return Err(err(StatusCode::CONFLICT, "no_extras"));
+        return Err(err(StatusCode::CONFLICT, if r.2 > 0 { "extras_held" } else { "no_extras" }));
     }
     scrapped(&s, tx, user.id, pack, r).await
 }

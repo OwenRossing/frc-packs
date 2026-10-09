@@ -278,6 +278,11 @@ async fn set_disabled(
     sqlx::query("update users set disabled = $2 where id = $1").bind(id).bind(req.disabled).execute(&mut *tx).await?;
     if req.disabled {
         sqlx::query("delete from sessions where user_id = $1").bind(id).execute(&mut *tx).await?;
+        // Their open trade offers, both ways, are called off.
+        sqlx::query("update trades set status = 'cancelled', decided_at = now() where status = 'open' and (from_user = $1 or to_user = $1)")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)

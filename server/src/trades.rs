@@ -123,6 +123,7 @@ async fn offer(State(s): State<Shared>, user: User, Json(req): Json<OfferReq>) -
         return Err(err(StatusCode::BAD_REQUEST, "bad_trade"));
     }
     let mut tx = s.db.begin().await?;
+    sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
     let to = player_id(&mut tx, &req.to).await?;
     if to == user.id {
         return Err(err(StatusCode::BAD_REQUEST, "not_yourself"));
@@ -267,6 +268,12 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
     let (from, to, pack_id, give, want) = open_trade(&mut tx, id).await?;
     if to != user.id {
         return Err(err(StatusCode::FORBIDDEN, "not_your_trade"));
+    }
+    let from_off: bool = sqlx::query_scalar("select disabled from users where id = $1").bind(from).fetch_one(&mut *tx).await?;
+    if from_off {
+        close(&mut tx, id, "failed").await?;
+        tx.commit().await?;
+        return Err(err(StatusCode::CONFLICT, "trade_stale"));
     }
     let pack = api::pack(&s, &pack_id)?;
     // Lock every card in the trade, then check each is still where the offer says and not mid-reveal.

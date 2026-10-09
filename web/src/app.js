@@ -57,7 +57,9 @@ export function start(RECIPE) {
   } catch (e) {}
   function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
-  function applyState(st) {
+  var stamp = 0; // bumped by everything that changes the account, so a sync started earlier can't undo it
+  function applyState(st, fromSync) {
+    if (!fromSync) stamp++;
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
@@ -67,6 +69,7 @@ export function start(RECIPE) {
   function applyCollection(col) {
     S.inv = {}; col.cards.forEach(function (c) { if (BY_NUM[c.num]) S.inv[c.num] = c.serials.map(String); });
     S.sets = {}; col.sets.forEach(function (d) { S.sets[d] = 1; });
+    hidePending(); // the server lists cards still to be dealt; they join the binder as they're dealt
   }
   function pendingFrom(o) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
@@ -74,17 +77,18 @@ export function start(RECIPE) {
   }
   function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : explain(e), 3600); }
   /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
-  function sync() {
-    if (state !== "select" && state !== "summary" && state !== "home") return;
+  function sync(force) {
+    if (!force && state !== "select" && state !== "summary" && state !== "home") return;
+    var at = stamp;
     Promise.all([api.state(), api.collection(PACK_ID)]).then(function (r) {
-      if (state !== "select" && state !== "summary" && state !== "home") return;
-      applyState(r[0]); applyCollection(r[1]);
+      if (at !== stamp || (state !== "select" && state !== "summary" && state !== "home")) return;
+      applyState(r[0], true); applyCollection(r[1]);
       paintStatus(); paintToggles(); paintTabDot(); if (!vBinder.hidden) paintBinder(); if (state === "select" || state === "home") paintSelectHud();
     }, function () {});
     loadTrades();
   }
   document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
-  addEventListener("focus", sync);
+  addEventListener("focus", function () { sync(); });
 
   /* ---------- sound ---------- */
   var ac = null;
@@ -501,7 +505,7 @@ export function start(RECIPE) {
       if (n !== holdN || state !== "inspect") return;
       nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
       inspectEl.classList.toggle("boosted", !!r.boosted);
-    }, function (e) { if (n === holdN && e && e.code === "no_packs") sync(); });
+    }, function (e) { if (n === holdN && state === "inspect" && e && e.code === "no_packs") { paintHome(); say("Out of packs", 2000); sync(true); } });
   }
   /* Like opening a loot pack: the light leaking out of the tear gets brighter the further you swipe, in the best card's color. A Mythic starts gold and flips to rainbow past halfway. */
   function glow(t) {
@@ -552,7 +556,7 @@ export function start(RECIPE) {
 
   /* Opens the pack on the server, once, even if the swipe and the button both ask. */
   function startOpen() {
-    if (!openReq) openReq = api.open(PACK_ID);
+    if (!openReq) { openReq = api.open(PACK_ID); openReq.catch(function () {}); }
     return openReq;
   }
   function cut() {
@@ -560,18 +564,47 @@ export function start(RECIPE) {
     startOpen().then(function (res) {
       openReq = null;
       var o = res.opening;
-      o.cards.forEach(function (c) { (S.inv[c.num] || (S.inv[c.num] = [])).push(String(c.serial)); if (c.isNew) S.unseen[c.num] = 1; });
       o.sets.forEach(function (d) { S.sets[d] = 1; });
       applyState(res.state); save();
       S.pending = pendingFrom(o);
+      if (!S.pending) return lostPack(); // a card this page doesn't know (an older tab after an update)
       ripOpen();
     }, function (e) {
-      openReq = null; state = "inspect"; inspectEl.classList.remove("swiping"); glow(0);
-      var line = $("#cutline"); if (line) line.style.width = "0";
-      if (e && e.code === "no_packs") { sync(); paintHome(); say("Out of packs", 2000); } else offline(e);
+      openReq = null;
+      if (e && e.code === "no_packs") { paintHome(); say("Out of packs", 2000); sync(true); return; }
+      /* The server may have opened it and only the answer got lost: pick that pack up instead of opening another. */
+      api.state().then(function (st) {
+        var p = pendingFrom(st.pending);
+        if (state === "cutting" && p) { applyState(st); S.pending = p; ripOpen(p.revealed); return; }
+        retry();
+      }, retry);
+      function retry() {
+        if (state !== "cutting") return;
+        state = "inspect"; inspectEl.classList.remove("swiping"); glow(0);
+        var line = $("#cutline"); if (line) line.style.width = "0";
+        offline(e);
+      }
     });
   }
-  function ripOpen() {
+  /* Something about the opened pack doesn't fit this page: reload to show it properly. */
+  function lostPack() { state = "home"; say("Your pack opened. Reloading to show it…", 2400); setTimeout(function () { location.reload(); }, 1200); }
+  /* A card joins the binder when it's dealt, so switching to the binder mid-reveal doesn't spoil what's coming. */
+  function stash(c) {
+    if (c._in) return; c._in = 1;
+    var have = S.inv[c.num] || (S.inv[c.num] = []); if (have.indexOf(String(c.serial)) < 0) have.push(String(c.serial));
+    if (c.isNew) S.unseen[c.num] = 1;
+  }
+  /* After loading the collection mid-reveal: cards not dealt yet come out of the binder until they are. */
+  function hidePending() {
+    if (!S.pending) return;
+    S.pending.cards.forEach(function (c, i) {
+      if (i < (S.pending.revealed || 0)) { c._in = 1; return; }
+      var have = S.inv[c.num]; if (!have) return;
+      var at = have.indexOf(String(c.serial)); if (at >= 0) have.splice(at, 1);
+      if (!have.length) delete S.inv[c.num];
+    });
+  }
+  function ripOpen(from) {
     /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
     var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
     paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
@@ -579,7 +612,8 @@ export function start(RECIPE) {
     var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, promo ? null : TIERS[best].color, 7, promo);
     ripFx(r, promo ? "#ffd34d" : TIERS[best].color, promo, big);
     setHud("", "");
-    buildStack(0, r);
+    if (from) hidePending();
+    buildStack(from || 0, r);
   }
   /* fromPack = the torn pack's rect: the real cards rise out of it, fanned, and settle into the stack while the empty pack drops away. */
   function buildStack(from, fromPack) {
@@ -686,6 +720,7 @@ export function start(RECIPE) {
     el.classList.remove("drag"); el.classList.add("gone");
     el.style.transform = "translate(" + (dir * 130) + "vw, -10vh) rotate(" + (dir * 30) + "deg)";
     document.body.classList.remove("takeover");
+    stash(deck[idx]); save();
     idx++; S.pending.revealed = idx; api.progress(S.pending.id, idx).catch(function () {}); paintCounter();
     setTimeout(function () {
       el.remove();
@@ -732,6 +767,7 @@ export function start(RECIPE) {
   }
   function summary(skipped) {
     var sets = (S.pending && S.pending.sets) || [], fromR = !stackView.hidden && stackEl.getBoundingClientRect();
+    deck.forEach(stash); save();
     state = "summary"; if (S.pending) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover");
     summaryEl.innerHTML = "";
     deck.forEach(function (c, i) {
@@ -852,10 +888,23 @@ export function start(RECIPE) {
   /* ---------- workshop: scrap extra copies for parts, craft boosted packs ---------- */
   var scrapPick = { common: true, uncommon: true, rare: false, legendary: false, mythic: false }, scrapArmed = 0;
   var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
-  /* Extra copies (beyond the first) by tier, and what they'd give. */
+  /* Copies the server won't scrap yet: cards from the pack being revealed, and cards in open trade offers. Keyed
+     "team:serial". */
+  function heldCopies() {
+    var held = {};
+    if (S.pending) S.pending.cards.forEach(function (c) { held[c.num + ":" + c.serial] = 1; });
+    TR.outgoing.concat(TR.incoming).forEach(function (t) { t.youGive.forEach(function (c) { held[c.num + ":" + c.serial] = 1; }); });
+    return held;
+  }
+  /* Extra copies by tier that scrapping will take now, the same way the server counts them: of the copies that
+     aren't held back, all but one. `held` counts the extras that have to wait. */
   function extras() {
-    var out = {}; ORDER.forEach(function (t) { out[t] = 0; });
-    Object.keys(S.inv).forEach(function (k) { var t = BY_NUM[k]; if (t && S.inv[k].length > 1) out[t.tier] += S.inv[k].length - 1; });
+    var out = { held: 0 }, h = heldCopies(); ORDER.forEach(function (t) { out[t] = 0; });
+    Object.keys(S.inv).forEach(function (k) {
+      var t = BY_NUM[k], all = S.inv[k].length; if (!t || all < 2) return;
+      var free = S.inv[k].filter(function (s) { return !h[k + ":" + s]; }).length, now = Math.max(0, free - 1);
+      out[t.tier] += now; if (scrapPick[t.tier]) out.held += all - 1 - now;
+    });
     return out;
   }
   function paintWorkshop() {
@@ -875,6 +924,8 @@ export function start(RECIPE) {
       if (scrapPick[t]) { n += ex[t]; gain += ex[t] * (S.scrapParts[t] || 0); }
     });
     scrapBtn.disabled = !n;
+    var note = $("#scrapHeld"); note.hidden = !ex.held;
+    note.textContent = ex.held + (ex.held === 1 ? " extra copy waits" : " extra copies wait") + " until you finish the pack you're opening or the trade offer it's in.";
     scrapBtn.textContent = !n ? "No extras to scrap" : scrapArmed ? "Tap again to scrap " + n : "Scrap " + n + (n === 1 ? " extra" : " extras") + " · +" + gain + " parts";
     scrapBtn.classList.toggle("armed", !!scrapArmed);
   }
@@ -882,7 +933,7 @@ export function start(RECIPE) {
     applyState(r.state); applyCollection(r.collection);
     Object.keys(S.unseen).forEach(function (k) { if (!S.inv[k]) delete S.unseen[k]; }); save();
     sfx.whoosh(); paintStatus(); if (!vBinder.hidden) paintBinder(); paintTabDot();
-    if (r.scrapped) say("Scrapped " + r.scrapped + (r.scrapped === 1 ? " copy" : " copies") + " · +" + r.gained + " parts", 2600);
+    if (r.scrapped) say("Scrapped " + r.scrapped + (r.scrapped === 1 ? " copy" : " copies") + " · +" + r.gained + " parts" + (r.held ? " · " + r.held + " held back" : ""), 3000);
   }
   scrapBtn.addEventListener("click", function () {
     var tiers = ORDER.filter(function (t) { return scrapPick[t]; }); if (!tiers.length) return;
@@ -895,7 +946,7 @@ export function start(RECIPE) {
     api.craft().then(function (st) {
       applyState(st); paintStatus(); paintWorkshop(); sfx.promote();
       var r = craftBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, "#ffd34d", 7);
-      say("Boosted pack crafted. It opens next.", 2800);
+      say("Boosted pack crafted. Boosted packs open before your other packs.", 2800);
       if (state === "home" || state === "select") paintSelectHud();
     }, function (e) { offline(e); paintWorkshop(); });
   });
@@ -938,8 +989,14 @@ export function start(RECIPE) {
       row.appendChild(cp);
     }
     modalIn.appendChild(row);
-    if (serials.length > 1) {
-      var each = S.scrapParts[t.tier] || 0, more = serials.length - 1, srow = document.createElement("div"); srow.className = "cta-row";
+    var hc = heldCopies(), free = serials.filter(function (x) { return !hc[t.num + ":" + x]; }).length;
+    if (serials.length > 1 && free < 2) {
+      var wait = document.createElement("p"); wait.className = "ws-note ws-held";
+      wait.textContent = "Your extra copies are in the pack you're opening or a trade offer, so they can't be scrapped yet.";
+      modalIn.appendChild(wait);
+    }
+    if (free > 1) {
+      var each = S.scrapParts[t.tier] || 0, more = free - 1, srow = document.createElement("div"); srow.className = "cta-row";
       var one = document.createElement("button"); one.type = "button"; one.className = "chip"; one.textContent = "Scrap 1 extra · +" + each + " parts";
       one.onclick = function () { scrapOne(t, 1, one); }; srow.appendChild(one);
       if (more > 1) { var all = document.createElement("button"); all.type = "button"; all.className = "chip"; all.textContent = "Scrap all " + more + " extras · +" + each * more; all.onclick = function () { scrapOne(t, more, all); }; srow.appendChild(all); }
@@ -957,6 +1014,7 @@ export function start(RECIPE) {
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
+    if (modal.hidden && vOpen.hidden) return; // the Open screen is behind another tab
     if (!modal.hidden) closeModal(); else if (state === "inspect") back(); else if (state === "select") paintHome();
   });
 
@@ -968,7 +1026,7 @@ export function start(RECIPE) {
     vOpen.hidden = !open; vBinder.hidden = !b; vTrade.hidden = !tr;
     tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr));
     $("#status").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
-    if (b) paintBinder();
+    if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
     if (tr) { paintTrades(); loadTrades(); }
     try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
@@ -1095,18 +1153,23 @@ export function start(RECIPE) {
     trSend.disabled = !ready;
     $("#trSummary").textContent = !theirInv ? "" : ready ? "You give " + trGive.length + (trGive.length === 1 ? " card" : " cards") + " and get " + trGet.length + " from " + theirName + "." : "Pick at least one card on each side.";
   }
-  function loadTheirs() {
+  var theirsReq = 0;
+  function loadTheirs(force) {
     var name = trWho.value.trim();
-    if (!name || name.toLowerCase() === theirName.toLowerCase()) return;
+    if (!name || (!force && name.toLowerCase() === theirName.toLowerCase())) return;
+    var n = ++theirsReq;
     api.playerCollection(name, PACK_ID).then(function (col) {
-      theirName = name; theirInv = {}; trGet = [];
+      if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
+      if (name.toLowerCase() !== theirName.toLowerCase()) trGet = [];
+      theirName = name; theirInv = {};
       col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
       paintPicker();
-    }, function (e) { theirInv = null; theirName = ""; trGet = []; paintPicker(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
+    }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintPicker(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
   }
   trWho.addEventListener("input", function () {
     clearTimeout(whoTimer);
     var q = trWho.value.trim();
+    if (theirName && q.toLowerCase() !== theirName.toLowerCase()) { theirName = ""; theirInv = null; trGet = []; paintPicker(); }
     whoTimer = setTimeout(function () {
       if (q.length < 2) return;
       api.players(q).then(function (names) {
@@ -1116,13 +1179,13 @@ export function start(RECIPE) {
       }, function () {});
     }, 220);
   });
-  trWho.addEventListener("change", loadTheirs);
+  trWho.addEventListener("change", function () { loadTheirs(); });
   trGiveQ.addEventListener("input", paintPicker); trGetQ.addEventListener("input", paintPicker);
   trSend.addEventListener("click", function () {
     if (trSend.disabled) return; trSend.disabled = true;
     api.offerTrade(theirName, PACK_ID, trGive, trGet).then(function (t) {
       TR = t; trGive = []; trGet = []; sfx.whoosh(); say("Offer sent to " + theirName + ".", 2600);
-      loadTheirs(); paintTrades();
+      loadTheirs(true); paintTrades();
     }, function (e) { offline(e); paintPicker(); });
   });
   /* Check for new offers now and then, so the tab dot shows up without a reload. */
@@ -1186,7 +1249,7 @@ export function start(RECIPE) {
     if (state === "home") { if (b === PAD.A) { var f2 = document.activeElement; if (f2 && vOpen.contains(f2) && f2.matches("button")) padPress(f2); else openRing(); } }
     else if (state === "select") { if (b === PAD.A) choose(ringFront < 0 ? Math.floor(SHELF_N / 2) : ringFront); else if (b === PAD.B) { cancelAnimationFrame(ringRaf); paintHome(); } }
     else if (state === "inspect") { if (b === PAD.A) padPress($("#openBtn")); else if (b === PAD.X) padPress($("#turnBtn")); else if (b === PAD.B) back(); }
-    else if (state === "stack") { if (b === PAD.A) tapTop(); else if (b === PAD.Y) revealAll(); }
+    else if (state === "stack" || state === "flipping") { if (b === PAD.A) tapTop(); else if (b === PAD.Y) revealAll(); }
     else if (state === "summary") { if (b === PAD.A) { var f3 = document.activeElement; if (f3 && vOpen.contains(f3) && f3 !== againBtn) padPress(f3); else padPress(againBtn); } else if (b === PAD.B) paintHome(); else if (b === PAD.X) show("binder"); }
   }
   /* The sticks tilt the pack in your hand, or the card you're looking at. */
@@ -1207,14 +1270,15 @@ export function start(RECIPE) {
     padRaf = 0;
     var list = pads(); if (!list.length) { padPrev = []; return; }
     var now = performance.now(), dir = "";
-    list.forEach(function (p, pi) {
-      var prev = padPrev[pi] || [], cur = p.buttons.map(function (b) { return b.pressed || b.value > .5; });
+    list.forEach(function (p, n) {
+      if (p.mapping !== "standard") return; // button numbers below assume the standard layout
+      var pi = p.index, prev = padPrev[pi] || [], cur = p.buttons.map(function (b) { return b.pressed || b.value > .5; });
       cur.forEach(function (down, i) { if (down && !prev[i] && i !== PAD.UP && i !== PAD.DOWN && i !== PAD.LEFT && i !== PAD.RIGHT) padButton(i); });
       padPrev[pi] = cur;
       var ax = p.axes || [];
       if (cur[PAD.LEFT] || ax[0] < -.55) dir = "left"; else if (cur[PAD.RIGHT] || ax[0] > .55) dir = "right";
       else if (cur[PAD.UP] || ax[1] < -.55) dir = "up"; else if (cur[PAD.DOWN] || ax[1] > .55) dir = "down";
-      if (pi === 0) padSticks(p);
+      if (n === 0) padSticks(p);
     });
     /* A held direction repeats: once, then again after a pause, then steadily. */
     if (!dir) padRep.dir = "";
@@ -1241,7 +1305,7 @@ export function start(RECIPE) {
       return api.collection(PACK_ID);
     }).then(function (col) {
       applyCollection(col); paintToggles(); paintTabDot();
-      if (S.pending) { say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
+      if (S.pending) { hidePending(); say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
       else paintHome();
       paintStatus(); show(hash === "binder" || hash === "trade" ? hash : "open"); loadTrades();
       document.body.classList.add("ready");

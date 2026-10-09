@@ -750,23 +750,24 @@ async fn scrap_extras_for_parts_and_craft_a_boosted_pack() {
     let name = st["account"]["username"].as_str().unwrap().to_string();
     let id: uuid::Uuid = sqlx::query_scalar("select id from users where username = $1").bind(&name).fetch_one(&db).await.unwrap();
     // Three copies of a Common and two of a Rare, with serials no pack will mint.
-    let common: i32 = 9971;
+    let common: i32 = team_of("common", 101);
+    let rare: i32 = team_of("rare", 88);
     let base = 1_000_000 + (rand_serial() % 1_000_000);
-    for (team, tier, n) in [(common, "common", 3), (9972, "rare", 2)] {
+    for (team, tier, n) in [(common, "common", 3), (rare, "rare", 2)] {
         for k in 0..n {
             sqlx::query("insert into cards (user_id, pack_id, team, tier, serial) values ($1, 'cmp26', $2, $3, $4)")
                 .bind(id)
                 .bind(team)
                 .bind(tier)
-                .bind(base + team * 10 + k)
+                .bind(base + (team % 10_000) * 10 + k)
                 .execute(&db)
                 .await
                 .unwrap();
         }
     }
-    let first_serial = base + common * 10;
-    // Scrap needs a real team in the pack; the inserted ones aren't, so this checks the guard.
-    let r = call(&app, "POST", "/api/scrap", Some(&c), Some(json!({ "pack": "cmp26", "num": common, "count": 5 }))).await;
+    let first_serial = base + (common % 10_000) * 10;
+    // Scrap needs a real team in the pack.
+    let r = call(&app, "POST", "/api/scrap", Some(&c), Some(json!({ "pack": "cmp26", "num": 99_999, "count": 5 }))).await;
     assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::NOT_FOUND, Some("unknown_team")));
     // Scrap all extra Commons and Rares: 2 Commons (5 each) and 1 Rare (40).
     let r = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common", "rare"] }))).await;

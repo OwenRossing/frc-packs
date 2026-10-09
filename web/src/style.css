@@ -374,7 +374,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 /* While a card is open the binder behind it stays put, and a finger on the card tilts it instead of scrolling. */
 body.modal-open { overflow: hidden; }
 .modal-in .slot { touch-action: none; }
-.modal-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 420px; width: 100%; --cw: clamp(200px, min(78vw, 320px, calc((100svh - 220px) / 1.4)), 320px); }
+.modal-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 420px; width: 100%; --cw: clamp(180px, min(78vw, 320px, calc((100svh - 300px) / 1.4)), 320px); }
 .serials { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; font-size: 13px; color: var(--ink-dim); text-align: center; line-height: 1.6; font-variant-numeric: tabular-nums; }
 .serials b { color: var(--foam); }
 .note { font-size: 12px; line-height: 1.5; color: var(--ink-dim); text-align: center; max-width: 560px; margin: 10px auto 0; position: relative; z-index: 3; }
@@ -436,6 +436,7 @@ a.chip { text-decoration: none; display: inline-block; }
 .ws-tiers .chip:not(.on) { opacity: .55; }
 .ws-tiers .chip em { font-style: normal; color: var(--foam); font-variant-numeric: tabular-nums; }
 .ws-note { font-size: 12px; line-height: 1.45; color: var(--ink-dim); }
+.ws-held { color: #ffd27a; }
 .chip.armed, #scrapBtn.armed { border-color: #ffb4a2; color: #ffb4a2; }
 .cta:disabled, .chip:disabled { opacity: .45; cursor: default; }
 .ptype .bst { position: absolute; top: 34px; right: -12px; z-index: 3; padding: 3px 9px; border-radius: 99px; background: #ffd34d; color: #2a1c00; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
