@@ -888,7 +888,10 @@ export function start(RECIPE) {
   moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
 
   /* ---------- workshop: scrap extra copies for parts, craft boosted packs ---------- */
-  var scrapPick = { common: true, uncommon: true, rare: false, legendary: false, mythic: false }, scrapArmed = 0;
+  /* Which rarities the scrap button takes. Common to Rare by default; Legendary and Mythic only when you pick them.
+     Remembered on this device. */
+  var scrapPick = { common: true, uncommon: true, rare: true, legendary: false, mythic: false }, scrapArmed = 0;
+  try { var sp = JSON.parse(localStorage.getItem("frcpacks.scrap") || "null"); if (sp && typeof sp === "object") ORDER.forEach(function (t) { if (typeof sp[t] === "boolean") scrapPick[t] = sp[t]; }); } catch (e) {}
   var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
   /* Copies the server won't scrap yet: cards from the pack being revealed, and cards in open trade offers. Keyed
      "team:serial". */
@@ -921,10 +924,15 @@ export function start(RECIPE) {
       b.setAttribute("aria-pressed", String(!!scrapPick[t])); b.style.setProperty("--tc", TIERS[t].color);
       b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b> <em>' + ex[t] + '</em>';
       b.title = "+" + (S.scrapParts[t] || 0) + " parts each";
-      b.onclick = function () { scrapPick[t] = !scrapPick[t]; scrapArmed = 0; paintWorkshop(); };
+      b.onclick = function () { scrapPick[t] = !scrapPick[t]; scrapArmed = 0; try { localStorage.setItem("frcpacks.scrap", JSON.stringify(scrapPick)); } catch (e) {} paintWorkshop(); };
       row.appendChild(b);
       if (scrapPick[t]) { n += ex[t]; gain += ex[t] * (S.scrapParts[t] || 0); }
     });
+    /* Extras in rarities that aren't picked: say so, so they don't look forgotten. */
+    var skipped = ORDER.filter(function (t) { return !scrapPick[t] && ex[t]; });
+    var other = $("#scrapOther"), more = skipped.reduce(function (a, t) { return a + ex[t]; }, 0);
+    other.hidden = !more;
+    other.textContent = more + (more === 1 ? " more extra copy" : " more extra copies") + " in " + skipped.map(function (t) { return TIERS[t].label; }).join(" and ") + ". Tap " + (skipped.length === 1 ? "it" : "them") + " above to include " + (more === 1 ? "it" : "them") + ".";
     scrapBtn.disabled = !n;
     var note = $("#scrapHeld"); note.hidden = !ex.held;
     note.textContent = ex.held + (ex.held === 1 ? " extra copy waits" : " extra copies wait") + " until you finish the pack you're opening or the trade offer it's in.";

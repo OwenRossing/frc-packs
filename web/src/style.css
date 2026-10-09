@@ -437,6 +437,7 @@ a.chip { text-decoration: none; display: inline-block; }
 .ws-tiers .chip em { font-style: normal; color: var(--foam); font-variant-numeric: tabular-nums; }
 .ws-note { font-size: 12px; line-height: 1.45; color: var(--ink-dim); }
 .ws-held { color: #ffd27a; }
+.ws-other { color: var(--foam); }
 .chip.armed, #scrapBtn.armed { border-color: #ffb4a2; color: #ffb4a2; }
 .cta:disabled, .chip:disabled { opacity: .45; cursor: default; }
 .ptype .bst { position: absolute; top: 34px; right: -12px; z-index: 3; padding: 3px 9px; border-radius: 99px; background: #ffd34d; color: #2a1c00; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
