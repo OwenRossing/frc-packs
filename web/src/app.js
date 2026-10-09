@@ -66,6 +66,7 @@ export function start(RECIPE) {
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
     S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
+    if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
     S.demo = st.demo; S.devTools = st.devTools;
   }
   function applyCollection(col) {
@@ -309,7 +310,48 @@ export function start(RECIPE) {
   var BANK = 2, PER = 1;
   function banked(now) { return now < S.nextClaimAt ? 0 : Math.min(BANK, 1 + Math.floor((now - S.nextClaimAt) / CLAIM_MS)); }
   function packsWord(n) { return n === 1 ? "pack" : "packs"; }
+  /* ---------- daily missions and the streak ---------- */
+  var dailyDirty = true, dailyOpen = false;
+  try { dailyOpen = localStorage.getItem("frcpacks.daily") === "1"; } catch (e) {}
+  function paintDaily() {
+    dailyDirty = false;
+    var ms = S.missions || [], st = S.streak || { days: 0, today: false, alive: false, every: 7 };
+    var done = ms.filter(function (m) { return m.claimed; }).length, ready = ms.filter(function (m) { return !m.claimed && m.progress >= m.goal; }).length;
+    var flame = $("#streakFlame"); flame.classList.toggle("lit", st.today && st.days > 0); flame.classList.toggle("warm", !st.today && st.days > 0);
+    var toGift = st.every - (st.days % st.every || (st.today ? st.every : 0));
+    $("#streakTxt").textContent = st.days ? st.days + "-day streak" : "Start a streak";
+    $("#dailySum").textContent = (ready ? ready + " to collect · " : "") + done + " of " + ms.length + " missions done" + (st.days && !st.today ? " · open a pack today to keep your streak" : "");
+    $("#dailyDots").innerHTML = ms.map(function (m) { return '<i class="' + (m.claimed ? "done" : m.progress >= m.goal ? "ready" : "") + '"></i>'; }).join("");
+    $("#dailyToggle").setAttribute("aria-expanded", String(dailyOpen)); $("#dailyBody").hidden = !dailyOpen;
+    var list = $("#dailyList"); list.innerHTML = "";
+    ms.forEach(function (m) {
+      var el = document.createElement("div"), full = m.progress >= m.goal;
+      el.className = "mission" + (m.claimed ? " claimed" : full ? " ready" : "");
+      el.innerHTML = '<b>' + esc(m.label) + '</b><span class="mbar"><i style="width:' + (m.progress / m.goal * 100) + '%"></i></span>';
+      var act = document.createElement(full && !m.claimed ? "button" : "span"); act.className = "act";
+      if (m.claimed) act.innerHTML = '<span class="reward">✓ +' + m.reward + '</span>';
+      else if (full) { act.type = "button"; act.className = "act cta small"; act.textContent = "Collect +" + m.reward; act.onclick = function () { collect(m, act); }; }
+      else act.innerHTML = '<span class="reward">' + m.progress + "/" + m.goal + ' · +' + m.reward + '</span>';
+      el.appendChild(act); list.appendChild(el);
+    });
+    var into = st.days % st.every || (st.days ? st.every : 0), week = "";
+    for (var i = 1; i <= st.every; i++) week += '<i class="' + (i <= into ? "on" : i === st.every ? "gift" : "") + '"></i>';
+    $("#streakNote").innerHTML = '<span class="streak-week" aria-hidden="true">' + week + '</span>' +
+      (st.today ? "You've opened a pack today. " : st.days ? "Open a pack today to keep your streak. " : "Open a pack each day to build a streak. ") +
+      (toGift === st.every && st.today ? "Boosted pack earned! Next one in " + st.every + " days." : "A boosted pack every " + st.every + " days in a row" + (st.days ? " · " + toGift + " to go." : ".")) +
+      " Missions reset at midnight; parts go toward boosted packs in the binder.";
+  }
+  $("#dailyToggle").onclick = function () { dailyOpen = !dailyOpen; try { localStorage.setItem("frcpacks.daily", dailyOpen ? "1" : "0"); } catch (e) {} paintDaily(); };
+  function collect(m, btn) {
+    btn.disabled = true; actx();
+    api.claimMission(m.id).then(function (st) {
+      var r = btn.getBoundingClientRect(); applyState(st); paintDaily(); paintStatus(); sfx.claim();
+      burst(r.left + r.width / 2, r.top + r.height / 2, 26, "#ffd34d", 6);
+      say("+" + m.reward + " parts", 1800);
+    }, function (e) { btn.disabled = false; offline(e); });
+  }
   function paintStatus() {
+    if (dailyDirty) paintDaily();
     var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS;
     packCount.textContent = S.packs;
     var n = banked(now), ready = n * PER, next = PER === 1 ? "another" : PER + " more";
@@ -567,8 +609,11 @@ export function start(RECIPE) {
       openReq = null;
       var o = res.opening;
       o.sets.forEach(function (d) { S.sets[d] = 1; });
+      var was = S.streak || { days: 0, today: false };
       applyState(res.state); save();
       S.pending = pendingFrom(o);
+      if (res.streakReward) setTimeout(function () { sfx.promote(); say(S.streak.days + "-day streak! A boosted pack is yours", 4000); }, 2600);
+      else if (!was.today && S.streak && S.streak.today && S.streak.days > 1) setTimeout(function () { say(S.streak.days + "-day streak! Keep it going tomorrow", 3000); }, 2600);
       if (!S.pending) return lostPack(); // a card this page doesn't know (an older tab after an update)
       ripOpen();
     }, function (e) {
@@ -1056,7 +1101,7 @@ export function start(RECIPE) {
     banner.classList.remove("show");
     vOpen.hidden = !open; vBinder.hidden = !b; vTrade.hidden = !tr;
     tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr));
-    $("#status").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
+    $("#status").hidden = !open; $("#daily").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
     if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
     if (tr) { enterTrade(); paintTrades(); loadTrades(); }
     try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}

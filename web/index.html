@@ -35,7 +35,7 @@
         <button type="button" role="tab" id="tabBinder" aria-selected="false">Binder<span class="tabdot" id="tabDot" hidden></span></button>
         <button type="button" role="tab" id="tabTrade" aria-selected="false">Trade<span class="tabdot" id="tradeDot" hidden></span></button>
       </div>
-      <button type="button" class="chip" id="gear" aria-expanded="false" aria-controls="settings">Settings</button>
+      <button type="button" class="chip gear" id="gear" aria-expanded="false" aria-controls="settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     </div>
   </div>
 
@@ -98,6 +98,18 @@
     <button type="button" class="claim" id="claim" hidden>Claim pack</button>
     <div class="meter" id="meter"><span>Mythic meter</span><span class="mbar"><i id="meterBar"></i></span><em id="meterTxt"></em></div>
   </div>
+  <section class="daily" id="daily" aria-label="Daily missions">
+    <button type="button" class="daily-h" id="dailyToggle" aria-expanded="false" aria-controls="dailyBody">
+      <span class="flame" id="streakFlame" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2c1 3.5 4.5 5.5 4.5 10a4.5 4.5 0 0 1-9 0c0-1.6.6-3 1.6-4.1.2 1.7 1.1 2.8 2.4 3.1C11 8.6 12.4 6 12 2zM12 22a6.5 6.5 0 0 1-6.5-6.5c0-3.4 2-5.4 3.2-6.8"/></svg></span>
+      <span class="daily-title"><b id="streakTxt">No streak yet</b><small id="dailySum"></small></span>
+      <span class="daily-dots" id="dailyDots" aria-hidden="true"></span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="daily-body" id="dailyBody" hidden>
+      <div class="daily-list" id="dailyList"></div>
+      <p class="daily-note" id="streakNote"></p>
+    </div>
+  </section>
   <div class="teampick" id="teamPick" hidden>
     <b>Which team are you on?</b>
     <p>Your team's card gets a gold border, and pulling it gets its own moment. Your first pack includes it if it was at Champs.</p>

@@ -959,3 +959,51 @@ async fn trades_never_duplicate_cards() {
     assert!(after <= before, "trading created cards: {before} -> {after}");
     assert_eq!(before - after, scrapped / 12, "every card that left was scrapped for parts, none vanished");
 }
+
+#[tokio::test]
+async fn daily_missions_and_streak() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let id = user_id(&db, &c).await;
+    let m = |st: &Value, id: &str| st["missions"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    assert_eq!(m(&st, "open")["progress"], 0);
+    assert_eq!((st["streak"]["days"].as_i64(), st["streak"]["today"].as_bool()), (Some(0), Some(false)));
+    let early = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!((early.status, early.body["error"].as_str()), (StatusCode::CONFLICT, Some("mission_not_ready")));
+    let mut last = Value::Null;
+    for _ in 0..2 {
+        last = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
+    }
+    let st = &last["state"];
+    assert_eq!(m(st, "open")["progress"], 2);
+    assert_eq!((st["streak"]["days"].as_i64(), st["streak"]["today"].as_bool()), (Some(1), Some(true)), "first pack starts the streak");
+    let parts = st["parts"].as_i64().unwrap();
+    let got = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(got.status, StatusCode::OK);
+    assert_eq!(got.body["parts"].as_i64().unwrap(), parts + m(&got.body, "open")["reward"].as_i64().unwrap());
+    assert_eq!(m(&got.body, "open")["claimed"], true);
+    let again = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(again.status, StatusCode::CONFLICT, "a mission pays once a day");
+    assert_eq!(call(&app, "POST", "/api/missions/nope/claim", Some(&c), Some(json!({}))).await.status, StatusCode::NOT_FOUND);
+
+    // Day 7 of a streak: a boosted pack.
+    sqlx::query("update users set streak = 6, streak_day = (now() at time zone 'America/Chicago')::date - 1 where id = $1")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    call(&app, "POST", "/api/dev/pack", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
+    assert_eq!(o["streakReward"], true);
+    assert_eq!(o["state"]["streak"]["days"], 7);
+    let p = o["state"]["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap().clone();
+    assert_eq!(p["boosted"], 1, "the streak reward is a boosted pack");
+    // A missed day halves the streak instead of wiping it.
+    sqlx::query("update users set streak = 10, streak_day = (now() at time zone 'America/Chicago')::date - 3 where id = $1")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
+    assert_eq!(o["state"]["streak"]["days"], 5);
+}

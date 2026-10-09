@@ -118,6 +118,9 @@ pub struct StateOut {
     packs: Vec<PackState>,
     /// A pack that was opened but not fully revealed (for example, the page closed mid-reveal).
     pending: Option<OpeningOut>,
+    /// Today's missions and the pack-opening streak.
+    missions: Vec<crate::missions::MissionOut>,
+    streak: crate::missions::StreakOut,
 }
 
 #[derive(Serialize)]
@@ -273,6 +276,7 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         None => None,
     };
     let r = rules(&mut *c).await?;
+    let (missions, streak) = crate::missions::load(&mut *c, user).await?;
     // If the admin shortened the timer, nobody waits longer than one new timer.
     let next = next.min(Utc::now() + Duration::milliseconds(r.claim_ms()));
     Ok(StateOut {
@@ -289,6 +293,8 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         dev_tools: s.dev_tools,
         packs,
         pending,
+        missions,
+        streak,
     })
 }
 
@@ -621,8 +627,11 @@ pub(crate) async fn award_sets(c: &mut PgConnection, user: Uuid, pack: &Pack, te
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct OpenOut {
     opening: OpeningOut,
+    /// This pack hit a streak milestone and earned a boosted pack.
+    streak_reward: bool,
     state: StateOut,
 }
 
@@ -708,10 +717,12 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     .execute(&mut *tx)
     .await?;
     sqlx::query("update openings set sets = $2 where id = $1").bind(opening_id).bind(&sets).execute(&mut *tx).await?;
+    let streak_reward = crate::missions::on_open(&mut tx, user.id, pack.id()).await?;
     let state = load_state(&s, &mut tx, user.id).await?;
     tx.commit().await?;
     Ok(Json(OpenOut {
         opening: OpeningOut { id: opening_id, pack: pack.id().to_string(), revealed: 0, cards: out, sets },
+        streak_reward,
         state,
     }))
 }
@@ -884,6 +895,7 @@ async fn scrap(State(s): State<Shared>, user: User, Json(req): Json<ScrapReq>) -
     if r.1 == 0 {
         return Err(err(StatusCode::CONFLICT, if r.2 > 0 { "extras_held" } else { "no_extras" }));
     }
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Scrapped, r.1).await?;
     scrapped(&s, tx, user.id, pack, r).await
 }
 
@@ -896,6 +908,7 @@ async fn scrap_extras(State(s): State<Shared>, user: User, Json(req): Json<Scrap
     let mut tx = s.db.begin().await?;
     sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
     let r = scrap_copies(&mut tx, user.id, pack, None, &req.tiers, i64::MAX).await?;
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Scrapped, r.1).await?;
     scrapped(&s, tx, user.id, pack, r).await
 }
 

@@ -147,6 +147,7 @@ async fn offer(State(s): State<Shared>, user: User, Json(req): Json<OfferReq>) -
         .execute(&mut *tx)
         .await?;
     let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Traded, 1).await?;
     tx.commit().await?;
     let me = me.unwrap_or_else(|| "Someone".into());
     let cards = |n: usize| if n == 1 { "1 card".to_string() } else { format!("{n} cards") };
@@ -341,6 +342,7 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
             mine = sets;
         }
     }
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Traded, 1).await?;
     let state = api::load_state(&s, &mut tx, user.id).await?;
     let collection = api::load_collection(&mut tx, user.id, pack).await?;
     let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;

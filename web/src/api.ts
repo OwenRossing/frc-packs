@@ -84,8 +84,30 @@ export interface State {
   scrapParts: Record<Tier, number>;
   demo: boolean;
   devTools: boolean;
+  missions: Mission[];
+  streak: Streak;
   packs: PackState[];
   pending: Opening | null;
+}
+
+export interface Mission {
+  id: string;
+  label: string;
+  goal: number;
+  progress: number;
+  /** Parts it pays. */
+  reward: number;
+  claimed: boolean;
+}
+
+export interface Streak {
+  /** Days in a row with a pack opened (0 when the streak has lapsed). */
+  days: number;
+  /** A pack has been opened today. */
+  today: boolean;
+  alive: boolean;
+  /** A boosted pack every this many days. */
+  every: number;
 }
 
 export interface Collection {
@@ -205,7 +227,7 @@ export const api = {
   claim: () => call<State>("POST", "/api/claim"),
   /** Pick up a pack: its cards are decided now; only the best rarity comes back, for the glow. */
   hand: (pack: string) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack }),
-  open: (pack: string) => call<{ opening: Opening; state: State }>("POST", "/api/open", { pack }),
+  open: (pack: string) => call<{ opening: Opening; state: State; streakReward: boolean }>("POST", "/api/open", { pack }),
   progress: (id: number, revealed: number) => call<void>("POST", `/api/openings/${id}/progress`, { revealed }),
   collection: (pack: string) => call<Collection>("GET", `/api/collection/${encodeURIComponent(pack)}`),
   /** Scrap extra copies of one team (the first copy is always kept). */
@@ -228,6 +250,8 @@ export const api = {
   pushKey: () => call<{ key: string | null }>("GET", "/api/push/key"),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => call<void>("POST", "/api/push/subscribe", sub),
   pushUnsubscribe: (endpoint: string) => call<void>("POST", "/api/push/unsubscribe", { endpoint }),
+  /** Collect a finished daily mission's parts. */
+  claimMission: (id: string) => call<State>("POST", `/api/missions/${encodeURIComponent(id)}/claim`),
   /** Spend parts on a boosted pack. */
   craft: () => call<State>("POST", "/api/craft"),
   recipe: (pack: string) => call<Recipe>("GET", `/packs/${encodeURIComponent(pack)}.json`),
@@ -280,6 +304,7 @@ export function explain(e: unknown): string {
     too_many_offers: "You have 20 offers waiting. Cancel some first.",
     bad_trade: "Pick 1 to 5 different cards on each side.",
     not_your_trade: "That trade isn't yours to answer.",
+    mission_not_ready: "That mission isn't finished yet.",
   };
   return words[e.code] ?? "Something went wrong. Try again.";
 }
