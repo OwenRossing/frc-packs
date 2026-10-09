@@ -29,7 +29,31 @@ pub fn routes() -> Router<Shared> {
         .route("/reports/{id}/resolve", post(resolve_report))
         .route("/users/{id}/rename", post(rename_user))
         .route("/users/{id}/ledger", get(ledger))
+        .route("/test-pack", post(test_pack))
         .route("/audit", get(audit))
+}
+
+#[derive(Deserialize)]
+struct TestPackReq {
+    pack: String,
+    #[serde(default)]
+    boosted: bool,
+}
+
+#[derive(Serialize)]
+struct TestPackOut {
+    /// Five cards, best last, rolled with the pack's real odds.
+    cards: Vec<crate::roll::Rolled>,
+}
+
+/// A throwaway pack for the admin to try the opening flow: rolled with the same odds and code as a real pack, but it
+/// reads and writes nothing. No pack is used, no serial number is minted, nothing joins the binder, the pity counters
+/// don't move, and the ledger and circulation counts never see it.
+async fn test_pack(State(s): State<Shared>, _admin: Admin, Json(req): Json<TestPackReq>) -> ApiResult<Json<TestPackOut>> {
+    let pack = api::pack(&s, &req.pack)?;
+    let opts = crate::roll::Opts { boosted: req.boosted, ..Default::default() };
+    let cards = crate::roll::roll(pack, &mut rand::rng(), &opts);
+    Ok(Json(TestPackOut { cards }))
 }
 
 #[derive(Serialize)]

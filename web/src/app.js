@@ -64,6 +64,7 @@ export function start(RECIPE) {
   function applyState(st, fromSync) {
     if (!fromSync) stamp++;
     if (st.account && st.account.username) ME = st.account.username;
+    S.account = st.account || null;
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
@@ -82,7 +83,7 @@ export function start(RECIPE) {
   }
   function pendingFrom(o) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
-    return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy, inGame: c.inGame }; }) };
+    return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy, inGame: c.inGame, test: !!c.test }; }) };
   }
   function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : explain(e), 3600); }
   /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
@@ -303,7 +304,7 @@ export function start(RECIPE) {
       '</div>' +
       '<div class="ft"><span class="rar">' + T.gems + '</span><span>No. ' + esc(c.serial || "------") + '</span><span>' + T.label + '</span></div>' +
       '<div class="foil"></div><div class="spark"></div><div class="glare"></div></div></div></div></div></div>';
-    if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
+    if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.test ? "TEST" : c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
     if (opts.count > 1) { var b = document.createElement("div"); b.className = "count-badge"; b.textContent = "×" + opts.count; slot.appendChild(b); }
     attachTilt(slot);
     return slot;
@@ -470,16 +471,22 @@ export function start(RECIPE) {
      boosted). */
   S.openKind = false;
   function kindCount(k) { return k ? S.boosted : Math.max(0, S.packs - S.boosted); }
+  /* The admin's test pack: unlimited, rolled like a real one, and nothing about it is saved (no pack used, no serial
+     number, nothing in the binder). S.testMode says that's the stack being opened. */
+  S.testMode = false;
+  function isAdmin() { return !!(S.account && S.account.admin); }
+  function have() { return S.testMode ? 999 : kindCount(S.openKind); }
   function packsLeftHud(title, more) {
-    if (S.packs > 0) setHud(title, more);
+    if (S.packs > 0 || S.testMode) setHud(title, more);
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
   }
   function paintSelectHud() {
     if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · " + (S.boosted ? "pick a stack" : "tap to open"));
-    else packsLeftHud(S.openKind ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
-    ringwrap.classList.toggle("out", kindCount(S.openKind) < 1);
-    ringwrap.classList.toggle("boosted", S.openKind);
-    var want = (S.boosted > 0) + 1;
+    else packsLeftHud(S.testMode ? "Choose a test pack" : S.openKind ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    ringwrap.classList.toggle("out", have() < 1);
+    ringwrap.classList.toggle("boosted", S.openKind && !S.testMode);
+    ringwrap.classList.toggle("test", S.testMode);
+    var want = (S.boosted > 0) + 1 + isAdmin();
     if (state === "home" && collectionEl.children.length !== want) return paintHome();
     Array.prototype.forEach.call(collectionEl.querySelectorAll(".ptype"), function (tile) { paintTile(tile, PACKS[0]); });
     var inv = $("#packInv");
@@ -488,6 +495,7 @@ export function start(RECIPE) {
   }
   /* ---------- home: your pack collection ---------- */
   function paintTile(b, pk) {
+    if (b._test) { setText(b.querySelector(".cnt"), "∞"); setText(b.querySelector(".pt-sub"), "Admin · saves nothing"); b.setAttribute("aria-label", "Test " + pk.name + " pack, unlimited, nothing is saved"); return; }
     var boosted = b._boosted, n = kindCount(boosted);
     if (b.classList.contains("empty") !== (n < 1)) b.classList.toggle("empty", n < 1); setText(b.querySelector(".cnt"), "×" + n);
     setText(b.querySelector(".pt-sub"), n ? (boosted ? "Better odds" : "Tap to open") : "None left");
@@ -497,13 +505,14 @@ export function start(RECIPE) {
     state = "home"; showOnly("home");
     collectionEl.innerHTML = "";
     var kinds = S.boosted > 0 ? [true, false] : [false];
+    if (isAdmin()) kinds.push("test");
     collectionEl.classList.toggle("one", kinds.length === 1);
-    kinds.forEach(function (boosted) {
-      var pk = PACKS[0];
-      var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted ? " boosted" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted;
-      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
+    kinds.forEach(function (kind) {
+      var pk = PACKS[0], test = kind === "test", boosted = kind === true;
+      var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted ? " boosted" : "") + (test ? " test" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted; b._test = test;
+      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (test ? "Test " : boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
       paintTile(b, pk);
-      b.addEventListener("click", function () { S.openKind = boosted; openRing(b); });
+      b.addEventListener("click", function () { S.testMode = test; S.openKind = boosted; openRing(b); });
       b.addEventListener("pointermove", function (e) {
         var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
         b.style.setProperty("--gx", ((px - .5) * 2).toFixed(3)); b.style.setProperty("--gy", ((py - .5) * 2).toFixed(3));
@@ -515,7 +524,7 @@ export function start(RECIPE) {
   }
   function openRing(tile) {
     if (state !== "home") return; actx();
-    if (kindCount(S.openKind) < 1) { shake(false); say(S.packs ? "None of those left. Pick the other stack." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    if (have() < 1) { shake(false); say(S.packs ? "None of those left. Pick the other stack." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     sfx.pick(); paintSelect(true);
   }
   /* ---------- the wheel of 10 packs ---------- */
@@ -599,9 +608,9 @@ export function start(RECIPE) {
   var rotY = 0, rotX = 0, g = null;
   function choose(i) {
     if (state !== "select") return; actx();
-    if (kindCount(S.openKind) < 1) { shake(false); say(S.packs ? "None of those left." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    if (have() < 1) { shake(false); say(S.packs ? "None of those left." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
-    inspectEl.className = "inspect" + (S.openKind ? " boosted" : ""); rotY = 0; rotX = 0;
+    inspectEl.className = "inspect" + (S.openKind && !S.testMode ? " boosted" : ""); rotY = 0; rotX = 0;
     /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
     promoted = false; nextBest = "common"; openReq = null; inspectEl.style.setProperty("--tp", 0);
     holdPack();
@@ -627,9 +636,19 @@ export function start(RECIPE) {
   var promoted = false, nextBest = "common", openReq = null, holdN = 0;
   /* Picking up a pack asks the server to decide its cards (they stay fixed if you put it back). Only the best
      rarity comes back, so the glow while you swipe tells the truth without revealing the cards. */
+  var testHand = null;
   function holdPack() {
     var n = ++holdN;
     inspectEl.style.setProperty("--tell", TIERS.common.color);
+    if (S.testMode) { // a throwaway pack: rolled now, kept only in this page, gone when opened
+      testHand = null;
+      api.admin.testPack(PACK_ID, false).then(function (r) {
+        if (n !== holdN || state !== "inspect") return;
+        testHand = r.cards; var best = r.cards[r.cards.length - 1].tier;
+        nextBest = best; inspectEl.style.setProperty("--tell", TIERS[best === "mythic" ? "legendary" : best].color);
+      }, offline);
+      return;
+    }
     api.hand(PACK_ID, S.openKind).then(function (r) {
       if (n !== holdN || state !== "inspect") return;
       nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
@@ -685,7 +704,16 @@ export function start(RECIPE) {
 
   /* Opens the pack on the server, once, even if the swipe and the button both ask. */
   function startOpen() {
-    if (!openReq) { openReq = api.open(PACK_ID, S.openKind); openReq.catch(function () {}); }
+    if (!openReq) {
+      if (S.testMode) {
+        var cards = testHand || [];
+        openReq = cards.length === 5 ? Promise.resolve({
+          opening: { id: 0, pack: PACK_ID, revealed: 0, sets: [], cards: cards.map(function (c) { return { num: c.num, tier: c.tier, serial: "TEST", isNew: false, copy: 0, inGame: 0, test: true }; }) },
+          state: null, streakReward: false }) : Promise.reject(new Error("test pack not ready"));
+        testHand = null;
+      } else openReq = api.open(PACK_ID, S.openKind);
+      openReq.catch(function () {});
+    }
     return openReq;
   }
   function cut() {
@@ -695,7 +723,7 @@ export function start(RECIPE) {
       var o = res.opening;
       o.sets.forEach(function (d) { S.sets[d] = 1; });
       var was = S.streak || { days: 0, today: false };
-      applyState(res.state); save();
+      if (res.state) applyState(res.state); save();
       S.pending = pendingFrom(o);
       if (res.streakReward) setTimeout(function () { sfx.promote(); say(S.streak.days + "-day streak! A boosted pack is yours", 4000); }, 2600);
       else if (!was.today && S.streak && S.streak.today && S.streak.days > 1) setTimeout(function () { say(S.streak.days + "-day streak! Keep it going tomorrow", 3000); }, 2600);
@@ -722,7 +750,7 @@ export function start(RECIPE) {
   function lostPack() { state = "home"; say("Your pack opened. Reloading to show it…", 2400); setTimeout(function () { location.reload(); }, 1200); }
   /* A card joins the binder when it's dealt, so switching to the binder mid-reveal doesn't spoil what's coming. */
   function stash(c) {
-    if (c._in) return; c._in = 1;
+    if (c._in || c.test) return; c._in = 1;
     var have = S.inv[c.num] || (S.inv[c.num] = []); if (have.indexOf(String(c.serial)) < 0) have.push(String(c.serial));
     if (c.isNew) S.unseen[c.num] = 1;
   }
@@ -865,7 +893,7 @@ export function start(RECIPE) {
     setTimeout(function () { burst(x, y - 90, 160, null, 13, true); }, 750);
     setTimeout(function () { burst(x, y, 80, "#fff6c2", 9); }, 1250);
     var n = c.inGame;
-    say("MYTHIC · " + t.name + " (" + t.num + ") · " + (n === 1 ? "the only one in the game" : n > 1 ? "one of only " + n + " in the game" : "No. " + c.serial), 6000);
+    say("MYTHIC · " + t.name + " (" + t.num + ") · " + (c.test ? "a test pull, nothing saved" : n === 1 ? "the only one in the game" : n > 1 ? "one of only " + n + " in the game" : "No. " + c.serial), 6000);
   }
   function endMythic() { document.body.classList.remove("mythic-dark", "mythic-aura"); }
   function takeover(ray) { document.documentElement.style.setProperty("--ray", ray); document.body.classList.add("takeover"); }
@@ -876,7 +904,7 @@ export function start(RECIPE) {
     el.style.transform = "translate(" + (dir * 130) + "vw, -10vh) rotate(" + (dir * 30) + "deg)";
     document.body.classList.remove("takeover"); endMythic();
     stash(deck[idx]); save();
-    idx++; S.pending.revealed = idx; api.progress(S.pending.id, idx).catch(function () {}); paintCounter();
+    idx++; S.pending.revealed = idx; if (S.pending.id) api.progress(S.pending.id, idx).catch(function () {}); paintCounter();
     setTimeout(function () {
       el.remove();
       if (idx >= deck.length) summary(); else { state = "stack"; armTop(); }
@@ -928,13 +956,14 @@ export function start(RECIPE) {
   function summary(skipped) {
     var sets = (S.pending && S.pending.sets) || [], fromR = !stackView.hidden && stackEl.getBoundingClientRect();
     deck.forEach(stash); save();
-    state = "summary"; if (S.pending) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover"); endMythic();
+    state = "summary"; if (S.pending && S.pending.id) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover"); endMythic();
     summaryEl.innerHTML = "";
     deck.forEach(function (c, i) {
       var el = cardEl(c, { faceUp: true, button: true, ribbon: true }); el.style.setProperty("--n", i); showRibbon(el);
       if (i === deck.length - 1 && c.tier !== "common" && c.tier !== "uncommon") el.classList.add("best");
-      el.addEventListener("click", function () { inspect(BY_NUM[c.num]); });
-      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(BY_NUM[c.num]); } });
+      var look = function () { if (c.test) viewCard(c.num, { serial: "TEST", from: "A test card: not saved anywhere." }); else inspect(BY_NUM[c.num]); };
+      el.addEventListener("click", look);
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); look(); } });
       summaryEl.appendChild(el);
     });
     showOnly("summary");
@@ -962,9 +991,9 @@ export function start(RECIPE) {
   /* With packs left, go straight to a fresh pack in hand; "Pick another" there goes back to the wheel. */
   againBtn.addEventListener("click", function () {
     if (state !== "summary") return;
-    if (!kindCount(S.openKind)) S.openKind = !S.openKind; // that stack ran out: carry on with the other one
-    if (kindCount(S.openKind) > 0 && S.wheel !== false) { sfx.pick(); paintSelect(true); }
-    else if (kindCount(S.openKind) > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
+    if (!have()) S.openKind = !S.openKind; // that stack ran out: carry on with the other one
+    if (have() > 0 && S.wheel !== false) { sfx.pick(); paintSelect(true); }
+    else if (have() > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
   });
   function revealAll() {
     if (state !== "stack" && state !== "flipping") return;

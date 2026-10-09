@@ -386,6 +386,9 @@ export const api = {
     deleteUser: (id: string, confirm: string) => call<void>("POST", `/api/admin/users/${id}/delete`, { confirm }),
     settings: () => call<Rules>("GET", "/api/admin/settings"),
     saveSettings: (r: Rules) => call<Rules>("POST", "/api/admin/settings", r),
+    /** An unlimited throwaway pack for trying the opening flow. Rolled like a real one; nothing is saved. */
+    testPack: (pack: string, boosted = false) =>
+      call<{ cards: { num: number; tier: Tier }[] }>("POST", "/api/admin/test-pack", { pack, boosted }),
     ledger: (id: string) => call<LedgerEntry[]>("GET", `/api/admin/users/${id}/ledger`),
     audit: () => call<Audit>("GET", "/api/admin/audit"),
   },

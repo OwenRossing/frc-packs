@@ -1396,3 +1396,43 @@ async fn deleting_an_account_puts_its_cards_back_in_circulation() {
         assert!(serial_of(&ob.body, *n) <= serial_of(&oa.body, *n), "B got a freed serial for {n}");
     }
 }
+
+#[tokio::test]
+async fn admin_test_packs_save_nothing() {
+    let (app, db) = need_db!(setup(true));
+    let admin = make_admin(&app, &db).await;
+    let (player_cookie, _) = player(&app, &db).await;
+    let me = user_id(&db, &admin).await;
+    // Only the admin can use it.
+    let no = call(&app, "POST", "/api/admin/test-pack", Some(&player_cookie), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(no.status, StatusCode::FORBIDDEN);
+    assert_eq!(call(&app, "POST", "/api/admin/test-pack", None, Some(json!({ "pack": "cmp26" }))).await.status, StatusCode::UNAUTHORIZED);
+    // Snapshot everything a real pack would change.
+    let snap = |db: PgPool| async move {
+        let (sealed, boosted, opened, pm, pl): (i32, i32, i32, i32, i32) =
+            sqlx::query_as("select sealed, boosted, opened, pity_m, pity_l from user_packs where user_id = $1 and pack_id = 'cmp26'").bind(me).fetch_one(&db).await.unwrap();
+        let cards: i64 = sqlx::query_scalar("select count(*) from cards where user_id = $1").bind(me).fetch_one(&db).await.unwrap();
+        let openings: i64 = sqlx::query_scalar("select count(*) from openings where user_id = $1").bind(me).fetch_one(&db).await.unwrap();
+        let minted: i64 = sqlx::query_scalar("select coalesce(sum(minted), 0)::bigint from printings").fetch_one(&db).await.unwrap();
+        let free: i64 = sqlx::query_scalar("select count(*) from free_serials").fetch_one(&db).await.unwrap();
+        let hands: i64 = sqlx::query_scalar("select count(*) from hands where user_id = $1").bind(me).fetch_one(&db).await.unwrap();
+        (sealed, boosted, opened, pm, pl, cards, openings, minted, free, hands)
+    };
+    let before = snap(db.clone()).await;
+    let ledger_before: i64 = sqlx::query_scalar("select count(*) from ledger where user_id = $1").bind(me).fetch_one(&db).await.unwrap();
+    for boosted in [false, true, false, false] {
+        let r = call(&app, "POST", "/api/admin/test-pack", Some(&admin), Some(json!({ "pack": "cmp26", "boosted": boosted }))).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let cards = r.body["cards"].as_array().unwrap();
+        assert_eq!(cards.len(), 5);
+        let teams: std::collections::HashSet<i64> = cards.iter().map(|c| c["num"].as_i64().unwrap()).collect();
+        assert_eq!(teams.len(), 5, "no team twice in a pack");
+        assert!(rank(&cards[4]["tier"]) >= rank(&cards[0]["tier"]), "best card last");
+    }
+    // Other players' activity can change the global counters while this runs, so compare this admin's own rows and
+    // the global ledger count only for the admin.
+    let after = snap(db.clone()).await;
+    assert_eq!((after.0, after.1, after.2, after.3, after.4, after.5, after.6, after.9), (before.0, before.1, before.2, before.3, before.4, before.5, before.6, before.9), "the admin's packs, pity, cards and openings did not change");
+    let ledger_after: i64 = sqlx::query_scalar("select count(*) from ledger where user_id = $1").bind(me).fetch_one(&db).await.unwrap();
+    assert_eq!(ledger_before, ledger_after, "nothing written to the ledger");
+}

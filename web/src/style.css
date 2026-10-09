@@ -487,6 +487,11 @@ a.chip { text-decoration: none; display: inline-block; }
 .ws-other { color: var(--foam); }
 .chip.armed, #scrapBtn.armed { border-color: #ffb4a2; color: #ffb4a2; }
 .cta:disabled, .chip:disabled { opacity: .45; cursor: default; }
+/* The admin's test pack: a purple pack with a dashed outline so it can't be mistaken for a real one. */
+.ptype.test .pk { filter: hue-rotate(42deg) saturate(.95); }
+.ptype.test .cnt { background: #b98cff; color: #1c0f3a; box-shadow: 0 4px 0 #6b3fd8, 0 6px 14px rgba(0,0,0,.4); font-size: 24px; }
+.ptype.test .pt-name { color: #d7b8ff; }
+.ptype.test::before { content: ""; position: absolute; inset: -8px; border: 2px dashed rgba(185,140,255,.55); border-radius: 18px; pointer-events: none; }
 /* Pack inventory: a strip of what you have, above the stacks. */
 .pack-inv { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-bottom: 12px; }
 .pack-inv span { padding: 5px 11px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; font-weight: 700; color: var(--ink-dim); letter-spacing: .02em; }
