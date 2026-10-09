@@ -688,16 +688,25 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
             .bind(boosted)
             .fetch_one(&mut *tx)
             .await?;
-    let mut out = Vec::with_capacity(5);
-    for (slot, c) in cards.iter().enumerate() {
+    // Mint serial numbers in team order. Every pack locks the printing counters in the same order, so two packs that
+    // share teams can't each hold one counter the other is waiting for (a deadlock under load).
+    let mut by_team: Vec<i32> = cards.iter().map(|c| c.num).collect();
+    by_team.sort_unstable();
+    let mut serials = std::collections::HashMap::with_capacity(5);
+    for num in by_team {
         let serial: i32 = sqlx::query_scalar(
             "insert into printings (pack_id, team, minted) values ($1, $2, 1)
              on conflict (pack_id, team) do update set minted = printings.minted + 1 returning minted",
         )
         .bind(pack.id())
-        .bind(c.num)
+        .bind(num)
         .fetch_one(&mut *tx)
         .await?;
+        serials.insert(num, serial);
+    }
+    let mut out = Vec::with_capacity(5);
+    for (slot, c) in cards.iter().enumerate() {
+        let serial = serials[&c.num];
         let before: i64 =
             sqlx::query_scalar("select count(*) from cards where user_id = $1 and pack_id = $2 and team = $3")
                 .bind(user.id)
