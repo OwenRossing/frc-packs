@@ -20,7 +20,7 @@ use crate::roll::{self, Opts, Pity, Rolled};
 /// The free-pack rules, which the admin sets in the panel (the one row of `settings`). Out of the box: a pack every
 /// 5 hours, missed timers bank up to 2 (so sleeping through one doesn't cost a pack), and new accounts start with 2
 /// packs and a free one ready to claim.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Rules {
     /// Minutes between free packs.
@@ -33,6 +33,9 @@ pub struct Rules {
     pub start_packs: i32,
     /// Parts a boosted pack costs.
     pub boost_cost: i32,
+    /// A donation page (https), shown in the game as "Support FRC Packs". None hides it.
+    #[serde(default)]
+    pub donate_url: Option<String>,
 }
 
 impl Rules {
@@ -48,6 +51,7 @@ impl Rules {
             && (1..=10).contains(&self.bank)
             && (0..=50).contains(&self.start_packs)
             && (1..=100_000).contains(&self.boost_cost)
+            && self.donate_url.as_deref().is_none_or(|u| u.starts_with("https://") && u.len() <= 300 && !u.contains(char::is_whitespace))
     }
 
     /// How many timers have run out and wait to be claimed (at most `bank`).
@@ -57,7 +61,7 @@ impl Rules {
 }
 
 pub async fn rules(c: impl sqlx::PgExecutor<'_>) -> Result<Rules, sqlx::Error> {
-    sqlx::query_as("select claim_minutes, claim_packs, bank, start_packs, boost_cost from settings").fetch_one(c).await
+    sqlx::query_as("select claim_minutes, claim_packs, bank, start_packs, boost_cost, donate_url from settings").fetch_one(c).await
 }
 
 pub fn routes() -> Router<Shared> {
@@ -110,6 +114,8 @@ pub struct StateOut {
     bank: i32,
     /// Parts from scrapping extra copies, spent on boosted packs.
     parts: i32,
+    /// Where "Support FRC Packs" goes, if the admin set it.
+    donate_url: Option<String>,
     boost_cost: i32,
     /// Parts for scrapping one extra copy, by tier.
     scrap_parts: std::collections::HashMap<Tier, i32>,
@@ -292,6 +298,7 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         claim_packs: r.claim_packs,
         bank: r.bank,
         parts,
+        donate_url: r.donate_url.clone(),
         boost_cost: r.boost_cost,
         scrap_parts: Tier::ORDER.iter().map(|t| (*t, t.scrap_parts())).collect(),
         demo,
@@ -1026,7 +1033,7 @@ mod tests {
 
     #[test]
     fn timers_bank_up_and_each_gives_its_packs() {
-        let r = Rules { claim_minutes: 120, claim_packs: 3, bank: 2, start_packs: 0, boost_cost: 250 };
+        let r = Rules { claim_minutes: 120, claim_packs: 3, bank: 2, start_packs: 0, boost_cost: 250, donate_url: None };
         let next = Utc::now();
         assert_eq!(r.timers_ready(next - Duration::minutes(1), next), 0, "not yet");
         assert_eq!(r.timers_ready(next, next), 1);
@@ -1034,9 +1041,12 @@ mod tests {
         assert_eq!(r.timers_ready(next + Duration::minutes(120), next), 2);
         assert_eq!(r.timers_ready(next + Duration::days(3), next), 2, "missed timers bank up to 2");
         assert!(r.valid());
-        assert!(!Rules { claim_minutes: 4, ..r }.valid());
-        assert!(!Rules { claim_packs: 0, ..r }.valid());
-        assert!(!Rules { bank: 11, ..r }.valid());
-        assert!(!Rules { start_packs: -1, ..r }.valid());
+        assert!(!Rules { claim_minutes: 4, ..r.clone() }.valid());
+        assert!(!Rules { claim_packs: 0, ..r.clone() }.valid());
+        assert!(!Rules { bank: 11, ..r.clone() }.valid());
+        assert!(!Rules { start_packs: -1, ..r.clone() }.valid());
+        assert!(Rules { donate_url: Some("https://ko-fi.com/frcpacks".into()), ..r.clone() }.valid());
+        assert!(!Rules { donate_url: Some("http://example.com".into()), ..r.clone() }.valid());
+        assert!(!Rules { donate_url: Some("javascript:alert(1)".into()), ..r.clone() }.valid());
     }
 }

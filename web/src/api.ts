@@ -80,6 +80,7 @@ export interface State {
   /** Parts from scrapping extra copies, spent on boosted packs. */
   parts: number;
   boostCost: number;
+  donateUrl: string | null;
   /** Parts for scrapping one extra copy, by tier. */
   scrapParts: Record<Tier, number>;
   demo: boolean;
@@ -165,6 +166,8 @@ export interface Rules {
   startPacks: number;
   /** Parts a boosted pack costs. */
   boostCost: number;
+  /** A donation page (https), or null for none. */
+  donateUrl: string | null;
 }
 
 export interface AdminUser {

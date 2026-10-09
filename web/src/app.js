@@ -68,6 +68,9 @@ export function start(RECIPE) {
     S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
     if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
+    /* The donation link only shows when the admin set one (always https, checked by the server). */
+    var don = st.donateUrl && /^https:\/\//.test(st.donateUrl) ? st.donateUrl : "";
+    $("#donateLink").hidden = $("#donateLine").hidden = !don; if (don) { $("#donateLink").href = $("#donateBtn").href = don; }
     S.demo = st.demo; S.devTools = st.devTools;
   }
   function applyCollection(col) {

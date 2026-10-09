@@ -47,6 +47,7 @@ a.cta { text-decoration: none; display: inline-block; }
 .toast.bad { background: #4a1c22; border-color: rgba(255,140,120,.5); }
 .rules-form { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .rules-form .cta { justify-self: start; }
+.rules-form .donate-f { grid-column: 1 / -1; }
 #rulesSum { margin: 10px 0 0; }
 @media (max-width: 640px) {
   .inv-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

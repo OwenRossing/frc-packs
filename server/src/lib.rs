@@ -63,6 +63,7 @@ pub fn app(db: PgPool, cfg: Config) -> anyhow::Result<Router> {
         // Built JS/CSS: a missing file is a 404, never the page (which would then be cached as that file).
         router = router
             .route_service("/admin", ServeFile::new(web.join("admin.html")))
+            .route_service("/privacy", ServeFile::new(web.join("privacy.html")))
             .nest_service("/assets", ServeDir::new(web.join("assets")))
             .fallback_service(ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html"))));
     }

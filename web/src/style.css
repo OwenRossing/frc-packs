@@ -385,6 +385,8 @@ body.modal-open { overflow: hidden; }
 body.playing .note { display: none; }
 html:has(body.playing) { overscroll-behavior: none; }
 .note b { color: var(--ink); font-weight: 600; }
+.note-links { display: flex; gap: 16px; justify-content: center; }
+.note-links a { color: var(--tide); font-weight: 700; text-decoration: none; }
 .gear { display: inline-flex; align-items: center; gap: 6px; }
 .gear svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; }
 @media (max-width: 460px) { .brand { font-size: 19px; } .seg button { padding: 7px 10px; font-size: 11px; } }
