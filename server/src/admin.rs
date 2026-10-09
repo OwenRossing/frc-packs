@@ -456,7 +456,18 @@ async fn delete_user(
     if !req.confirm.trim().eq_ignore_ascii_case(username.as_deref().unwrap_or("guest")) {
         return Err(err(StatusCode::BAD_REQUEST, "confirm_mismatch"));
     }
-    sqlx::query("delete from users where id = $1").bind(id).execute(&s.db).await?;
+    // Their cards go back into circulation: each serial number can be pulled again by someone else.
+    let mut tx = s.db.begin().await?;
+    api::reason(&mut tx, "account deleted").await?;
+    sqlx::query(
+        "insert into free_serials (pack_id, team, serial) select pack_id, team, serial from cards where user_id = $1
+         on conflict do nothing",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("delete from users where id = $1").bind(id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

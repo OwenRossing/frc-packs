@@ -815,8 +815,6 @@ body.playing .daily { display: none; }
   background-image: radial-gradient(circle, rgba(255,248,205,.95) 0 1.3px, transparent 2.2px), radial-gradient(circle, rgba(150,255,235,.9) 0 1px, transparent 1.8px);
   background-size: 37px 48px, 23px 48px; bottom: -96px; animation: starsup 8s linear infinite; }
 @keyframes starsup { to { translate: 0 -96px; } }
-/* Everywhere a Mythic sits (binder, trades), it glows. */
-.slot:has(.card[data-tier="mythic"]) .shade { box-shadow: 0 0 calc(var(--cw) * .12) rgba(255,211,77,.35), 0 0 calc(var(--cw) * .25) rgba(60,255,220,.25); }
 
 /* The build-up: the room goes dark and the face-down card shakes harder and harder, leaking rainbow light. */
 body.mythic-dark .dim { opacity: 1; background: rgba(0,0,0,.9); transition: opacity .45s, background .45s; }

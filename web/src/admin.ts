@@ -373,7 +373,7 @@ function manage(u: AdminUser): HTMLElement {
         "chip bad",
       ),
     ),
-    h("p", { class: "meta" }, "Turning an account off keeps its cards. Deleting removes the account and all its cards for good."),
+    h("p", { class: "meta" }, "Turning an account off keeps its cards. Deleting removes the account for good, and its cards go back into circulation: their serial numbers can be pulled again by others."),
   );
   return panel;
 }

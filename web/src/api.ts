@@ -43,6 +43,8 @@ export interface Card {
   serial: number;
   isNew: boolean;
   copy: number;
+  /** Copies of this team in the whole game right now, this one included. */
+  inGame?: number;
 }
 
 export interface Opening {

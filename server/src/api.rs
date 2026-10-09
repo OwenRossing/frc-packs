@@ -238,6 +238,8 @@ struct CardOut {
     serial: i32,
     is_new: bool,
     copy: i64,
+    /// Copies of this team in the whole game right now, this one included.
+    in_game: i64,
 }
 
 #[derive(Serialize)]
@@ -319,8 +321,8 @@ async fn load_opening(
     revealed: i32,
     sets: Vec<String>,
 ) -> ApiResult<OpeningOut> {
-    let rows: Vec<(i32, String, i32, i64)> = sqlx::query_as(
-        "select team, tier, serial, copy from (
+    let rows: Vec<(i32, String, i32, i64, i64)> = sqlx::query_as(
+        "select team, tier, serial, copy, (select count(*) from cards x where x.pack_id = $2 and x.team = c.team) from (
            select team, tier, serial, slot, opening_id, row_number() over (partition by team order by id) as copy
            from cards where user_id = $1 and pack_id = $2
          ) c where opening_id = $3 order by slot",
@@ -332,12 +334,13 @@ async fn load_opening(
     .await?;
     let cards = rows
         .into_iter()
-        .map(|(num, tier, serial, copy)| CardOut {
+        .map(|(num, tier, serial, copy, in_game)| CardOut {
             num,
             tier: Tier::parse(&tier).unwrap_or(Tier::Common),
             serial,
             is_new: copy == 1,
             copy,
+            in_game,
         })
         .collect();
     Ok(OpeningOut { id, pack, revealed, cards, sets })
@@ -784,14 +787,33 @@ async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json
     by_team.sort_unstable();
     let mut serials = std::collections::HashMap::with_capacity(5);
     for num in by_team {
-        let serial: i32 = sqlx::query_scalar(
-            "insert into printings (pack_id, team, minted) values ($1, $2, 1)
-             on conflict (pack_id, team) do update set minted = printings.minted + 1 returning minted",
+        // Lock the team's counter first (it lines up everyone pulling this team), then take a serial number that came
+        // back into circulation from a deleted account if there is one, or print the next new one.
+        sqlx::query(
+            "insert into printings (pack_id, team, minted) values ($1, $2, 0)
+             on conflict (pack_id, team) do update set minted = printings.minted",
         )
         .bind(pack.id())
         .bind(num)
-        .fetch_one(&mut *tx)
+        .execute(&mut *tx)
         .await?;
+        let reused: Option<i32> = sqlx::query_scalar(
+            "delete from free_serials where (pack_id, team, serial) =
+               (select pack_id, team, serial from free_serials where pack_id = $1 and team = $2 order by serial limit 1)
+             returning serial",
+        )
+        .bind(pack.id())
+        .bind(num)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let serial = match reused {
+            Some(s) => s,
+            None => sqlx::query_scalar("update printings set minted = minted + 1 where pack_id = $1 and team = $2 returning minted")
+                .bind(pack.id())
+                .bind(num)
+                .fetch_one(&mut *tx)
+                .await?,
+        };
         serials.insert(num, serial);
     }
     let mut out = Vec::with_capacity(5);
@@ -814,7 +836,12 @@ async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json
             .bind(slot as i16)
             .execute(&mut *tx)
             .await?;
-        out.push(CardOut { num: c.num, tier: c.tier, serial, is_new: before == 0, copy: before + 1 });
+        let in_game: i64 = sqlx::query_scalar("select count(*) from cards where pack_id = $1 and team = $2")
+            .bind(pack.id())
+            .bind(c.num)
+            .fetch_one(&mut *tx)
+            .await?;
+        out.push(CardOut { num: c.num, tier: c.tier, serial, is_new: before == 0, copy: before + 1, in_game });
     }
     let pity = roll::next_pity(Pity { m: up.pity_m.max(0) as u32, l: up.pity_l.max(0) as u32 }, &cards);
     // Division sets this pack completed.

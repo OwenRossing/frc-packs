@@ -1351,3 +1351,48 @@ async fn hammering_two_accounts_loses_nothing() {
         .unwrap();
     assert_eq!(bad, 0);
 }
+
+#[tokio::test]
+async fn deleting_an_account_puts_its_cards_back_in_circulation() {
+    let (app, db) = need_db!(setup(true));
+    let admin = make_admin(&app, &db).await;
+    let (ca, _) = player(&app, &db).await;
+    let (cb, _) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    // A pack with five set teams, for A and then for B.
+    let teams: Vec<(i32, &str)> = vec![(team_of("common", 141), "common"), (team_of("common", 142), "common"), (team_of("uncommon", 141), "uncommon"), (team_of("rare", 110), "rare"), (team_of("legendary", 45), "legendary")];
+    let hand = json!(teams.iter().map(|(n, t)| json!({ "num": n, "tier": t })).collect::<Vec<_>>());
+    let give_hand = |who: uuid::Uuid| {
+        let (db, hand) = (db.clone(), hand.clone());
+        async move {
+            sqlx::query("insert into hands (user_id, pack_id, cards, boosted) values ($1, 'cmp26', $2, false)").bind(who).bind(hand).execute(&db).await.unwrap();
+        }
+    };
+    give_hand(a).await;
+    let oa = call(&app, "POST", "/api/open", Some(&ca), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(oa.status, StatusCode::OK, "{}", oa.body);
+    let serial_of = |o: &Value, n: i32| o["opening"]["cards"].as_array().unwrap().iter().find(|c| c["num"] == n).unwrap()["serial"].as_i64().unwrap();
+    assert!(oa.body["opening"]["cards"][0]["inGame"].as_i64().unwrap() >= 1, "each card says how many are in the game");
+    let name: String = sqlx::query_scalar("select username from users where id = $1").bind(a).fetch_one(&db).await.unwrap();
+    let del = call(&app, "POST", &format!("/api/admin/users/{a}/delete"), Some(&admin), Some(json!({ "confirm": name }))).await;
+    assert_eq!(del.status, StatusCode::NO_CONTENT, "{}", del.body);
+    // Every one of A's serial numbers is free again.
+    for (n, _) in &teams {
+        let free: bool = sqlx::query_scalar("select exists(select 1 from free_serials where pack_id = 'cmp26' and team = $1 and serial = $2)")
+            .bind(n).bind(serial_of(&oa.body, *n) as i32).fetch_one(&db).await.unwrap();
+        assert!(free, "team {n}'s serial is back in circulation");
+    }
+    // B pulls the same teams: no new numbers are printed; B gets freed ones.
+    let minted = |db: PgPool, ns: Vec<i32>| async move {
+        sqlx::query_scalar::<_, i64>("select coalesce(sum(minted), 0)::bigint from printings where pack_id = 'cmp26' and team = any($1)").bind(ns).fetch_one(&db).await.unwrap()
+    };
+    let ns: Vec<i32> = teams.iter().map(|t| t.0).collect();
+    let before = minted(db.clone(), ns.clone()).await;
+    give_hand(b).await;
+    let ob = call(&app, "POST", "/api/open", Some(&cb), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(ob.status, StatusCode::OK, "{}", ob.body);
+    assert_eq!(minted(db.clone(), ns.clone()).await, before, "reused serials, printed none");
+    for (n, _) in &teams {
+        assert!(serial_of(&ob.body, *n) <= serial_of(&oa.body, *n), "B got a freed serial for {n}");
+    }
+}

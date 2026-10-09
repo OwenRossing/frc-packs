@@ -82,7 +82,7 @@ export function start(RECIPE) {
   }
   function pendingFrom(o) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
-    return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy }; }) };
+    return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy, inGame: c.inGame }; }) };
   }
   function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : explain(e), 3600); }
   /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
@@ -864,8 +864,8 @@ export function start(RECIPE) {
     setTimeout(function () { burst(x - 70, y - 50, 90, "#ffd34d", 11); burst(x + 70, y - 50, 90, "#ffd34d", 11); }, 300);
     setTimeout(function () { burst(x, y - 90, 160, null, 13, true); }, 750);
     setTimeout(function () { burst(x, y, 80, "#fff6c2", 9); }, 1250);
-    var n = +c.serial;
-    say("MYTHIC · " + t.name + " (" + t.num + ") · " + (n === 1 ? "the first one ever pulled" : n > 1 ? "only the " + ordinal(n) + " ever pulled" : "No. " + c.serial), 6000);
+    var n = c.inGame;
+    say("MYTHIC · " + t.name + " (" + t.num + ") · " + (n === 1 ? "the only one in the game" : n > 1 ? "one of only " + n + " in the game" : "No. " + c.serial), 6000);
   }
   function endMythic() { document.body.classList.remove("mythic-dark", "mythic-aura"); }
   function takeover(ray) { document.documentElement.style.setProperty("--ray", ray); document.body.classList.add("takeover"); }
