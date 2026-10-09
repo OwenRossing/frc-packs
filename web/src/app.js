@@ -392,7 +392,45 @@ export function start(RECIPE) {
     document.body.classList.toggle("focus", which === "inspect");
     document.body.classList.toggle("playing", which === "inspect" || which === "stack");
     document.body.classList.remove("cutting"); skipBtn.hidden = which !== "stack";
+    setTimeout(coach, 0);
   }
+  /* ---------- first-run tips ---------- */
+  /* A new player gets one short tip per step of their first pack, pointing at what to do. Skippable, shown once. */
+  var TOUR = "frcpacks.tour", tourOn = false, coachEl = $("#coach"), coachAt = null;
+  try { tourOn = localStorage.getItem(TOUR) !== "done"; } catch (e) {}
+  var TIPS = {
+    home: [function () { return collectionEl.querySelector(".ptype"); }, "Here's your first pack. " + TAP + " it to start opening."],
+    select: [function () { return ringwrap; }, SWIPE + " to spin the wheel, then " + TAP.toLowerCase() + " the pack in front to take it."],
+    inspect: [function () { return inspectEl; }, SWIPE + " across the top of the pack to tear it open. The glow tells you how good it is."],
+    stack: [function () { return stackEl; }, TAP + " a shiny card to flip it. " + TAP + " or swipe to deal the next one."],
+    summary: [function () { return tabBinder; }, "Every card lands in your Binder. Come back daily for free packs, missions and your streak!"]
+  };
+  var ORDER_TIPS = ["home", "select", "inspect", "stack", "summary"];
+  function endTour() { tourOn = false; coachEl.hidden = true; try { localStorage.setItem(TOUR, "done"); } catch (e) {} }
+  $("#coachSkip").onclick = endTour;
+  function coach() {
+    if (!tourOn) return;
+    if (S.opened > 1 || (S.opened > 0 && state !== "summary" && state !== "stack" && state !== "dealing")) return endTour(); // not their first pack
+    var tip = TIPS[state === "dealing" ? "stack" : state];
+    if (!tip || !vOpen || vOpen.hidden || !modal.hidden) { coachEl.hidden = true; return; }
+    var at = tip[0](); if (!at) { coachEl.hidden = true; return; }
+    $("#coachTxt").textContent = tip[1];
+    $("#coachStep").textContent = "Tip " + (ORDER_TIPS.indexOf(state === "dealing" ? "stack" : state) + 1) + " of " + ORDER_TIPS.length;
+    coachAt = at; coachEl.hidden = false; placeCoach();
+    if (state === "summary") setTimeout(function () { if (state === "summary") endTour(); }, 9000);
+  }
+  function placeCoach() {
+    if (coachEl.hidden || !coachAt) return;
+    var r = coachAt.getBoundingClientRect(), w = coachEl.offsetWidth, h = coachEl.offsetHeight;
+    var below = r.bottom + h + 16 < innerHeight || r.top - h - 16 < 0;
+    var x = Math.max(16, Math.min(innerWidth - w - 16, r.left + r.width / 2 - w / 2));
+    var y = below ? Math.min(r.bottom + 12, innerHeight - h - 8) : r.top - h - 12;
+    if (state === "inspect" || state === "stack" || state === "dealing" || state === "flipping") { y = Math.max(8, r.top - h - 12); below = false; } // keep the card clear
+    coachEl.style.left = x + "px"; coachEl.style.top = Math.max(8, y) + "px";
+    coachEl.classList.toggle("below", below); coachEl.classList.toggle("above", !below);
+    coachEl.style.setProperty("--ax", Math.max(18, Math.min(w - 18, r.left + r.width / 2 - x)) + "px");
+  }
+  addEventListener("resize", placeCoach); addEventListener("scroll", placeCoach, true);
   function packsLeftHud(title, more) {
     if (S.packs > 0) setHud(title, more);
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
@@ -1171,6 +1209,7 @@ export function start(RECIPE) {
     vOpen.hidden = !open; vBinder.hidden = !b; vTrade.hidden = !tr;
     tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr));
     $("#status").hidden = !open; $("#daily").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
+    setTimeout(coach, 0);
     if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
     if (tr) { enterTrade(); paintTrades(); loadTrades(); }
     try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}

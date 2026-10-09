@@ -494,6 +494,21 @@ body.playing .daily { display: none; }
 .streak-week i.on { background: linear-gradient(90deg, #ff9a3c, #ffd34d); }
 .streak-week i.gift { background: none; border: 1px dashed #ffd34d; }
 
+/* ---------- first-run tips ---------- */
+.coach { position: fixed; z-index: 75; width: min(300px, calc(100vw - 32px)); padding: 12px 14px 10px; border-radius: 14px; background: #f5fbfa; color: #06161d;
+  box-shadow: 0 14px 40px rgba(0,0,0,.55), 0 0 0 3px rgba(39,211,195,.6); animation: coachIn .35s cubic-bezier(.2,1.3,.4,1) both; pointer-events: none; }
+.coach button { pointer-events: auto; } /* the tip never blocks a tap; only Skip is clickable */
+.coach p { margin: 2px 0 6px; font-size: 15px; font-weight: 700; line-height: 1.35; }
+.coach-step { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #138a80; }
+.coach-btns { display: flex; justify-content: flex-end; }
+.coach .textbtn { color: #138a80; font-size: 12px; }
+.coach-arrow { position: absolute; left: var(--ax, 50%); width: 14px; height: 14px; margin-left: -7px; background: #f5fbfa; transform: rotate(45deg); }
+.coach.below .coach-arrow { top: -7px; }
+.coach.above .coach-arrow { bottom: -7px; }
+@keyframes coachIn { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+.coach-target { position: relative; z-index: 5; }
+@media (prefers-reduced-motion: reduce) { .coach { animation: none; } }
+
 /* ---------- profiles ---------- */
 .profile { width: 100%; display: grid; gap: 12px; padding: 12px; border-radius: 20px; background: #071a22; border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 .pf-head { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; border: 1px solid #1f5560;
