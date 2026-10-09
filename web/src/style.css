@@ -260,8 +260,25 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .hp small { font-family: var(--body); font-weight: 700; font-size: calc(var(--cw) * .036); letter-spacing: .06em; margin-right: .25em; color: var(--ink-card); opacity: .75; }
 .art { position: relative; flex: 0 0 auto; height: 47%; border-radius: calc(var(--cw) * .02); overflow: hidden; background: var(--art); box-shadow: inset 0 0 0 calc(var(--cw) * .012) var(--art-edge, #c9a33a), 0 2px 0 rgba(0,0,0,.15); }
 .art svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.art .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; transform: translate(calc((var(--mx, 50) - 50) * -.12%), calc((var(--my, 50) - 50) * -.12%)) scale(1.14); transition: transform .12s ease-out; }
-.inner.full .art .ph { inset: 17% 5% auto; width: 90%; height: 41%; border-radius: calc(var(--cw) * .03); box-shadow: 0 0 0 calc(var(--cw) * .012) var(--gem), 0 0 calc(var(--cw) * .08) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
+/* ---------- card photo and team number ---------- */
+/* Team photos are all 4:3, so the window is 4:3 and the photo isn't zoomed in: no robot or bumper number is cut off.
+   A blurred copy behind fills any gap, and the photo drifts a hair with the tilt. */
+.art { height: auto; aspect-ratio: 4 / 3; }
+.phw { position: absolute; inset: 0; overflow: hidden; }
+.ph-bg { position: absolute; inset: -12%; width: 124%; height: 124%; object-fit: cover; filter: blur(8px) saturate(1.15) brightness(.75); pointer-events: none; -webkit-user-drag: none; }
+.phw .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 50%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none;
+  transform: translate(calc((var(--mx, 50) - 50) * -.05%), calc((var(--my, 50) - 50) * -.05%)) scale(1.02); transition: transform .12s ease-out; }
+/* Legendary and Mythic: the photo in a glowing frame under the header, over the rays. */
+.fphoto { position: relative; z-index: 1; flex: none; aspect-ratio: 4 / 3; margin: calc(var(--cw) * .01) calc(var(--cw) * .06) 0; border-radius: calc(var(--cw) * .03); overflow: hidden;
+  box-shadow: 0 0 0 calc(var(--cw) * .012) var(--gem), 0 0 calc(var(--cw) * .08) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
+/* The header: TEAM 254 on the left set like EPA 338 on the right, the name on its own line under them. */
+.hdr { display: grid; grid-template-columns: 1fr auto; align-items: baseline; column-gap: 6px; }
+.tn { grid-row: 1; grid-column: 1; font-family: var(--display); font-size: calc(var(--cw) * .13); line-height: .92; color: var(--ink-card); white-space: nowrap; }
+.tn small { font-family: var(--body); font-weight: 700; font-size: calc(var(--cw) * .036); letter-spacing: .06em; margin-right: .3em; color: var(--ink-card); opacity: .75; }
+.hdr .hp { grid-row: 1; grid-column: 2; }
+.hdr .nm { grid-row: 2; grid-column: 1 / -1; font-size: calc(var(--cw) * .072 * var(--nl, 1)); margin-top: calc(var(--cw) * .008); }
+.inner.full .tn, .inner.full .tn small { color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.7); opacity: 1; }
+
 .sub-l { display: flex; justify-content: space-between; gap: 6px; font-size: calc(var(--cw) * .033); font-weight: 700; letter-spacing: .04em; color: var(--ink-card); opacity: .8; position: relative; z-index: 2; white-space: nowrap; overflow: hidden; }
 .sub-l span:first-child { overflow: hidden; text-overflow: ellipsis; }
 .moves { display: flex; flex-direction: column; gap: calc(var(--cw) * .012); position: relative; z-index: 2; flex: 1; justify-content: center; }
@@ -773,3 +790,8 @@ body.playing .daily { display: none; }
 @media (max-width: 480px) { .collection:not(.one) .ptype .pt-name { font-size: 15px; } .collection:not(.one) .ptype .pt-sub { font-size: 10px; } .collection:not(.one) .ptype .cnt { right: -8px; min-width: 32px; height: 32px; font-size: 17px; } }
 /* On a phone the card shelf scrolls with the page: a scroll box inside a scrolling page traps your swipes. */
 @media (max-width: 640px) { .tr-grid { max-height: none; overflow: visible; } }
+/* Room for everything on the card: the division line never gets squeezed out, the photo window is a touch narrower. */
+.sub-l { flex: none; }
+.inner:not(.full) .art { width: 94%; align-self: center; }
+.tn { font-size: calc(var(--cw) * .118); }
+.fphoto { margin-inline: calc(var(--cw) * .075); }

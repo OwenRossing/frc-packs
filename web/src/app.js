@@ -230,15 +230,21 @@ export function start(RECIPE) {
       s += '<ellipse cx="100" cy="196" rx="118" ry="20" fill="rgba(0,0,0,.4)"/>';
       if (!photo) s += '<g transform="translate(-12 46) scale(1.24)">' + robotSVG(num) + '</g>';
     } else if (photo) {
-      return '<img class="ph" alt="" draggable="false" decoding="async" src="/photos/' + num + '.webp">';
+      return photoHTML(num);
     } else {
       s += '<path d="M0 98 L200 98 L200 130 L0 130 Z" fill="rgba(0,0,0,.14)"/><path d="M0 104 L200 104 M0 116 L200 116" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>';
       s += '<g transform="translate(14 2) scale(.92)">' + robotSVG(num) + '</g>';
     }
     s += "</svg>";
-    return photo ? s + '<img class="ph" alt="" draggable="false" decoding="async" src="/photos/' + num + '.webp">' : s;
+    return s; // a Legendary or Mythic photo goes in its own frame under the header (see cardEl)
   }
-  function nameScale(n) { var l = n.length; return l <= 10 ? 1 : l <= 13 ? .84 : l <= 17 ? .7 : l <= 22 ? .58 : .5; }
+  /* The whole team photo: they're all 4:3, like the window it sits in, so nothing is cropped. A blurred copy behind
+     fills any gap. */
+  function photoHTML(num) {
+    var src = '/photos/' + num + '.webp';
+    return '<span class="phw"><img class="ph-bg" alt="" draggable="false" decoding="async" src="' + src + '"><img class="ph" alt="" draggable="false" decoding="async" src="' + src + '"></span>';
+  }
+  function nameScale(n) { var l = n.length; return l <= 20 ? 1 : l <= 25 ? .86 : l <= 30 ? .74 : .64; } // the name has its own line
   function attachTilt(slot) {
     var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
     slot.addEventListener("pointermove", function (e) {
@@ -268,9 +274,11 @@ export function start(RECIPE) {
       '<div class="face back">' + BACK_SVG + '</div>' +
       '<div class="face front"><div class="inner' + (full ? " full" : "") + '" style="--nl:' + nameScale(t.name) + '">' +
       (full ? art : "") +
-      '<div class="hdr"><span class="nm">' + esc(t.name) + '</span><span class="hp"><small>EPA</small>' + (t.epa == null ? "–" : Math.round(t.epa)) + '</span></div>' +
+      // The team number leads the card, set like EPA on the other side; the name goes under them.
+      '<div class="hdr"><span class="tn"><small>TEAM</small>' + t.num + '</span><span class="hp"><small>EPA</small>' + (t.epa == null ? "–" : Math.round(t.epa)) + '</span><span class="nm">' + esc(t.name) + '</span></div>' +
       (full ? "" : art) +
-      '<div class="sub-l"><span>Team ' + t.num + ' · ' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span>CMP 2026</span></div>' +
+      '<div class="sub-l"><span>' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span>CMP 2026</span></div>' +
+      (full && t.photo ? '<div class="fphoto">' + photoHTML(t.num) + '</div>' : '') +
       '<div class="moves">' +
         '<div class="mv"><i></i><span>Champs record</span><b>' + esc(t.wl) + '</b></div>' +
         '<div class="mv"><i></i><span>Champs EPA rank</span><b>#' + t.rank + '</b></div>' +
