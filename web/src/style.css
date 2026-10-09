@@ -374,6 +374,27 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 /* While a card is open the binder behind it stays put, and a finger on the card tilts it instead of scrolling. */
 body.modal-open { overflow: hidden; }
 .modal-in .slot { touch-action: none; }
+/* Drag and drop */
+.can-drag, .can-drag * { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+.drag-ghost { position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none; margin: 0; border: 0; padding: 0; background: none;
+  filter: drop-shadow(0 18px 24px rgba(0,0,0,.55)); transition: none; will-change: transform; }
+.drag-ghost .mc { position: absolute; inset: 0; }
+.dragging { opacity: .35; }
+body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
+.drop-ok { outline: 2px dashed rgba(39,211,195,.5); outline-offset: 4px; border-radius: 14px; transition: outline-color .15s, background .15s; }
+.drop-over { outline: 2px solid var(--tide); background: rgba(39,211,195,.08); }
+.pf-sec h3 small { font-family: var(--body, inherit); font-size: 11px; color: var(--ink-dim); letter-spacing: .04em; text-transform: none; margin-left: 6px; }
+button.pf-empty { cursor: pointer; font: inherit; color: inherit; }
+button.pf-empty:hover { border-color: var(--tide); color: var(--foam); }
+.cta.wide { width: 100%; max-width: 360px; }
+/* Screens in the modal slide in from the right when you go deeper and from the left when you go back. */
+.modal-in.m-in { animation: mIn .2s ease-out; }
+.modal-in.m-push { animation: mPush .24s cubic-bezier(.2,.9,.3,1); }
+.modal-in.m-pop { animation: mPop .24s cubic-bezier(.2,.9,.3,1); }
+@keyframes mIn { from { opacity: 0; transform: scale(.96); } }
+@keyframes mPush { from { opacity: 0; transform: translateX(36px); } }
+@keyframes mPop { from { opacity: 0; transform: translateX(-36px); } }
+@media (prefers-reduced-motion: reduce) { .modal-in.m-in, .modal-in.m-push, .modal-in.m-pop { animation: none; } }
 .modal-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 420px; width: 100%; --cw: clamp(180px, min(78vw, 320px, calc((100svh - 300px) / 1.4)), 320px); }
 .serials { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; font-size: 13px; color: var(--ink-dim); text-align: center; line-height: 1.6; font-variant-numeric: tabular-nums; }
 .serials b { color: var(--foam); }
@@ -750,3 +771,5 @@ body.playing .daily { display: none; }
 .collection:not(.one) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 18px; padding-inline: 10px; }
 .collection:not(.one) .ptype { width: min(38vw, 190px, calc((100svh - 470px) / 1.52 * 1.05)); min-width: 118px; }
 @media (max-width: 480px) { .collection:not(.one) .ptype .pt-name { font-size: 15px; } .collection:not(.one) .ptype .pt-sub { font-size: 10px; } .collection:not(.one) .ptype .cnt { right: -8px; min-width: 32px; height: 32px; font-size: 17px; } }
+/* On a phone the card shelf scrolls with the page: a scroll box inside a scrolling page traps your swipes. */
+@media (max-width: 640px) { .tr-grid { max-height: none; overflow: visible; } }

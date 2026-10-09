@@ -1081,20 +1081,105 @@ export function start(RECIPE) {
   }
 
   var modal = $("#modal"), modalIn = $("#modalIn"), lastFocus = null;
+  /* The modal is a stack of screens. Opening a card from a profile puts it on top, and Back returns to the profile.
+     Each level is also a browser history entry, so the phone's back button or back swipe steps back one screen
+     instead of leaving the app. A screen is a function that fills modalIn and returns what to focus. */
+  var mstack = [], afterClose = null;
+  function present(render, replace) {
+    if (modal.hidden) { mstack = []; lastFocus = document.activeElement; }
+    var push = !replace || !mstack.length;
+    if (push) { mstack.push(render); try { history.pushState({ modal: mstack.length }, ""); } catch (e) {} }
+    else mstack[mstack.length - 1] = render;
+    paintModal(push && mstack.length > 1 ? "push" : replace ? "" : "in");
+  }
+  function paintModal(dir) {
+    modalIn.innerHTML = "";
+    var focus = mstack[mstack.length - 1]();
+    modal.hidden = false; document.body.classList.add("modal-open");
+    if (dir !== "") modal.scrollTop = 0;
+    modalIn.classList.remove("m-push", "m-pop", "m-in");
+    if (dir) { void modalIn.offsetWidth; modalIn.classList.add("m-" + dir); }
+    if (focus && focus.focus) focus.focus({ preventScroll: true });
+  }
+  function closeButton() {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta";
+    var deeper = mstack.length > 1; b.textContent = deeper ? "‹ Back" : "Close"; b.onclick = closeModal;
+    if (deeper) b.setAttribute("aria-label", "Back to the previous screen");
+    return b;
+  }
+  /* One screen back (Back, Escape, the B button, the phone's back gesture). */
+  function closeModal() {
+    if (!mstack.length) return hideModal();
+    if (history.state && history.state.modal === mstack.length) history.back(); else popModal(mstack.length - 1);
+  }
+  /* Every screen at once (tapping outside, or leaving for another tab); `then` runs once it is closed. */
+  function closeAll(then) {
+    var n = mstack.length;
+    if (!n) { hideModal(); if (then) then(); return; }
+    if (history.state && history.state.modal === n) { afterClose = then || null; history.go(-n); }
+    else { mstack = []; hideModal(); if (then) then(); }
+  }
+  function popModal(depth) {
+    if (depth >= mstack.length) return;
+    mstack.length = Math.max(0, depth);
+    if (mstack.length) return paintModal("pop");
+    hideModal(); var f = afterClose; afterClose = null; if (f) f();
+  }
+  function hideModal() {
+    mstack = []; modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = "";
+    if (lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
+  }
+  /* The phone's back button and back swipe step back through the app the way the on-screen buttons do (card ->
+     profile, pack in hand -> the wheel -> your packs, another tab -> Open) and only leave the app from the Open
+     tab's home. A spare history entry (the guard) is kept whenever there is somewhere to go back to. */
+  function deepNav() { return !settings.hidden || vOpen.hidden || state === "select" || state === "inspect" || state === "summary"; }
+  function guardNav() {
+    var hs = history.state;
+    if (!mstack.length && deepNav() && !(hs && (hs.guard || hs.modal))) try { history.pushState({ guard: 1 }, ""); } catch (e) {}
+  }
+  function navBack() {
+    if (!settings.hidden) { gear.click(); return; }
+    if (vOpen.hidden) { show("open"); return; }
+    if (state === "inspect") back();
+    else if (state === "select") { cancelAnimationFrame(ringRaf); paintHome(); }
+    else if (state === "summary") paintHome();
+  }
+  // The entry the app loaded on is marked, so an entry with no state is one a link or a notification just opened.
+  try { if (!history.state || history.state.modal) history.replaceState({ base: 1 }, ""); } catch (e) {}
+  addEventListener("popstate", function (e) {
+    var hs = e.state;
+    if (mstack.length) { popModal(hs && hs.modal || 0); if (!mstack.length && !(hs && hs.guard)) guardNav(); return; }
+    if (!hs) { // a #tab link: go there, not back
+      try { history.replaceState({ base: 1 }, ""); } catch (er) {}
+      var h = (location.hash || "").replace("#", "");
+      if (h === "open" || h === "binder" || h === "trade") show(h);
+      return guardNav();
+    }
+    if (hs.guard) return;
+    navBack(); guardNav();
+  });
+  /* Any tap that takes you somewhere deeper leaves a way back. Clicks count as a user action, which browsers need
+     before they let a history entry catch the back button. */
+  addEventListener("click", function () { setTimeout(guardNav, 0); });
   function paintTabDot() {
     var dot = $("#tabDot"), n = Object.keys(S.unseen || {}).length;
     dot.hidden = !n; dot.textContent = n > 99 ? "99+" : n;
     tabBinder.setAttribute("aria-label", n ? "Binder, " + n + " new" : "Binder");
   }
-  function inspect(t) {
+  function inspect(t, replace) { present(function () { return inspectScreen(t); }, replace); }
+  function inspectScreen(t) {
     var serials = S.inv[t.num] || [];
-    modalIn.innerHTML = "";
     modalIn.appendChild(cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true, alive: true }));
     var info = document.createElement("div"); info.className = "serials";
     info.innerHTML = "<b>" + serials.length + (serials.length === 1 ? " copy" : " copies") + "</b> owned<br>Serials: " + serials.map(function (s) { return "No. " + esc(s); }).join(" · ");
     modalIn.appendChild(info);
+    // The same team facts the card view shows everywhere else.
+    var fx = document.createElement("div"); fx.className = "serials card-facts";
+    fx.innerHTML = "<dl><dt>Team</dt><dd>" + t.num + " · " + esc(t.name) + "</dd><dt>Division</dt><dd>" + esc(t.div) + "</dd>" + (t.loc ? "<dt>From</dt><dd>" + esc(t.loc) + "</dd>" : "") +
+      "<dt>EPA</dt><dd>" + (t.epa == null ? "–" : Math.round(t.epa)) + " · #" + t.rank + " at Champs</dd><dt>Record</dt><dd>" + esc(t.wl) + "</dd></dl>";
+    modalIn.appendChild(fx);
     var row = document.createElement("div"); row.className = "cta-row";
-    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    var close = closeButton(); row.appendChild(close);
     if (t.tier === "mythic" || t.tier === "legendary") {
       var cp = document.createElement("button"); cp.type = "button"; cp.className = "cta ghost"; cp.textContent = "Copy brag text";
       cp.onclick = function () {
@@ -1105,6 +1190,11 @@ export function start(RECIPE) {
     }
     row.appendChild(pinButton(t.num));
     modalIn.appendChild(row);
+    if (serials.length) {
+      var offer = document.createElement("button"); offer.type = "button"; offer.className = "cta ghost wide"; offer.textContent = "Offer it in a trade";
+      offer.onclick = function () { closeAll(function () { offerFromBinder(t.num); }); };
+      modalIn.appendChild(offer);
+    }
     var hc = heldCopies(), free = serials.filter(function (x) { return !hc[t.num + ":" + x]; }).length;
     if (serials.length > 1 && free < 2) {
       var wait = document.createElement("p"); wait.className = "ws-note ws-held";
@@ -1118,18 +1208,18 @@ export function start(RECIPE) {
       if (more > 1) { var all = document.createElement("button"); all.type = "button"; all.className = "chip"; all.textContent = "Scrap all " + more + " extras · +" + each * more; all.onclick = function () { scrapOne(t, more, all); }; srow.appendChild(all); }
       modalIn.appendChild(srow);
     }
-    lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+    return close;
   }
   /* The first copy (the lowest serial you got first) is always kept. */
   function scrapOne(t, count, btn) {
     if (!btn._armed && (t.tier === "legendary" || t.tier === "mythic")) { btn._armed = true; btn.textContent = "Tap again to scrap"; return; }
     btn.disabled = true;
-    api.scrap(PACK_ID, t.num, count).then(function (r) { scrapped(r); inspect(t); }, function (e) { btn.disabled = false; offline(e); });
+    api.scrap(PACK_ID, t.num, count).then(function (r) { scrapped(r); inspect(t, true); }, function (e) { btn.disabled = false; offline(e); });
   }
   /* A card up close from the trading post: the full card (tilt it), its team stats, and whose copy it is. */
-  function viewCard(num, o) {
-    o = o || {}; var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
-    modalIn.innerHTML = "";
+  function viewCard(num, o) { present(function () { return cardScreen(num, o || {}); }); }
+  function cardScreen(num, o) {
+    var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
     modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: true }));
     var facts = document.createElement("div"); facts.className = "serials card-facts";
     facts.innerHTML = '<dl>' +
@@ -1143,10 +1233,15 @@ export function start(RECIPE) {
       '</dl><p>' + (o.from ? o.from + " " : "") + (mine ? "You own " + (mine === 1 ? "1 copy" : mine + " copies") + "." : "You don't have this one yet.") + '</p>';
     modalIn.appendChild(facts);
     var row = document.createElement("div"); row.className = "cta-row";
-    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    var close = closeButton(); row.appendChild(close);
     row.appendChild(mine ? pinButton(num) : wishButton(num));
     modalIn.appendChild(row);
-    lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+    if (o.action) {
+      var go = document.createElement("button"); go.type = "button"; go.className = "cta ghost wide"; go.textContent = o.action.label;
+      go.onclick = function () { closeAll(o.action.run); };
+      modalIn.appendChild(go);
+    }
+    return close;
   }
   /* ---------- wishlist, showcase and profiles ---------- */
   function wished(n) { return (S.wishlist || []).indexOf(n) >= 0; }
@@ -1179,7 +1274,9 @@ export function start(RECIPE) {
   /* A player's profile: who they are, how far their collection is, their showcase, rarest pulls and wishlist. */
   function openProfile(name) {
     if (!name) return;
-    api.profile(name, PACK_ID).then(function (p) {
+    api.profile(name, PACK_ID).then(function (p) { present(function () { return profileScreen(p); }); }, offline);
+  }
+  function profileScreen(p) {
       var pct = p.total ? Math.round(p.teams / p.total * 100) : 0, joined = new Date(p.joined).toLocaleDateString(undefined, { month: "short", year: "numeric" });
       var cards = function (list, empty, max) {
         var html = list.slice(0, max).filter(function (c) { return BY_NUM[c.num || c]; }).map(function (c) {
@@ -1187,36 +1284,70 @@ export function start(RECIPE) {
         }).join("");
         return html || empty;
       };
-      var slots = ""; for (var i = p.showcase.length; i < 3; i++) slots += '<div class="pf-empty">' + (p.me ? "Pin a card from your binder" : "Empty") + '</div>';
+      var slots = ""; for (var i = p.showcase.length; i < 3; i++) slots += p.me ? '<button type="button" class="pf-empty pf-pin">Pin a card from your binder</button>' : '<div class="pf-empty">Empty</div>';
       modalIn.innerHTML = '<div class="profile">' +
         '<div class="pf-head">' + avatar(p.username) + '<div><h2>' + esc(p.username) + '</h2><p>Joined ' + joined + (p.streak ? ' · ' + p.streak + '-day streak' : '') + '</p></div></div>' +
         '<div class="pf-stats"><div><b>' + pct + '%</b><small>collected</small></div><div><b>' + p.teams + '</b><small>teams</small></div><div><b>' + p.sets + '</b><small>sets</small></div><div><b>' + p.trades + '</b><small>trades</small></div></div>' +
-        '<section class="pf-sec"><h3>Showcase</h3><div class="pf-row">' + cards(p.showcase, "", 3) + slots + '</div></section>' +
+        '<section class="pf-sec"><h3>Showcase' + (p.me && p.showcase.length > 1 ? ' <small>Drag to reorder</small>' : '') + '</h3><div class="pf-row pf-show">' + cards(p.showcase, "", 3) + slots + '</div></section>' +
         '<section class="pf-sec"><h3>Rarest pulls</h3><div class="pf-row">' + cards(p.rarest, '<p class="hint">No cards yet.</p>', 3) + '</div></section>' +
-        '<section class="pf-sec"><h3>Wishlist' + (p.wishlist.length ? " · " + p.wishlist.length : "") + '</h3>' + (p.wishlist.length ? '<div class="pf-row wide">' + cards(p.wishlist, "", 12) + '</div>' : '<p class="hint">' + (p.me ? "Tap a card you don't have in the binder to add it." : "Nothing yet.") + '</p>') + '</section>' +
+        '<section class="pf-sec"><h3>Wishlist' + (p.wishlist.length ? " · " + p.wishlist.length : "") + '</h3>' + (p.wishlist.length ? '<div class="pf-row wide pf-wish">' + cards(p.wishlist, "", 12) + '</div>' : '<p class="hint">' + (p.me ? "Tap a card you don't have in the binder to add it." : "Nothing yet.") + '</p>') + '</section>' +
         '</div>';
       var row = document.createElement("div"); row.className = "cta-row";
-      var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+      var close = closeButton(); row.appendChild(close);
       if (!p.me && REPORTS) {
         var rep = document.createElement("button"); rep.type = "button"; rep.className = "textbtn pf-report"; rep.textContent = "Report " + p.username;
         rep.onclick = function () { reportForm(p.username); };
         modalIn.querySelector(".profile").appendChild(rep);
         var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta ghost"; tr.textContent = "Trade with " + p.username;
-        tr.onclick = function () { closeModal(); show("trade"); setPane("new"); trWho.value = p.username; loadTheirs(true); };
+        tr.onclick = function () { closeAll(function () { tradeFor(p.username); }); };
         row.appendChild(tr);
       }
       modalIn.appendChild(row);
       Array.prototype.forEach.call(modalIn.querySelectorAll(".tr-view"), function (b) {
-        b.onclick = function () { var back = p.username; viewCard(+b.dataset.num, { serial: b.dataset.serial, from: esc(back) + "'s card." }); };
+        var n = +b.dataset.num, theirs = !p.me && !b.closest(".pf-wish");
+        b.onclick = function () {
+          viewCard(n, { serial: b.dataset.serial, from: p.me ? (b.closest(".pf-wish") ? "On your wishlist." : "Your card.") : esc(p.username) + (theirs ? "'s card." : " wants this one."),
+            action: theirs ? { label: "Ask " + p.username + " for it", run: function () { tradeFor(p.username, n); } } :
+              !p.me && (S.inv[n] || []).length ? { label: "Offer it to " + p.username, run: function () { tradeFor(p.username, 0, n); } } : null });
+        };
       });
-      lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
-    }, offline);
+      Array.prototype.forEach.call(modalIn.querySelectorAll(".pf-pin"), function (b) { b.onclick = function () { closeAll(function () { show("binder"); }); }; });
+      if (p.me) showcaseDrag(p);
+      return close;
   }
   $("#myProfile").onclick = function () { openProfile(ME); };
+  /* Your showcase: drag a pinned card onto another to swap their places. */
+  function showcaseDrag(p) {
+    var cells = Array.prototype.slice.call(modalIn.querySelectorAll(".pf-show .tr-view"));
+    if (cells.length < 2) return;
+    cells.forEach(function (b, i) {
+      draggable(b, { targets: function () { return cells.filter(function (c) { return c !== b; }); }, drop: function (t) {
+        if (!t) return;
+        var j = cells.indexOf(t), list = p.showcase.slice(), moved = list[i]; list[i] = list[j]; list[j] = moved;
+        var nums = list.map(function (c) { return c.num || c; });
+        api.setShowcase(PACK_ID, nums).then(function (l) { S.showcase = l; p.showcase = list; sfx.tick(); present(function () { return profileScreen(p); }, true); }, offline);
+      } });
+    });
+  }
+  /* From your binder to the trading post, with that card on your side of the table. */
+  function offerFromBinder(n) {
+    show("trade"); setPane("new");
+    if (trGive.indexOf(n) < 0 && trGive.length < MAXT) { trGive.push(n); trFresh["give" + n] = 1; }
+    trSide = "mine"; paintTable(); paintGrid();
+    if (!theirName) { say("It's on the table. Now pick who to trade with.", 2600); try { trWho.focus(); } catch (e) {} }
+  }
+  /* Straight to the trading post with a player, with a card of theirs you want (or one of yours) on the table. */
+  var pendingWant = 0, pendingGive = 0;
+  function tradeFor(name, want, give) {
+    show("trade"); setPane("new"); pendingWant = want || 0; pendingGive = give || 0;
+    trWho.value = name; $("#trSugg").innerHTML = ""; loadTheirs(true);
+    try { $("#trPaneNew").scrollIntoView({ block: "start", behavior: RM ? "auto" : "smooth" }); } catch (e) {}
+  }
   /* Reporting a player goes to the admin, who can rename or turn off the account. Off for now: set REPORTS to true to
      show the Report link on profiles (the server and the admin panel's Reports list are ready). */
   var REPORTS = false;
-  function reportForm(name) {
+  function reportForm(name) { present(function () { return reportScreen(name); }); }
+  function reportScreen(name) {
     var reasons = [["username", "Offensive username"], ["cheating", "Cheating or abuse"], ["harassment", "Harassment"], ["other", "Something else"]];
     modalIn.innerHTML = '<form class="profile report" novalidate><div class="pf-sec"><h3>Report ' + esc(name) + '</h3>' +
       '<div class="report-reasons" role="radiogroup">' + reasons.map(function (r, i) { return '<label><input type="radio" name="reason" value="' + r[0] + '"' + (i ? '' : ' checked') + '> ' + r[1] + '</label>'; }).join("") + '</div>' +
@@ -1224,21 +1355,82 @@ export function start(RECIPE) {
       '<p class="hint">Only the admin sees reports. They can rename or turn off the account.</p></div>' +
       '<div class="cta-row"><button type="submit" class="cta">Send report</button><button type="button" class="cta ghost" id="repCancel">Cancel</button></div></form>';
     var f = modalIn.querySelector("form");
-    $("#repCancel").onclick = function () { openProfile(name); };
+    $("#repCancel").onclick = closeModal;
     f.onsubmit = function (e) {
       e.preventDefault();
       var btn = f.querySelector("button[type=submit]"); btn.disabled = true;
-      api.report(name, f.reason.value, f.details.value).then(function () { closeModal(); say("Thanks. The admin will take a look.", 3000); }, function (er) { btn.disabled = false; offline(er); });
+      api.report(name, f.reason.value, f.details.value).then(function () { closeAll(function () { say("Thanks. The admin will take a look.", 3000); }); }, function (er) { btn.disabled = false; offline(er); });
     };
-    try { f.querySelector("input").focus(); } catch (e2) {}
+    return f.querySelector("input");
   }
-  function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
-  modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+  modal.addEventListener("click", function (e) { if (e.target === modal) closeAll(); });
   addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
     if (modal.hidden && vOpen.hidden) return; // the Open screen is behind another tab
     if (!modal.hidden) closeModal(); else if (state === "inspect") back(); else if (state === "select") paintHome();
   });
+
+  /* ---------- drag and drop ---------- */
+  /* Pointer-based, so it works with a mouse and on a phone. A mouse drags once it moves a few pixels; a finger holds
+     still for a moment first, so a quick swipe still scrolls the page. Tapping still works everywhere you can drag.
+     o = { targets: () => elements you can drop on, drop: (element dropped on, or null) => ... } */
+  var drag = null, dragEnded = 0;
+  function draggable(el, o) {
+    el.classList.add("can-drag");
+    el.addEventListener("dragstart", function (e) { e.preventDefault(); }); // no native image dragging (it would take over the gesture)
+    el.addEventListener("pointerdown", function (e) {
+      if (e.button || drag) return;
+      var d = drag = { el: el, o: o, x: e.clientX, y: e.clientY, id: e.pointerId, touch: e.pointerType !== "mouse", live: false };
+      if (d.touch) d.timer = setTimeout(function () { dragStart(d); }, 260);
+    });
+  }
+  function dragStart(d) {
+    if (drag !== d || d.live) return;
+    d.live = true; buzz(12); sfx.pick();
+    var r = d.el.getBoundingClientRect(), g = d.el.cloneNode(true);
+    g.className = "drag-ghost"; g.removeAttribute("id"); g.style.width = r.width + "px"; g.style.height = r.height + "px";
+    d.dx = d.x - r.left; d.dy = d.y - r.top; d.ghost = g; document.body.appendChild(g);
+    d.el.classList.add("dragging"); document.body.classList.add("is-dragging");
+    d.targets = d.o.targets().filter(Boolean); d.targets.forEach(function (t) { t.classList.add("drop-ok"); });
+    dragMove(d, d.x, d.y);
+  }
+  function dragMove(d, x, y) {
+    d.lx = x; d.ly = y;
+    d.ghost.style.transform = "translate(" + (x - d.dx) + "px," + (y - d.dy) + "px) rotate(-3deg) scale(1.06)";
+    d.over = null;
+    d.targets.forEach(function (t) {
+      var r = t.getBoundingClientRect(), on = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      t.classList.toggle("drop-over", on); if (on) d.over = t;
+    });
+    // Near the top or bottom of the screen, scroll so a far-away target can be reached.
+    var edge = 60, v = y < edge ? -12 : y > innerHeight - edge ? 12 : 0;
+    var box = modal.hidden ? null : modal;
+    if (v) (box || window).scrollBy(0, v);
+  }
+  function dragEnd(e, cancel) {
+    var d = drag; if (!d || (e && e.pointerId !== d.id)) return;
+    clearTimeout(d.timer); drag = null;
+    if (!d.live) return;
+    dragEnded = Date.now();
+    d.ghost.remove(); d.el.classList.remove("dragging"); document.body.classList.remove("is-dragging");
+    d.targets.forEach(function (t) { t.classList.remove("drop-ok", "drop-over"); });
+    if (!cancel) d.o.drop(d.over, d.lx, d.ly);
+  }
+  addEventListener("pointermove", function (e) {
+    var d = drag; if (!d || e.pointerId !== d.id) return;
+    if (!d.live) {
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 8) return;
+      if (d.touch) { clearTimeout(d.timer); drag = null; return; } // a swipe: let the page scroll
+      dragStart(d);
+    }
+    e.preventDefault(); dragMove(d, e.clientX, e.clientY);
+  }, { passive: false });
+  addEventListener("pointerup", function (e) { dragEnd(e); });
+  addEventListener("pointercancel", function (e) { dragEnd(e, true); });
+  addEventListener("touchmove", function (e) { if (drag && drag.live) e.preventDefault(); }, { passive: false });
+  addEventListener("contextmenu", function (e) { if (drag) e.preventDefault(); });
+  // The click that ends a drag isn't a tap.
+  addEventListener("click", function (e) { if (Date.now() - dragEnded < 350) { e.stopPropagation(); e.preventDefault(); } }, true);
 
   /* ---------- tabs and settings ---------- */
   var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), tabTrade = $("#tabTrade"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder"), vTrade = $("#viewTrade");
@@ -1251,7 +1443,7 @@ export function start(RECIPE) {
     setTimeout(coach, 0);
     if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
     if (tr) { enterTrade(); paintTrades(); loadTrades(); }
-    try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}
+    try { history.replaceState(history.state, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
     vBinder._was = b; paintTabDot();
   }
@@ -1479,6 +1671,8 @@ export function start(RECIPE) {
         s.className = "tr-slot full" + (trFresh[side + n] ? " pop" : ""); s.innerHTML = miniCard(n) + '<span class="tr-x" aria-hidden="true">×</span>';
         s.setAttribute("aria-label", "Remove " + BY_NUM[n].name);
         s.onclick = (function (n) { return function () { (side === "give" ? trGive : trGet).splice((side === "give" ? trGive : trGet).indexOf(n), 1); sfx.tick(); paintTable(); paintGrid(); }; })(n);
+        // Drag a card off the table to take it back.
+        draggable(s, { targets: function () { return [$("#trBrowse")]; }, drop: (function (s, sideEl) { return function (t, x, y) { var r = sideEl.getBoundingClientRect(); if (t || x < r.left || x > r.right || y < r.top || y > r.bottom) s.onclick(); }; })(s, box.closest(".tr-side")) });
       } else {
         s.className = "tr-slot"; s.innerHTML = '<span class="tr-plus" aria-hidden="true">+</span>';
         s.setAttribute("aria-label", side === "give" ? "Add one of your cards" : "Add one of their cards");
@@ -1547,9 +1741,11 @@ export function start(RECIPE) {
         else { picked.push(n); trFresh[(mineSide ? "give" : "get") + n] = 1; sfx.pick(); }
         paintTable(); paintGrid();
       };
+      // Or drag it onto the table.
+      draggable(b, { targets: function () { return [$(".tr-side." + (mineSide ? "mine" : "theirs"))]; }, drop: function (t) { if (t && picked.indexOf(n) < 0) b.onclick(); } });
       var info = document.createElement("button"); info.type = "button"; info.className = "tr-info"; info.textContent = "i";
       info.setAttribute("aria-label", "See " + BY_NUM[n].name + " up close");
-      info.onclick = function () { viewCard(n, { from: mineSide ? "You have " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." : esc(theirName) + " has " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." }); };
+      info.onclick = function () { viewCard(n, { action: { label: on ? "Take it off the table" : "Put it on the table", run: function () { b.onclick(); } }, from: mineSide ? "You have " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." : esc(theirName) + " has " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." }); };
       cell.appendChild(b); cell.appendChild(info); trGrid.appendChild(cell);
     });
     if (list.length > 80) { var more = document.createElement("p"); more.className = "tr-more"; more.textContent = "Showing 80 of " + list.length + ". Search to find the rest."; trGrid.appendChild(more); }
@@ -1568,6 +1764,9 @@ export function start(RECIPE) {
       theirGoods = null; trGoods.wantPacks = trGoods.wantParts = 0;
       api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; theirGoods = { packs: p.packs, parts: p.parts }; paintTable(); paintGrid(); paintMatch(); } }, function () {});
       col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
+      if (pendingWant && theirInv[pendingWant] && trGet.indexOf(pendingWant) < 0 && trGet.length < MAXT) { trGet.push(pendingWant); trFresh["get" + pendingWant] = 1; trSide = "theirs"; }
+      if (pendingGive && (S.inv[pendingGive] || []).length && trGive.indexOf(pendingGive) < 0 && trGive.length < MAXT) { trGive.push(pendingGive); trFresh["give" + pendingGive] = 1; }
+      pendingWant = pendingGive = 0;
       $("#trSugg").innerHTML = ""; paintTable(); paintGrid();
     }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintTable(); paintGrid(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
   }
