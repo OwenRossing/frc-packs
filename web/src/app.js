@@ -385,20 +385,20 @@ export function start(RECIPE) {
   function paintStatus() {
     if (dailyDirty) paintDaily();
     var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS;
-    packCount.textContent = S.packs;
+    setText(packCount, S.packs);
     var n = banked(now), ready = n * PER, next = PER === 1 ? "another" : PER + " more";
-    claimBtn.hidden = !n; claimBtn.textContent = ready === 1 ? "Claim pack" : "Claim " + ready + " packs";
-    if (n >= BANK) timerEl.textContent = (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready";
-    else if (n) timerEl.innerHTML = (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready · " + next + " in <b>" + fmt(S.nextClaimAt + n * CLAIM_MS - now) + "</b>";
-    else timerEl.innerHTML = "Next " + (PER === 1 ? "free pack" : PER + " free packs") + " in <b>" + fmt(S.nextClaimAt - now) + "</b>";
+    if (claimBtn.hidden !== !n) claimBtn.hidden = !n; setText(claimBtn, ready === 1 ? "Claim pack" : "Claim " + ready + " packs");
+    if (n >= BANK) setHTML(timerEl, (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready");
+    else if (n) setHTML(timerEl, (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready · " + next + " in <b>" + fmt(S.nextClaimAt + n * CLAIM_MS - now) + "</b>");
+    else setHTML(timerEl, "Next " + (PER === 1 ? "free pack" : PER + " free packs") + " in <b>" + fmt(S.nextClaimAt - now) + "</b>");
     paintMeter();
   }
   function paintMeter() {
     var n = S.pity.m, el = $("#meter");
-    $("#meterBar").style.width = (Math.min(n, HARD) / HARD * 100) + "%";
-    $("#meterTxt").textContent = n + " / " + HARD;
-    el.classList.toggle("hot", n >= SOFT);
-    el.title = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + ".";
+    var w = (Math.min(n, HARD) / HARD * 100) + "%", bar = $("#meterBar"); if (bar.style.width !== w) bar.style.width = w;
+    setText($("#meterTxt"), n + " / " + HARD);
+    if (el.classList.contains("hot") !== (n >= SOFT)) el.classList.toggle("hot", n >= SOFT);
+    var tip = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + "."; if (el.title !== tip) el.title = tip;
   }
   setInterval(function () { paintStatus(); if (state === "select" || state === "home") paintSelectHud(); }, 1000);
   var claiming = false;
@@ -416,7 +416,11 @@ export function start(RECIPE) {
   var selectView = $("#selectView"), inspectView = $("#inspectView"), inspectEl = $("#inspect"), stackView = $("#stackView"), stackEl = $("#stack"), counterEl = $("#counter");
   var summaryEl = $("#summary"), inspectBtns = $("#inspectBtns"), sumBtns = $("#sumBtns"), againBtn = $("#again"), skipBtn = $("#skipBtn");
   var state = "home", chosen = -1, deck = [], idx = 0;
-  function setHud(h, s) { hint.textContent = h; sub.textContent = s; }
+  /* The status bar ticks every second. Writing the same text again still makes the browser redo styles, so these
+     only touch the page when something actually changed. */
+  function setText(el, v) { v = String(v); if (el.textContent !== v) el.textContent = v; }
+  function setHTML(el, v) { if (el._html !== v) { el._html = v; el.innerHTML = v; } }
+  function setHud(h, s) { setText(hint, h); setText(sub, s); }
   function showOnly(which) {
     homeView.hidden = which !== "home"; selectView.hidden = which !== "select"; inspectView.hidden = which !== "inspect"; inspectBtns.hidden = which !== "inspect";
     stackView.hidden = which !== "stack"; counterEl.hidden = which !== "stack"; summaryEl.hidden = which !== "summary"; sumBtns.hidden = which !== "summary";
@@ -479,15 +483,15 @@ export function start(RECIPE) {
     if (state === "home" && collectionEl.children.length !== want) return paintHome();
     Array.prototype.forEach.call(collectionEl.querySelectorAll(".ptype"), function (tile) { paintTile(tile, PACKS[0]); });
     var inv = $("#packInv");
-    if (inv) inv.innerHTML = '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') +
-      '<span><b>' + S.parts + '</b> parts</span><span><b>' + Math.max(0, S.boostCost - S.parts) + '</b> to next boosted</span>';
+    if (inv) setHTML(inv, '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') +
+      '<span><b>' + S.parts + '</b> parts</span><span><b>' + Math.max(0, S.boostCost - S.parts) + '</b> to next boosted</span>');
   }
   /* ---------- home: your pack collection ---------- */
   function paintTile(b, pk) {
     var boosted = b._boosted, n = kindCount(boosted);
-    b.classList.toggle("empty", n < 1); b.querySelector(".cnt").textContent = "×" + n;
-    b.querySelector(".pt-sub").textContent = n ? (boosted ? "Better odds" : "Tap to open") : "None left";
-    b.setAttribute("aria-label", (boosted ? "Boosted " : "") + pk.name + " pack, " + n + " to open");
+    if (b.classList.contains("empty") !== (n < 1)) b.classList.toggle("empty", n < 1); setText(b.querySelector(".cnt"), "×" + n);
+    setText(b.querySelector(".pt-sub"), n ? (boosted ? "Better odds" : "Tap to open") : "None left");
+    var al = (boosted ? "Boosted " : "") + pk.name + " pack, " + n + " to open"; if (b.getAttribute("aria-label") !== al) b.setAttribute("aria-label", al);
   }
   function paintHome() {
     state = "home"; showOnly("home");
