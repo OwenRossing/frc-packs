@@ -18,6 +18,47 @@ pub fn valid_username(name: &str) -> bool {
     (3..=20).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+/// Words no username may contain anywhere: slurs, profanity, and sexual or hateful terms. Usernames are public
+/// (trades, profiles), and many players are students. Only roots that don't hide inside ordinary words.
+const BLOCKED_ANYWHERE: &[&str] = &[
+    "fuck", "fuk", "fck", "shit", "bitch", "cunt", "pussy", "asshole", "bastard", "whore", "slut", "nigg", "nigr",
+    "faggot", "retard", "kike", "chink", "tranny", "wetback", "beaner", "hitler", "rapist", "molest", "porn", "penis",
+    "vagina", "dildo", "jizz", "horny", "milf", "hentai", "killyourself",
+];
+
+/// Words blocked only as a whole word (split on underscores and digits), because they hide inside ordinary words:
+/// grape, torpedo, spice, peacock, Dickens.
+const BLOCKED_WORDS: &[&str] = &[
+    "dick", "cock", "rape", "pedo", "spic", "gook", "fag", "nazi", "heil", "kkk", "tits", "boob", "boobs", "nude",
+    "naked", "xxx", "kys", "cum", "sex", "sexy", "dyke", "semen", "anal", "ass", "piss",
+];
+
+/// False when a username contains a blocked word, also spelled with digits or symbols for letters (sh1t, b1tch) or
+/// broken up with underscores (f_u_c_k).
+pub fn decent_username(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let unleet: String = lower
+        .chars()
+        .map(|c| match c {
+            '0' => 'o',
+            '1' | '!' => 'i',
+            '3' => 'e',
+            '4' | '@' => 'a',
+            '5' | '$' => 's',
+            '7' => 't',
+            '8' => 'b',
+            c => c,
+        })
+        .collect();
+    let squashed: String = unleet.chars().filter(|c| *c != '_').collect();
+    if BLOCKED_ANYWHERE.iter().any(|w| lower.contains(w) || unleet.contains(w) || squashed.contains(w)) {
+        return false;
+    }
+    // Whole words: the name split on underscores and digits (before digits become letters), and the whole name.
+    let words: Vec<&str> = lower.split(|c: char| c == '_' || c.is_ascii_digit()).filter(|w| !w.is_empty()).collect();
+    !BLOCKED_WORDS.iter().any(|w| words.contains(w) || squashed == *w || unleet.split('_').any(|p| p == *w))
+}
+
 pub fn valid_password(pw: &str) -> bool {
     (8..=128).contains(&pw.chars().count())
 }
@@ -154,6 +195,16 @@ impl Limiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn username_filter() {
+        for bad in ["fuckbot", "sh1tposter", "f_u_c_k", "B1TCH_x", "big_dick", "dick", "Nazi254", "sexy_robot", "xXx_420"] {
+            assert!(!decent_username(bad), "{bad} should be blocked");
+        }
+        for ok in ["grapefruit", "torpedo_254", "spicy_bots", "peacock", "Dickens", "Cassie", "assembler", "classy", "cumulus", "Robo_Sexton", "analyst"] {
+            assert!(decent_username(ok), "{ok} should be allowed");
+        }
+    }
 
     #[test]
     fn passwords_hash_and_verify() {

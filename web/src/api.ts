@@ -92,6 +92,16 @@ export interface State {
   pending: Opening | null;
 }
 
+export interface Report {
+  id: number;
+  targetId: string;
+  target: string;
+  reporter: string;
+  reason: "username" | "cheating" | "harassment" | "other";
+  details: string;
+  createdAt: number;
+}
+
 export interface Profile {
   username: string;
   me: boolean;
@@ -273,6 +283,8 @@ export const api = {
   setWish: (pack: string, team: number, on: boolean) => call<number[]>("POST", "/api/wishlist", { pack, team, on }),
   /** Pin up to 3 teams you own to your profile. */
   setShowcase: (pack: string, teams: number[]) => call<number[]>("POST", "/api/showcase", { pack, teams }),
+  /** Report a player to the admin: reason is username, cheating, harassment or other. */
+  report: (username: string, reason: string, details: string) => call<void>("POST", "/api/report", { username, reason, details }),
   /** Collect a finished daily mission's parts. */
   claimMission: (id: string) => call<State>("POST", `/api/missions/${encodeURIComponent(id)}/claim`),
   /** Spend parts on a boosted pack. */
@@ -291,6 +303,9 @@ export const api = {
     deleteInvite: (code: string) => call<void>("POST", `/api/admin/invites/${encodeURIComponent(code)}/delete`),
     users: () => call<AdminUser[]>("GET", "/api/admin/users"),
     resetPassword: (id: string) => call<{ password: string }>("POST", `/api/admin/users/${id}/password`),
+    rename: (id: string, username: string) => call<void>("POST", `/api/admin/users/${id}/rename`, { username }),
+    reports: () => call<Report[]>("GET", "/api/admin/reports"),
+    resolveReport: (id: number) => call<void>("POST", `/api/admin/reports/${id}/resolve`),
     givePacks: (id: string, count: number) => call<void>("POST", `/api/admin/users/${id}/packs`, { count }),
     setDisabled: (id: string, disabled: boolean) => call<void>("POST", `/api/admin/users/${id}/disabled`, { disabled }),
     deleteUser: (id: string, confirm: string) => call<void>("POST", `/api/admin/users/${id}/delete`, { confirm }),
@@ -329,6 +344,8 @@ export function explain(e: unknown): string {
     not_your_trade: "That trade isn't yours to answer.",
     mission_not_ready: "That mission isn't finished yet.",
     wishlist_full: "Your wishlist is full (50). Take something off first.",
+    username_not_allowed: "That username isn't allowed. Pick something else.",
+    too_many_reports: "You've sent a lot of reports today. The admin will look at them.",
   };
   return words[e.code] ?? "Something went wrong. Try again.";
 }

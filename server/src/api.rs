@@ -361,6 +361,9 @@ async fn signup(
     if !accounts::valid_username(username) {
         return Err(err(StatusCode::BAD_REQUEST, "bad_username"));
     }
+    if !accounts::decent_username(username) {
+        return Err(err(StatusCode::BAD_REQUEST, "username_not_allowed"));
+    }
     if !accounts::valid_password(&req.password) {
         return Err(err(StatusCode::BAD_REQUEST, "bad_password"));
     }

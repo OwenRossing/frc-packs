@@ -3,7 +3,7 @@
 
 import "./style.css";
 import "./admin.css";
-import { api, ApiError, explain, type AdminUser, type Invite, type Rules } from "./api";
+import { api, ApiError, explain, type AdminUser, type Invite, type Report, type Rules } from "./api";
 
 type Kid = Node | string | null | undefined | false;
 
@@ -289,6 +289,28 @@ function manage(u: AdminUser): HTMLElement {
     return panel;
   }
 
+  if (u.username) {
+    const nameIn = h("input", { class: "input", value: u.username, "aria-label": `New username for ${u.username}`, maxlength: "20", autocapitalize: "none", spellcheck: "false" });
+    panel.append(
+      h("div", { class: "mrow" }, h("span", {}, "Rename"), nameIn,
+        button("Save", async (b) => {
+          const name = nameIn.value.trim();
+          if (name === u.username) return;
+          b.disabled = true;
+          try {
+            await api.admin.rename(u.id, name);
+            say(`Renamed ${u.username} to ${name}. Their cards and password stay.`);
+            await loadUsers();
+          } catch (e) {
+            fail(e);
+          } finally {
+            b.disabled = false;
+          }
+        }, "cta small"),
+      ),
+    );
+  }
+
   const row = h("div", { class: "mrow wrap" });
   if (u.username) {
     row.append(
@@ -405,15 +427,65 @@ async function loadUsers() {
   paintUsers();
 }
 
+// ---------- reports ----------
+
+const REASON: Record<Report["reason"], string> = { username: "Offensive username", cheating: "Cheating or abuse", harassment: "Harassment", other: "Something else" };
+let reports: Report[] = [];
+
+function paintReports() {
+  $("#repCount").textContent = reports.length ? `${reports.length} open` : "";
+  const list = $("#reports");
+  list.replaceChildren();
+  if (!reports.length) list.append(h("p", { class: "empty" }, "No reports. When a player reports someone, it shows up here."));
+  for (const r of reports) {
+    list.append(
+      h(
+        "div",
+        { class: "item" },
+        h(
+          "div",
+          { class: "item-main" },
+          h("div", { class: "who" }, h("b", {}, r.target), h("span", { class: "badge off" }, REASON[r.reason] ?? r.reason)),
+          r.details ? h("div", { class: "meta" }, `"${r.details}"`) : null,
+          h("div", { class: "meta" }, h("span", {}, `from ${r.reporter}`), h("span", {}, when(r.createdAt))),
+        ),
+        h(
+          "div",
+          { class: "actions" },
+          button("Manage account", () => {
+            openId = r.targetId;
+            ($("#userFilter") as HTMLInputElement).value = r.target;
+            paintUsers();
+            $("#users").scrollIntoView({ behavior: "smooth", block: "start" });
+          }),
+          button("Mark handled", async (b) => {
+            b.disabled = true;
+            try {
+              await api.admin.resolveReport(r.id);
+              reports = reports.filter((x) => x.id !== r.id);
+              paintReports();
+            } catch (e) {
+              fail(e);
+              b.disabled = false;
+            }
+          }),
+        ),
+      ),
+    );
+  }
+}
+
 // ---------- start ----------
 
 async function boot() {
   try {
-    const [st, inv, us, rules] = await Promise.all([api.state(), api.admin.invites(), api.admin.users(), api.admin.settings()]);
+    const [st, inv, us, rules, reps] = await Promise.all([api.state(), api.admin.invites(), api.admin.users(), api.admin.settings(), api.admin.reports()]);
+    reports = reps;
     me = st.account.username;
     invites = inv;
     users = us;
     showRules(rules);
+    paintReports();
     $("#panel").hidden = false;
     paintInvites();
     paintUsers();

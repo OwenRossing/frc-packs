@@ -25,6 +25,72 @@ pub fn routes() -> Router<Shared> {
         .route("/users/{id}/disabled", post(set_disabled))
         .route("/users/{id}/delete", post(delete_user))
         .route("/settings", get(settings).post(save_settings))
+        .route("/reports", get(reports))
+        .route("/reports/{id}/resolve", post(resolve_report))
+        .route("/users/{id}/rename", post(rename_user))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportOut {
+    id: i64,
+    target_id: Uuid,
+    target: String,
+    reporter: String,
+    reason: String,
+    details: String,
+    created_at: i64,
+}
+
+/// Open reports, newest first.
+async fn reports(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<ReportOut>>> {
+    let rows: Vec<(i64, Uuid, Option<String>, Option<String>, String, String, DateTime<Utc>)> = sqlx::query_as(
+        "select r.id, r.target, t.username, f.username, r.reason, r.details, r.created_at
+         from reports r join users t on t.id = r.target join users f on f.id = r.reporter
+         where r.resolved_at is null order by r.created_at desc limit 200",
+    )
+    .fetch_all(&s.db)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(id, target_id, target, reporter, reason, details, at)| ReportOut {
+                id,
+                target_id,
+                target: target.unwrap_or_else(|| "guest".into()),
+                reporter: reporter.unwrap_or_else(|| "guest".into()),
+                reason,
+                details,
+                created_at: ms(at),
+            })
+            .collect(),
+    ))
+}
+
+async fn resolve_report(State(s): State<Shared>, _admin: Admin, Path(id): Path<i64>) -> ApiResult<StatusCode> {
+    sqlx::query("update reports set resolved_at = now() where id = $1 and resolved_at is null").bind(id).execute(&s.db).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct RenameReq {
+    username: String,
+}
+
+/// Gives an account a new username (for one that's offensive). Their cards, trades and password stay.
+async fn rename_user(State(s): State<Shared>, admin: Admin, Path(id): Path<Uuid>, Json(req): Json<RenameReq>) -> ApiResult<StatusCode> {
+    other_user(&s, &admin, id).await?;
+    let name = req.username.trim();
+    if !accounts::valid_username(name) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_username"));
+    }
+    if !accounts::decent_username(name) {
+        return Err(err(StatusCode::BAD_REQUEST, "username_not_allowed"));
+    }
+    match sqlx::query("update users set username = $2 where id = $1").bind(id).bind(name).execute(&s.db).await {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if accounts::is_unique_violation(&e) => Err(err(StatusCode::CONFLICT, "username_taken")),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// The free-pack rules: how often, how many, how many missed timers wait, and how many packs new accounts get.

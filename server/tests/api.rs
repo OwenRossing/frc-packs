@@ -1039,3 +1039,35 @@ async fn profiles_showcase_and_wishlist() {
     assert_eq!(off.body, json!([]));
     assert_eq!(call(&app, "GET", "/api/players/nobody_here_x/profile/cmp26", Some(&cb), None).await.status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn usernames_reports_and_renames() {
+    let (app, db) = need_db!(setup(true));
+    let code = invite(&db, 1).await;
+    let r = call(&app, "POST", "/api/signup", None, Some(json!({ "code": code, "username": "sh1t_bot", "password": "hunter22!" }))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("username_not_allowed")));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let b = user_id(&db, &cb).await;
+    let bad = call(&app, "POST", "/api/report", Some(&ca), Some(json!({ "username": b_name, "reason": "spam" }))).await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "unknown reason");
+    let ok = call(&app, "POST", "/api/report", Some(&ca), Some(json!({ "username": b_name, "reason": "username", "details": "rude" }))).await;
+    assert_eq!(ok.status, StatusCode::NO_CONTENT);
+    assert_eq!(call(&app, "POST", "/api/admin/reports/1/resolve", Some(&ca), Some(json!({}))).await.status, StatusCode::FORBIDDEN);
+    let admin = make_admin(&app, &db).await;
+    let list = call(&app, "GET", "/api/admin/reports", Some(&admin), None).await.body;
+    let rep = list.as_array().unwrap().iter().find(|r| r["target"] == b_name.as_str()).unwrap().clone();
+    assert_eq!((rep["reason"].as_str(), rep["details"].as_str()), (Some("username"), Some("rude")));
+    let renamed = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let nope = call(&app, "POST", &format!("/api/admin/users/{b}/rename"), Some(&admin), Some(json!({ "username": "b1tch_x" }))).await;
+    assert_eq!(nope.body["error"], "username_not_allowed");
+    let r = call(&app, "POST", &format!("/api/admin/users/{b}/rename"), Some(&admin), Some(json!({ "username": renamed }))).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let st = call(&app, "GET", "/api/state", Some(&cb), None).await.body;
+    assert_eq!(st["account"]["username"], renamed.as_str(), "renamed and still signed in");
+    let id = rep["id"].as_i64().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/admin/reports/{id}/resolve"), Some(&admin), Some(json!({}))).await.status, StatusCode::NO_CONTENT);
+    let list = call(&app, "GET", "/api/admin/reports", Some(&admin), None).await.body;
+    assert!(list.as_array().unwrap().iter().all(|r| r["id"] != id), "resolved reports leave the list");
+}

@@ -1181,6 +1181,9 @@ export function start(RECIPE) {
       var row = document.createElement("div"); row.className = "cta-row";
       var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
       if (!p.me) {
+        var rep = document.createElement("button"); rep.type = "button"; rep.className = "textbtn pf-report"; rep.textContent = "Report " + p.username;
+        rep.onclick = function () { reportForm(p.username); };
+        modalIn.querySelector(".profile").appendChild(rep);
         var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta ghost"; tr.textContent = "Trade with " + p.username;
         tr.onclick = function () { closeModal(); show("trade"); setPane("new"); trWho.value = p.username; loadTheirs(true); };
         row.appendChild(tr);
@@ -1193,6 +1196,23 @@ export function start(RECIPE) {
     }, offline);
   }
   $("#myProfile").onclick = function () { openProfile(ME); };
+  /* Reporting a player goes to the admin, who can rename or turn off the account. */
+  function reportForm(name) {
+    var reasons = [["username", "Offensive username"], ["cheating", "Cheating or abuse"], ["harassment", "Harassment"], ["other", "Something else"]];
+    modalIn.innerHTML = '<form class="profile report" novalidate><div class="pf-sec"><h3>Report ' + esc(name) + '</h3>' +
+      '<div class="report-reasons" role="radiogroup">' + reasons.map(function (r, i) { return '<label><input type="radio" name="reason" value="' + r[0] + '"' + (i ? '' : ' checked') + '> ' + r[1] + '</label>'; }).join("") + '</div>' +
+      '<textarea class="input" name="details" maxlength="500" rows="3" placeholder="What happened? (optional)"></textarea>' +
+      '<p class="hint">Only the admin sees reports. They can rename or turn off the account.</p></div>' +
+      '<div class="cta-row"><button type="submit" class="cta">Send report</button><button type="button" class="cta ghost" id="repCancel">Cancel</button></div></form>';
+    var f = modalIn.querySelector("form");
+    $("#repCancel").onclick = function () { openProfile(name); };
+    f.onsubmit = function (e) {
+      e.preventDefault();
+      var btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+      api.report(name, f.reason.value, f.details.value).then(function () { closeModal(); say("Thanks. The admin will take a look.", 3000); }, function (er) { btn.disabled = false; offline(er); });
+    };
+    try { f.querySelector("input").focus(); } catch (e2) {}
+  }
   function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
