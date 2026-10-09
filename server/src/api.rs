@@ -444,6 +444,8 @@ struct SignupReq {
     code: String,
     username: String,
     password: String,
+    #[serde(default, rename = "firstName")]
+    first_name: String,
 }
 
 /// Makes an account with an invite code and signs it in. From a browser with an old guest account, that account
@@ -466,6 +468,10 @@ async fn signup(
     }
     if !accounts::valid_password(&req.password) {
         return Err(err(StatusCode::BAD_REQUEST, "bad_password"));
+    }
+    let first_name = req.first_name.trim();
+    if first_name.is_empty() || first_name.chars().count() > 30 || first_name.chars().any(|c| c.is_control()) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_first_name"));
     }
     let code = accounts::normalize_code(&req.code);
     let invite: Option<(i32, i32)> =
@@ -510,6 +516,7 @@ async fn signup(
         Err(e) if accounts::is_unique_violation(&e) => return Err(err(StatusCode::CONFLICT, "username_taken")),
         Err(e) => return Err(e.into()),
     };
+    sqlx::query("update users set first_name = $2 where id = $1").bind(id).bind(first_name).execute(&mut *tx).await?;
     sqlx::query("update invites set uses = uses + 1 where code = $1").bind(&code).execute(&mut *tx).await?;
     sqlx::query("delete from sessions where user_id = $1").bind(id).execute(&mut *tx).await?;
     let token = accounts::new_session(&mut tx, id).await?;

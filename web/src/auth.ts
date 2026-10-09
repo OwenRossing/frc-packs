@@ -74,11 +74,12 @@ export function signIn(guest: boolean): Promise<State> {
       joinForm,
       () => {
         if (!field(joinForm, "code").value.trim()) return "Enter your invite code.";
+        if (!field(joinForm, "firstName").value.trim()) return explain(new ApiError(400, "bad_first_name"));
         if (!USERNAME.test(field(joinForm, "username").value.trim())) return explain(new ApiError(400, "bad_username"));
         if (field(joinForm, "password").value.length < 8) return "Passwords need at least 8 characters.";
         return null;
       },
-      () => api.signup(field(joinForm, "code").value, field(joinForm, "username").value.trim(), field(joinForm, "password").value),
+      () => api.signup(field(joinForm, "code").value, field(joinForm, "username").value.trim(), field(joinForm, "password").value, field(joinForm, "firstName").value.trim()),
     );
   });
 }

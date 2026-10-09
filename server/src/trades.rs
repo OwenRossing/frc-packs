@@ -25,6 +25,7 @@ pub const MAX_OPEN: i64 = 20;
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/players", get(players))
+        .route("/social/{pack}", get(social))
         .route("/players/{name}/collection/{pack}", get(player_collection))
         .route("/trades", get(list).post(offer))
         .route("/trades/{id}/accept", post(accept))
@@ -553,4 +554,75 @@ async fn decide(s: &Shared, user: User, id: i64, by_maker: bool) -> ApiResult<Js
     close(&mut tx, id, if by_maker { "cancelled" } else { "declined" }).await?;
     tx.commit().await?;
     list_for(s, user.id).await
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct SocialPlayer {
+    name: String,
+    first_name: Option<String>,
+    teams: i64,
+    mythics: i64,
+    legendaries: i64,
+    trades: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SocialTrade {
+    from: String,
+    to: String,
+    /// Cards the first player gave and got, as they were offered.
+    gave: serde_json::Value,
+    got: serde_json::Value,
+    gave_packs: i32,
+    got_packs: i32,
+    at: i64,
+}
+
+#[derive(Serialize)]
+struct SocialOut {
+    players: Vec<SocialPlayer>,
+    recent: Vec<SocialTrade>,
+}
+
+/// Every player with a few stats, and the latest finished trades, so anyone can see who has what.
+async fn social(State(s): State<Shared>, _user: User, Path(pack): Path<String>) -> ApiResult<Json<SocialOut>> {
+    let pack = api::pack(&s, &pack)?;
+    let players: Vec<SocialPlayer> = sqlx::query_as(
+        "select u.username as name, u.first_name,
+                count(distinct c.team) as teams,
+                count(distinct c.team) filter (where c.tier = 'mythic') as mythics,
+                count(distinct c.team) filter (where c.tier = 'legendary') as legendaries,
+                (select count(*) from trades t where t.status = 'accepted' and (t.from_user = u.id or t.to_user = u.id)) as trades
+         from users u left join cards c on c.user_id = u.id and c.pack_id = $1
+         where u.username is not null and not u.disabled
+         group by u.id order by teams desc, lower(u.username) limit 200",
+    )
+    .bind(pack.id())
+    .fetch_all(&s.db)
+    .await?;
+    type Row = (String, String, Option<sqlx::types::Json<serde_json::Value>>, Option<sqlx::types::Json<serde_json::Value>>, i32, i32, chrono::DateTime<chrono::Utc>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "select f.username, t.username, x.give_cards, x.want_cards, x.give_packs, x.want_packs, coalesce(x.decided_at, x.created_at)
+         from trades x join users f on f.id = x.from_user join users t on t.id = x.to_user
+         where x.status = 'accepted' and x.pack_id = $1 and f.username is not null and t.username is not null
+         order by x.decided_at desc nulls last limit 12",
+    )
+    .bind(pack.id())
+    .fetch_all(&s.db)
+    .await?;
+    let recent = rows
+        .into_iter()
+        .map(|(from, to, give, want, gp, wp, at)| SocialTrade {
+            from,
+            to,
+            gave: give.map(|j| j.0).unwrap_or(serde_json::Value::Null),
+            got: want.map(|j| j.0).unwrap_or(serde_json::Value::Null),
+            gave_packs: gp,
+            got_packs: wp,
+            at: at.timestamp_millis(),
+        })
+        .collect();
+    Ok(Json(SocialOut { players, recent }))
 }

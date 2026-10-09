@@ -78,7 +78,7 @@ async fn signup(app: &Router, db: &PgPool, username: &str) -> (String, String, V
         "POST",
         "/api/signup",
         None,
-        Some(json!({ "code": code, "username": username, "password": "hunter22!" })),
+        Some(json!({ "code": code, "username": username, "password": "hunter22!", "firstName": "Test" })),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
@@ -401,7 +401,7 @@ async fn invite_codes_make_accounts() {
                 "POST",
                 "/api/signup",
                 None,
-                Some(json!({ "code": code, "username": username, "password": password })),
+                Some(json!({ "code": code, "username": username, "password": password, "firstName": "Test" })),
             )
             .await
         }
@@ -542,7 +542,7 @@ async fn signing_up_keeps_an_old_guest_accounts_cards() {
         "POST",
         "/api/signup",
         Some(&cookie),
-        Some(json!({ "code": code, "username": who, "password": "hunter22!" })),
+        Some(json!({ "code": code, "username": who, "password": "hunter22!", "firstName": "Test" })),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
@@ -606,7 +606,7 @@ async fn admin_makes_invite_codes() {
         "POST",
         "/api/signup",
         None,
-        Some(json!({ "code": code, "username": who, "password": "hunter22!" })),
+        Some(json!({ "code": code, "username": who, "password": "hunter22!", "firstName": "Test" })),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
@@ -626,7 +626,7 @@ async fn admin_makes_invite_codes() {
         "POST",
         "/api/signup",
         None,
-        Some(json!({ "code": code, "username": name(), "password": "hunter22!" })),
+        Some(json!({ "code": code, "username": name(), "password": "hunter22!", "firstName": "Test" })),
     )
     .await;
     assert_eq!(r.body["error"], "bad_invite", "a deleted code no longer works");
@@ -1056,7 +1056,7 @@ async fn profiles_showcase_and_wishlist() {
 async fn usernames_reports_and_renames() {
     let (app, db) = need_db!(setup(true));
     let code = invite(&db, 1).await;
-    let r = call(&app, "POST", "/api/signup", None, Some(json!({ "code": code, "username": "sh1t_bot", "password": "hunter22!" }))).await;
+    let r = call(&app, "POST", "/api/signup", None, Some(json!({ "code": code, "username": "sh1t_bot", "password": "hunter22!", "firstName": "Test" }))).await;
     assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("username_not_allowed")));
     let (ca, _) = player(&app, &db).await;
     let (cb, sb) = player(&app, &db).await;
@@ -1435,4 +1435,25 @@ async fn admin_test_packs_save_nothing() {
     assert_eq!((after.0, after.1, after.2, after.3, after.4, after.5, after.6, after.9), (before.0, before.1, before.2, before.3, before.4, before.5, before.6, before.9), "the admin's packs, pity, cards and openings did not change");
     let ledger_after: i64 = sqlx::query_scalar("select count(*) from ledger where user_id = $1").bind(me).fetch_one(&db).await.unwrap();
     assert_eq!(ledger_before, ledger_after, "nothing written to the ledger");
+}
+
+#[tokio::test]
+async fn first_name_is_required_and_social_lists_players() {
+    let (app, db) = need_db!(setup(false));
+    let code = invite(&db, 2).await;
+    let missing = call(
+        &app,
+        "POST",
+        "/api/signup",
+        None,
+        Some(json!({ "code": code, "username": name(), "password": "hunter22!" })),
+    )
+    .await;
+    assert_eq!((missing.status, missing.body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_first_name")));
+    let (who, cookie, _) = signup(&app, &db, &name()).await;
+    let r = call(&app, "GET", "/api/social/cmp26", Some(&cookie), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let me = r.body["players"].as_array().unwrap().iter().find(|p| p["name"] == who.as_str()).expect("listed");
+    assert_eq!(me["firstName"], "Test");
+    assert!(r.body["recent"].is_array());
 }

@@ -316,11 +316,15 @@ async function act<T>(path: string, body?: unknown): Promise<T> {
   }
 }
 
+export interface SocialPlayer { name: string; firstName: string | null; teams: number; mythics: number; legendaries: number; trades: number }
+export interface SocialTrade { from: string; to: string; gave: { num: number }[] | null; got: { num: number }[] | null; gavePacks: number; gotPacks: number; at: number }
+export interface Social { players: SocialPlayer[]; recent: SocialTrade[] }
+
 export const api = {
   /** The signed-in account's state. Fails with 401 `sign_in`, or `guest` for a guest account from before sign-in. */
   session: () => call<State>("POST", "/api/session"),
-  signup: (code: string, username: string, password: string) =>
-    call<State>("POST", "/api/signup", { code, username, password }),
+  signup: (code: string, username: string, password: string, firstName: string) =>
+    call<State>("POST", "/api/signup", { code, username, password, firstName }),
   login: (username: string, password: string) => call<State>("POST", "/api/login", { username, password }),
   logout: () => call<void>("POST", "/api/logout"),
   changePassword: (current: string, next: string) => call<void>("POST", "/api/password", { current, new: next }),
@@ -337,6 +341,7 @@ export const api = {
   /** Scrap every extra copy of these tiers. */
   scrapExtras: (pack: string, tiers: Tier[]) => act<Scrapped>("/api/scrap/extras", { pack, tiers }),
   /** Players whose username contains `q`, for picking who to trade with. */
+  social: (pack: string) => call<Social>("GET", `/api/social/${encodeURIComponent(pack)}`),
   players: (q: string) => call<string[]>("GET", `/api/players?q=${encodeURIComponent(q)}`),
   playerCollection: (name: string, pack: string) =>
     call<Collection>("GET", `/api/players/${encodeURIComponent(name)}/collection/${encodeURIComponent(pack)}`),
@@ -407,6 +412,7 @@ export function explain(e: unknown): string {
     username_taken: "That username is taken. Try another.",
     bad_username: "Usernames are 3 to 20 letters, numbers or underscores.",
     bad_password: "Passwords need at least 8 characters.",
+    bad_first_name: "Enter your first name.",
     no_session: "You've been signed out. Reload to sign in again.",
     not_admin: "Only the admin account can do that.",
     not_yourself: "You can't do that to your own account.",

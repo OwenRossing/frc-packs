@@ -30,11 +30,6 @@
   <div class="top">
     <div class="brand">FRC <b>PACKS</b></div>
     <div class="tools">
-      <div class="seg" role="tablist" aria-label="Screens">
-        <button type="button" role="tab" id="tabOpen" aria-selected="true">Open</button>
-        <button type="button" role="tab" id="tabBinder" aria-selected="false">Binder<span class="tabdot" id="tabDot" hidden></span></button>
-        <button type="button" role="tab" id="tabTrade" aria-selected="false">Trade<span class="tabdot" id="tradeDot" hidden></span></button>
-      </div>
       <button type="button" class="chip gear" id="gear" aria-expanded="false" aria-controls="settings" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     </div>
   </div>
@@ -56,6 +51,7 @@
         <h1>Join FRC Packs</h1>
         <p class="auth-note" id="guestNote" hidden>This browser has cards from before accounts existed. Join here and they come with you.</p>
         <label>Invite code<input name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" placeholder="ABCD-EFGH-JKMN"></label>
+        <label>First name<small>So other players know who you are.</small><input name="firstName" autocomplete="given-name" maxlength="30"></label>
         <label>Username<small>3 to 20 letters, numbers or underscores. Other players see it.</small><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20"></label>
         <label>Password<small>At least 8 characters.</small><input name="password" type="password" autocomplete="new-password" maxlength="128"></label>
         <button type="submit" class="cta">Create account</button>
@@ -83,7 +79,7 @@
     <div class="line" id="installLine" hidden><span>Install the app<small id="installTxt"></small></span><button type="button" class="chip" id="installBtn" hidden>Install</button></div>
     <div class="line" id="donateLine" hidden><span>Support FRC Packs<small>FRC Packs is free and run by volunteers. A donation helps keep it online.</small></span><a class="chip" id="donateBtn" href="#" target="_blank" rel="noopener">Donate</a></div>
     <div class="line"><span>My profile<small>What other players see: your showcase, stats and wishlist.</small></span><button type="button" class="chip" id="myProfile">View</button></div>
-    <div class="line"><span>Notifications<small id="pushTxt">Free pack ready, trade offers and accepted trades.</small></span><button type="button" class="chip" id="pushBtn" aria-pressed="false">Off</button></div>
+    <div class="line"><span>Notifications<small id="pushTxt">Pack ready, trade offers and accepted trades.</small></span><button type="button" class="chip" id="pushBtn" aria-pressed="false">Off</button></div>
     <div class="line"><span>Google account<small>Sign in with Google instead of a password. Coming soon.</small></span><button type="button" class="chip" id="linkGoogle" disabled>Link</button></div>
     <div class="line" id="adminLine" hidden><span>Admin<small>Make invite codes and manage accounts.</small></span><a class="chip" href="/admin">Open panel</a></div>
     <div class="line"><span>Sound<small>Chimes, rip and reveal stings.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
@@ -155,7 +151,7 @@
       </div>
       <div class="cta-row" id="sumBtns" hidden>
         <button class="cta" id="again" type="button">Open another pack</button>
-        <button class="cta ghost" id="toBinder" type="button">Binder</button>
+        <button class="cta ghost" id="toBinder" type="button">Back to packs</button>
       </div>
     </main>
   </section>
@@ -200,12 +196,13 @@
         <button type="button" role="tab" id="trTabPast" aria-selected="false">History</button>
       </div>
 
-      <section id="trPaneNew" class="tr-pane">
+      <section id="trPaneNew" class="tr-pane picking">
         <div class="tr-whobox">
           <label for="trWho">Trade with</label>
           <div class="tr-whoin"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input class="input" id="trWho" placeholder="Search players by username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20"></div>
           <div class="tr-sugg" id="trSugg" aria-live="polite"></div>
         </div>
+        <div class="tr-people" id="trPeople"></div>
         <p class="tr-match" id="trMatch" hidden></p>
         <div class="tr-table">
           <div class="tr-side mine">
@@ -217,7 +214,7 @@
             <span class="tr-swap"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>
           </div>
           <div class="tr-side theirs">
-            <div class="tr-side-h"><button type="button" class="who-btn" id="trThemBtn" aria-label="See their profile"><span id="avThem" class="av them empty">?</span></button><div><b id="trThemName">Pick a player</b><small id="trGetN">0 / 5</small></div></div>
+            <div class="tr-side-h"><button type="button" class="who-btn" id="trThemBtn" aria-label="See their profile"><span id="avThem" class="av them empty">?</span></button><div><b id="trThemName">Pick a player</b> <button type="button" class="linkbtn" id="trChange">Change</button><small id="trGetN">0 / 5</small></div></div>
             <div class="tr-slots" id="trGetSlots"></div>
             <div class="tr-goods" id="trGetGoods"></div>
           </div>
@@ -243,7 +240,22 @@
     </div>
   </section>
 
-  <details class="note" id="note"><summary>About FRC Packs</summary><p>The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robot photos come from The Blue Alliance; the few teams without one get a drawing. Every pack, serial number and free-pack timer is decided by the server, and your cards are saved to your account, so you can sign in from any device.</p><p class="note-links"><a href="/privacy">Privacy</a><a id="donateLink" href="#" target="_blank" rel="noopener" hidden>♥ Support FRC Packs</a></p></details>
+  <section id="viewSocial" hidden>
+    <div class="social">
+      <h2>Players</h2>
+      <div class="seg soc-sort" role="tablist" aria-label="Rank by"><button type="button" role="tab" data-by="teams" aria-selected="true">Teams</button><button type="button" role="tab" data-by="mythics" aria-selected="false">Mythics</button><button type="button" role="tab" data-by="legendaries" aria-selected="false">Legendaries</button><button type="button" role="tab" data-by="trades" aria-selected="false">Trades</button></div>
+      <div class="soc-list" id="socList"></div>
+      <h3>Recent trades</h3>
+      <div class="soc-feed" id="socFeed"></div>
+    </div>
+  </section>
+
+  <nav class="tabbar" role="tablist" aria-label="Screens">
+    <button type="button" role="tab" id="tabOpen" aria-selected="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M9 8h6"/></svg><span>Open</span></button>
+    <button type="button" role="tab" id="tabBinder" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="10" height="14" rx="1.8"/><rect x="10.5" y="7" width="10" height="14" rx="1.8"/></svg><span>Collection</span><span class="tabdot" id="tabDot" hidden></span></button>
+    <button type="button" role="tab" id="tabTrade" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h14l-3-3M20 16H6l3 3"/></svg><span>Trade</span><span class="tabdot" id="tradeDot" hidden></span></button>
+    <button type="button" role="tab" id="tabSocial" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="9" r="3"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8" r="2.4"/><path d="M17 13.5c2.4 0 4 1.8 4 4.5"/></svg><span>Social</span></button>
+  </nav>
 </div>
 
 <div class="coach" id="coach" role="status" aria-live="polite" hidden><i class="coach-arrow" aria-hidden="true"></i><span class="coach-step" id="coachStep"></span><p id="coachTxt"></p><div class="coach-btns"><button type="button" class="textbtn" id="coachSkip">Skip tips</button></div></div>
