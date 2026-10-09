@@ -312,8 +312,12 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
         .execute(&mut *tx)
         .await?;
     close(&mut tx, id, "accepted").await?;
-    // Other open offers that promised any of these cards can't happen any more.
-    sqlx::query("update trades set status = 'failed', decided_at = now() where status = 'open' and (give && $1 or want && $1)")
+    // Other open offers that promised any of these cards can't happen any more. One someone is accepting right now is
+    // skipped rather than waited on (waiting could deadlock with it); it fails its own card check instead.
+    sqlx::query(
+        "update trades set status = 'failed', decided_at = now() where id in (
+           select id from trades where status = 'open' and (give && $1 or want && $1) for update skip locked)",
+    )
         .bind(&all)
         .execute(&mut *tx)
         .await?;

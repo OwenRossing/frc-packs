@@ -887,3 +887,75 @@ async fn trading_swaps_the_exact_copies() {
     let c = call(&app, "POST", &format!("/api/trades/{id}/cancel"), Some(&ca), Some(json!({}))).await;
     assert_eq!((c.body["outgoing"].as_array().unwrap().len(), c.body["recent"][0]["status"].as_str()), (0, Some("cancelled")));
 }
+
+/// Trading can't duplicate a card: twenty simultaneous accepts of one offer swap it once, two offers asking for the
+/// same card can't both go through, and scrapping at the same time never touches a card in an offer.
+#[tokio::test]
+async fn trades_never_duplicate_cards() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (cc, _) = player(&app, &db).await;
+    let (a, b, c) = (user_id(&db, &ca).await, user_id(&db, &cb).await, user_id(&db, &cc).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let (x, y, z) = (team_of("common", 120), team_of("uncommon", 120), team_of("common", 121));
+    give_card(&db, a, x, "common").await;
+    let y_serial = give_card(&db, b, y, "uncommon").await;
+    give_card(&db, b, y, "uncommon").await; // B has two copies of y, so scrapping has something to try
+    give_card(&db, c, z, "common").await;
+    let total = |db: PgPool| async move {
+        sqlx::query_scalar::<_, i64>("select count(*) from cards where pack_id = 'cmp26' and team = any($1)")
+            .bind(vec![x, y, z])
+            .fetch_one(&db)
+            .await
+            .unwrap()
+    };
+    let before = total(db.clone()).await;
+
+    // A and C both ask B for the same (newest) copy of y.
+    let ra = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [y] }))).await;
+    let rc = call(&app, "POST", "/api/trades", Some(&cc), Some(json!({ "to": b_name, "pack": "cmp26", "give": [z], "want": [y] }))).await;
+    let (ta, tc) = (ra.body["outgoing"][0]["id"].as_i64().unwrap(), rc.body["outgoing"][0]["id"].as_i64().unwrap());
+    assert_eq!(ra.body["outgoing"][0]["youGet"][0]["serial"], rc.body["outgoing"][0]["youGet"][0]["serial"], "both want the same copy");
+
+    // B accepts both, twenty times each, all at once, while also scrapping.
+    let mut jobs = Vec::new();
+    for i in 0..40 {
+        let (app, cb) = (app.clone(), cb.clone());
+        let id = if i % 2 == 0 { ta } else { tc };
+        jobs.push(tokio::spawn(async move { call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await.status }));
+    }
+    for _ in 0..5 {
+        let (app, cb) = (app.clone(), cb.clone());
+        jobs.push(tokio::spawn(async move {
+            call(&app, "POST", "/api/scrap/extras", Some(&cb), Some(json!({ "pack": "cmp26", "tiers": ["uncommon"] }))).await.status
+        }));
+    }
+    let mut ok = 0;
+    for j in jobs {
+        let st = j.await.unwrap();
+        assert!(st != StatusCode::INTERNAL_SERVER_ERROR, "no request may fail with a server error (deadlock)");
+        if st == StatusCode::OK {
+            ok += 1;
+        }
+    }
+    assert!(ok >= 1);
+    let accepted: i64 = sqlx::query_scalar("select count(*) from trades where id = any($1) and status = 'accepted'")
+        .bind(vec![ta, tc])
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert!(accepted <= 1, "only one of two offers for the same card can go through");
+    let owners: Vec<uuid::Uuid> = sqlx::query_scalar("select user_id from cards where pack_id = 'cmp26' and team = $1 and serial = $2")
+        .bind(y)
+        .bind(y_serial)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert!(owners.len() <= 1, "a serial exists at most once");
+    let after = total(db.clone()).await;
+    let scrapped: i64 = sqlx::query_scalar("select coalesce(sum(parts), 0)::bigint from users where id = $1").bind(b).fetch_one(&db).await.unwrap();
+    // Cards only ever move or get scrapped; nothing is created by trading.
+    assert!(after <= before, "trading created cards: {before} -> {after}");
+    assert_eq!(before - after, scrapped / 12, "every card that left was scrapped for parts, none vanished");
+}
