@@ -1332,12 +1332,12 @@ export function start(RECIPE) {
     var row = document.createElement("div"); row.className = "cta-row";
     var close = closeButton(); row.appendChild(close);
     row.appendChild(mine ? pinButton(num) : wishButton(num));
-    modalIn.appendChild(row);
     if (o.action) {
-      var go = document.createElement("button"); go.type = "button"; go.className = "cta ghost wide"; go.textContent = o.action.label;
+      var go = document.createElement("button"); go.type = "button"; go.className = "cta wide"; go.textContent = o.action.label;
       go.onclick = function () { closeAll(o.action.run); };
-      modalIn.appendChild(go);
+      row.insertBefore(go, row.firstChild);
     }
+    modalIn.appendChild(row);
     return close;
   }
   /* ---------- wishlist, showcase and profiles ---------- */
@@ -1385,9 +1385,9 @@ export function start(RECIPE) {
       modalIn.innerHTML = '<div class="profile">' +
         '<div class="pf-head">' + avatar(p.username) + '<div><h2>' + esc(p.username) + '</h2><p>Joined ' + joined + (p.streak ? ' · ' + p.streak + '-day streak' : '') + '</p></div></div>' +
         '<div class="pf-stats"><div><b>' + pct + '%</b><small>collected</small></div><div><b>' + p.teams + '</b><small>teams</small></div><div><b>' + p.sets + '</b><small>sets</small></div><div><b>' + p.trades + '</b><small>trades</small></div></div>' +
-        '<section class="pf-sec"><h3>Showcase' + (p.me && p.showcase.length > 1 ? ' <small>Drag to reorder</small>' : '') + '</h3><div class="pf-row pf-show">' + cards(p.showcase, "", 3) + slots + '</div></section>' +
-        '<section class="pf-sec"><h3>Rarest pulls</h3><div class="pf-row">' + cards(p.rarest, '<p class="hint">No cards yet.</p>', 3) + '</div></section>' +
-        '<section class="pf-sec"><h3>Wishlist' + (p.wishlist.length ? " · " + p.wishlist.length : "") + '</h3>' + (p.wishlist.length ? '<div class="pf-row wide pf-wish">' + cards(p.wishlist, "", 12) + '</div>' : '<p class="hint">' + (p.me ? "Tap a card you don't have in the binder to add it." : "Nothing yet.") + '</p>') + '</section>' +
+        (p.me || p.showcase.length ? '<section class="pf-sec"><h3>Showcase' + (p.me && p.showcase.length > 1 ? ' <small>Drag to reorder</small>' : '') + '</h3><div class="pf-row pf-show">' + cards(p.showcase, "", 3) + (p.me ? slots : "") + '</div></section>' : '') +
+        (p.me ? '<section class="pf-sec"><h3>Rarest pulls</h3><div class="pf-row">' + cards(p.rarest, '<p class="hint">No cards yet.</p>', 3) + '</div></section>' : '') +
+        (p.me || p.wishlist.length ? '<section class="pf-sec"><h3>Wishlist' + (p.wishlist.length ? " · " + p.wishlist.length : "") + '</h3>' + (p.wishlist.length ? '<div class="pf-row wide pf-wish">' + cards(p.wishlist, "", 12) + '</div>' : '<p class="hint">' + (p.me ? "Tap a card you don't have in the binder to add it." : "Nothing yet.") + '</p>') + '</section>' : '') +
         '</div>';
       var row = document.createElement("div"); row.className = "cta-row";
       var close = closeButton(); row.appendChild(close);
@@ -1402,21 +1402,21 @@ export function start(RECIPE) {
         row.appendChild(tr);
         /* Their whole collection, loaded when asked for. */
         var all = document.createElement("section"); all.className = "pf-sec";
-        all.innerHTML = '<button type="button" class="cta ghost pf-all">See all cards</button><div class="pf-grid"></div>';
+        all.innerHTML = '<h3 class="pf-all">Collection</h3><div class="pf-grid"></div>';
         modalIn.querySelector(".profile").appendChild(all);
-        all.querySelector(".pf-all").onclick = function () {
-          var btn = this; btn.disabled = true;
+        (function () {
+          var btn = all.querySelector(".pf-all");
           api.playerCollection(p.username, PACK_ID).then(function (col) {
             var list = col.cards.filter(function (c) { return BY_NUM[c.num]; }).sort(function (a, b) { var A = BY_NUM[a.num], B = BY_NUM[b.num]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
-            btn.textContent = list.length + " cards";
+            btn.textContent = "Collection · " + list.length + " of " + TEAMS.length;
             var g = all.querySelector(".pf-grid");
             g.innerHTML = list.map(function (c) { return '<button type="button" class="tr-view" data-num="' + c.num + '">' + miniCard(c.num, { count: c.serials.length }) + '</button>'; }).join("");
             Array.prototype.forEach.call(g.querySelectorAll(".tr-view"), function (x) {
               var n = +x.dataset.num;
               x.onclick = function () { viewCard(n, { from: esc(p.username) + "'s card.", action: { label: "Ask " + p.username + " for it", run: function () { tradeFor(p.username, n); } } }); };
             });
-          }, function (e) { btn.disabled = false; offline(e); });
-        };
+          }, function (e) { offline(e); });
+        })();
       }
       modalIn.appendChild(row);
       Array.prototype.forEach.call(modalIn.querySelectorAll(".tr-view"), function (b) {

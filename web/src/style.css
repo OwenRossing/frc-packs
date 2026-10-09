@@ -931,3 +931,12 @@ body.signed-out .tabbar { display: none; }
 .tr-on-n { position: absolute; left: 4px; top: 4px; background: var(--tide); color: #04201d; font: 700 10px/1 var(--body); padding: 3px 6px; border-radius: 99px; z-index: 2; }
 .pf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
 .pf-all { width: 100%; }
+
+/* Cards and profiles open as a screen of their own: the content scrolls, the buttons stay put at the bottom. */
+.modal { display: block; padding: 0; overflow: hidden; }
+.modal-in { margin: 0 auto; height: 100%; max-height: 100svh; overflow-y: auto; overscroll-behavior: contain; justify-content: flex-start; padding: 16px 16px 0; }
+.modal-in > .cta-row:last-child { position: sticky; bottom: 0; margin-top: auto; width: 100%; padding: 14px 0 calc(14px + env(safe-area-inset-bottom)); background: linear-gradient(rgba(2,8,12,0), rgba(2,8,12,.96) 30%); }
+.modal-in > .cta-row:last-child .cta { flex: 1; }
+.pf-all { margin: 4px 0 0; }
+.modal-in > .cta-row:last-child .cta.wide { flex-basis: 100%; }
+.modal-in > .cta-row:last-child { background: linear-gradient(rgba(2,8,12,0), #02080c 30%); }
