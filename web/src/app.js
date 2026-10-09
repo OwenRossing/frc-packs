@@ -1012,6 +1012,27 @@ export function start(RECIPE) {
     btn.disabled = true;
     api.scrap(PACK_ID, t.num, count).then(function (r) { scrapped(r); inspect(t); }, function (e) { btn.disabled = false; offline(e); });
   }
+  /* A card up close from the trading post: the full card (tilt it), its team stats, and whose copy it is. */
+  function viewCard(num, o) {
+    o = o || {}; var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
+    modalIn.innerHTML = "";
+    modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: true }));
+    var facts = document.createElement("div"); facts.className = "serials card-facts";
+    facts.innerHTML = '<dl>' +
+      '<dt>Team</dt><dd>' + num + ' · ' + esc(t.name) + '</dd>' +
+      '<dt>Rarity</dt><dd style="color:' + T.color + '">' + T.label + '</dd>' +
+      '<dt>Division</dt><dd>' + esc(t.div) + '</dd>' +
+      (t.loc ? '<dt>From</dt><dd>' + esc(t.loc) + '</dd>' : '') +
+      '<dt>EPA</dt><dd>' + (t.epa == null ? "–" : Math.round(t.epa)) + ' · #' + t.rank + ' at Champs</dd>' +
+      '<dt>Record</dt><dd>' + esc(t.wl) + '</dd>' +
+      (o.serial ? '<dt>Serial</dt><dd>No. ' + esc(o.serial) + '</dd>' : '') +
+      '</dl><p>' + (o.from ? o.from + " " : "") + (mine ? "You own " + (mine === 1 ? "1 copy" : mine + " copies") + "." : "You don't have this one yet.") + '</p>';
+    modalIn.appendChild(facts);
+    var row = document.createElement("div"); row.className = "cta-row";
+    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    modalIn.appendChild(row);
+    lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+  }
   function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
@@ -1128,9 +1149,17 @@ export function start(RECIPE) {
     var el = document.createElement("article"); el.className = "tr-offer " + kind + (t.status !== "open" ? " " + t.status : "");
     var when = kind === "past" && t.decidedAt ? t.decidedAt : t.createdAt;
     var who = kind === "in" ? "<b>" + esc(t.with) + "</b> wants to trade" : kind === "out" ? "Waiting on <b>" + esc(t.with) + "</b>" : "With <b>" + esc(t.with) + "</b>";
-    var side = function (label, cards) { return '<div class="tr-o-side"><small>' + label + '</small><div class="tr-o-cards">' + cards.map(function (c) { return BY_NUM[c.num] ? miniCard(c.num, { serial: c.serial }) : ""; }).join("") + '</div></div>'; };
+    var side = function (label, cards, whose) {
+      return '<div class="tr-o-side"><small>' + label + '</small><div class="tr-o-cards">' + cards.map(function (c) {
+        return BY_NUM[c.num] ? '<button type="button" class="tr-view" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
+      }).join("") + '</div></div>';
+    };
     el.innerHTML = '<header>' + avatar(t.with) + '<p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
-      '<div class="tr-o-body">' + side("You give", t.youGive) + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet) + '</div>';
+      '<div class="tr-o-body">' + side("You give", t.youGive, "you") + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet, t.with) + '</div>' +
+      '<p class="tr-tip">Tap a card to see it up close.</p>';
+    Array.prototype.forEach.call(el.querySelectorAll(".tr-view"), function (b) {
+      b.onclick = function () { viewCard(+b.dataset.num, { serial: b.dataset.serial, from: b.dataset.whose === "you" ? "You'd give this copy." : esc(b.dataset.whose) + " would give this copy." }); };
+    });
     var row = document.createElement("div"); row.className = "tr-o-act";
     function act(label, cls, run) {
       var b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = label;
@@ -1218,7 +1247,8 @@ export function start(RECIPE) {
       .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
     if (!list.length) { trGrid.innerHTML = '<div class="tr-empty"><b>' + (q || trTier !== "all" ? "No cards match" : mineSide ? "Your binder is empty" : "No cards yet") + '</b>' + (q || trTier !== "all" ? "Try another search or rarity." : mineSide ? "Open some packs first." : "They haven't opened any packs.") + '</div>'; return; }
     list.slice(0, 80).forEach(function (n) {
-      var on = picked.indexOf(n) >= 0, b = document.createElement("button");
+      var on = picked.indexOf(n) >= 0, cell = document.createElement("div"), b = document.createElement("button");
+      cell.className = "tr-cell";
       b.type = "button"; b.className = "tr-pick" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on));
       b.setAttribute("aria-label", BY_NUM[n].name + ", team " + n + ", " + TIERS[BY_NUM[n].tier].label + (inv[n] > 1 ? ", " + inv[n] + " copies" : "") + (mineSide && inv[n] === 1 ? ", your only copy" : ""));
       b.innerHTML = miniCard(n, { count: inv[n] }) + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "");
@@ -1229,7 +1259,10 @@ export function start(RECIPE) {
         else { picked.push(n); trFresh[(mineSide ? "give" : "get") + n] = 1; sfx.pick(); }
         paintTable(); paintGrid();
       };
-      trGrid.appendChild(b);
+      var info = document.createElement("button"); info.type = "button"; info.className = "tr-info"; info.textContent = "i";
+      info.setAttribute("aria-label", "See " + BY_NUM[n].name + " up close");
+      info.onclick = function () { viewCard(n, { from: mineSide ? "You have " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." : esc(theirName) + " has " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." }); };
+      cell.appendChild(b); cell.appendChild(info); trGrid.appendChild(cell);
     });
     if (list.length > 80) { var more = document.createElement("p"); more.className = "tr-more"; more.textContent = "Showing 80 of " + list.length + ". Search to find the rest."; trGrid.appendChild(more); }
   }

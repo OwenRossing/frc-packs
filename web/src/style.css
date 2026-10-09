@@ -586,6 +586,18 @@ body.pad .slot.btn:focus { outline-offset: 5px; border-radius: 10px; }
 .google-btn svg { width: 18px; height: 18px; }
 .google-btn:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(.6); }
 #googleSoon { text-align: center; margin-top: -6px; }
+/* Seeing a card up close from the trading post. */
+.tr-view { padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 9px; transition: transform .15s; }
+.tr-view:hover { transform: translateY(-3px); }
+.tr-tip { margin: -4px 0 0; font-size: 11px; color: var(--ink-dim); }
+.tr-cell { position: relative; }
+.tr-cell .tr-pick { width: 100%; }
+.tr-info { position: absolute; top: -7px; left: -7px; z-index: 2; width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; background: #0f3a44; color: var(--foam); font: 700 13px/24px var(--body); font-style: italic; box-shadow: 0 0 0 2px #06161d, 0 2px 6px rgba(0,0,0,.4); cursor: pointer; }
+.tr-info:hover { background: var(--tide); color: #02211d; }
+.card-facts dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 6px; text-align: left; }
+.card-facts dt { color: var(--ink-dim); font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.card-facts dd { margin: 0; color: var(--foam); }
+.card-facts p { margin: 0; }
 /* Small mini cards drop the gems and tighten up so the number and serial still fit. */
 .mc { container-type: inline-size; }
 @container (max-width: 74px) { .mc-foot i { display: none; } .mc-name { font-size: 8px; } .mc-num { font-size: 11px; } .mc-foot { justify-content: flex-end; } }
