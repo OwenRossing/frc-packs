@@ -802,3 +802,87 @@ async fn scrap_extras_for_parts_and_craft_a_boosted_pack() {
 fn rand_serial() -> i32 {
     (uuid::Uuid::new_v4().as_u128() % 1_000_000) as i32
 }
+
+/// The first team of a tier in the 2026 Championship pack.
+fn team_of(tier: &str, nth: usize) -> i32 {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data/packs/cmp26.json");
+    let recipe: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    recipe["teams"].as_array().unwrap().iter().filter(|t| t["tier"] == tier).nth(nth).unwrap()["num"].as_i64().unwrap() as i32
+}
+
+async fn give_card(db: &PgPool, user: uuid::Uuid, team: i32, tier: &str) -> i32 {
+    let serial = 2_000_000 + rand_serial();
+    sqlx::query("insert into cards (user_id, pack_id, team, tier, serial) values ($1, 'cmp26', $2, $3, $4)")
+        .bind(user)
+        .bind(team)
+        .bind(tier)
+        .bind(serial)
+        .execute(db)
+        .await
+        .unwrap();
+    serial
+}
+
+#[tokio::test]
+async fn trading_swaps_the_exact_copies() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    // Teams nobody else in the test database is likely to hold many of: take them from the middle of each tier.
+    let (x, y) = (team_of("common", 77), team_of("rare", 55));
+    let x_first = give_card(&db, a, x, "common").await;
+    let x_newest = give_card(&db, a, x, "common").await;
+    let y_serial = give_card(&db, b, y, "rare").await;
+
+    let found = call(&app, "GET", &format!("/api/players?q={}", &b_name[..6]), Some(&ca), None).await;
+    assert!(found.body.as_array().unwrap().iter().any(|n| n == b_name.as_str()), "{}", found.body);
+    let theirs = call(&app, "GET", &format!("/api/players/{b_name}/collection/cmp26"), Some(&ca), None).await;
+    assert!(theirs.body["cards"].as_array().unwrap().iter().any(|c| c["num"] == y));
+
+    let bad = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [x] }))).await;
+    assert_eq!((bad.status, bad.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_owned")), "they don't have x");
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [y] }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["outgoing"][0]["youGive"][0]["serial"], x_newest, "the newest copy is offered");
+
+    // A promised copy can't be scrapped out from under the offer.
+    let s = call(&app, "POST", "/api/scrap/extras", Some(&ca), Some(json!({ "pack": "cmp26", "tiers": ["common"] }))).await;
+    assert_eq!(s.body["scrapped"], 0);
+
+    let inbox = call(&app, "GET", "/api/trades", Some(&cb), None).await.body;
+    let t = &inbox["incoming"][0];
+    assert_eq!((t["youGive"][0]["num"].as_i64(), t["youGet"][0]["num"].as_i64()), (Some(i64::from(y)), Some(i64::from(x))));
+    let id = t["id"].as_i64().unwrap();
+    let not_mine = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&ca), Some(json!({}))).await;
+    assert_eq!(not_mine.status, StatusCode::FORBIDDEN, "only the other player can accept");
+    let ok = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    let owner = |serial: i32| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, uuid::Uuid>("select user_id from cards where pack_id = 'cmp26' and serial = $1")
+                .bind(serial)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(owner(x_newest).await, b, "B has A's newest copy, serial and all");
+    assert_eq!(owner(x_first).await, a, "A keeps the first copy");
+    assert_eq!(owner(y_serial).await, a);
+    let again = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(again.status, StatusCode::NOT_FOUND);
+
+    // Decline and cancel.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [y], "want": [x] }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    let d = call(&app, "POST", &format!("/api/trades/{id}/decline"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(d.body["recent"][0]["status"], "declined");
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [y], "want": [x] }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/trades/{id}/cancel"), Some(&cb), Some(json!({}))).await.status, StatusCode::FORBIDDEN);
+    let c = call(&app, "POST", &format!("/api/trades/{id}/cancel"), Some(&ca), Some(json!({}))).await;
+    assert_eq!((c.body["outgoing"].as_array().unwrap().len(), c.body["recent"][0]["status"].as_str()), (0, Some("cancelled")));
+}

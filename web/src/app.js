@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, explain } from "./api";
 
 /* The game UI. Everything that matters (what's in a pack, serial numbers, timers, pity) comes from the server
    through `api`; this file only shows it. RECIPE is the pack recipe (data/packs/<id>.json), the same file the
@@ -72,7 +72,7 @@ export function start(RECIPE) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
     return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy }; }) };
   }
-  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : "Something went wrong. Try again.", 3200); }
+  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : explain(e), 3600); }
   /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
   function sync() {
     if (state !== "select" && state !== "summary" && state !== "home") return;
@@ -81,6 +81,7 @@ export function start(RECIPE) {
       applyState(r[0]); applyCollection(r[1]);
       paintStatus(); paintToggles(); paintTabDot(); if (!vBinder.hidden) paintBinder(); if (state === "select" || state === "home") paintSelectHud();
     }, function () {});
+    loadTrades();
   }
   document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
   addEventListener("focus", sync);
@@ -779,6 +780,10 @@ export function start(RECIPE) {
 
   /* ---------- binder ---------- */
   var gridEl = $("#grid"), tiersEl = $("#tiers"), moreBtn = $("#more"), missingBtn = $("#missingBtn"), filter = "all", shown = 48, showMissing = false;
+  var searchEl = $("#binderSearch");
+  /* Search looks through every team in the pack, owned or not, so you can see what you're missing. */
+  searchEl.addEventListener("input", function () { shown = 48; paintBinder(); });
+  function matches(t, q) { return String(t.num).indexOf(q) === 0 || t.name.toLowerCase().indexOf(q) >= 0 || (t.loc || "").toLowerCase().indexOf(q) >= 0; }
   missingBtn.addEventListener("click", function () { showMissing = !showMissing; shown = 48; paintBinder(); });
   function ownedList() {
     var out = [];
@@ -813,17 +818,27 @@ export function start(RECIPE) {
     });
     var isDiv = filter.indexOf("div:") === 0, dname = filter.slice(4);
     missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
-    var list = (showMissing && filter !== "all") ? (isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; })
+    var q = searchEl.value.trim().toLowerCase();
+    var everyone = (filter === "all" ? TEAMS : isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    var have = function (t) { return S.inv[t.num] && S.inv[t.num].length ? 1 : 0; };
+    var list = q ? everyone.filter(function (t) { return matches(t, q); }).sort(function (a, b) { return have(b) - have(a); }) // yours first
+      : (showMissing && filter !== "all") ? everyone
       : owned.filter(function (t) { return filter === "all" || (isDiv ? t.div === dname : t.tier === filter); });
     gridEl.innerHTML = "";
     if (!list.length) {
       var e = document.createElement("div"); e.className = "empty-binder"; e.style.gridColumn = "1 / -1";
-      e.innerHTML = owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
+      e.innerHTML = q ? "<b>No team matches</b>Try a team number like 254, or part of a name." : owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
       gridEl.appendChild(e);
     }
     list.slice(0, shown).forEach(function (t) {
       var serials = S.inv[t.num] || [];
-      if (!serials.length) { var gh = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); gh.classList.add("ghost"); gridEl.appendChild(gh); return; }
+      if (!serials.length) {
+        /* A card you don't own is blurred: you can see its rarity and who it is, not the card itself. */
+        var gh = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); gh.classList.add("ghost");
+        var tag = document.createElement("div"); tag.className = "ghost-tag"; tag.innerHTML = "<b>" + t.num + "</b>" + esc(t.name) + "<small>Not yet</small>";
+        gh.appendChild(tag); gh.setAttribute("aria-label", t.name + ", team " + t.num + ", " + TIERS[t.tier].label + ", not owned yet");
+        gridEl.appendChild(gh); return;
+      }
       var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
       if (S.unseen[t.num]) showRibbon(el);
       el.addEventListener("click", function () { inspect(t); });
@@ -946,18 +961,20 @@ export function start(RECIPE) {
   });
 
   /* ---------- tabs and settings ---------- */
-  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder");
+  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), tabTrade = $("#tabTrade"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder"), vTrade = $("#viewTrade");
   function show(which) {
-    var b = which === "binder";
+    var b = which === "binder", tr = which === "trade", open = !b && !tr;
     banner.classList.remove("show");
-    vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
-    $("#status").hidden = b; paintTeamPick(b); document.body.classList.toggle("focus", !b && state === "inspect");
-    if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} }
-    else { try { history.replaceState(null, "", "#open"); } catch (e) {} }
+    vOpen.hidden = !open; vBinder.hidden = !b; vTrade.hidden = !tr;
+    tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr));
+    $("#status").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
+    if (b) paintBinder();
+    if (tr) { paintTrades(); loadTrades(); }
+    try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
     vBinder._was = b; paintTabDot();
   }
-  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); };
+  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); }; tabTrade.onclick = function () { show("trade"); };
   var gear = $("#gear"), settings = $("#settings");
   gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
@@ -1003,6 +1020,114 @@ export function start(RECIPE) {
   };
   paintToggles();
 
+  /* ---------- trading ---------- */
+  /* Offer up to 5 of your cards for up to 5 of another player's. One copy of each team changes hands, serial number
+     and all; the server picks the newest copy, so you keep your earliest serial longest. */
+  var TR = { incoming: [], outgoing: [], recent: [] }, trWho = $("#trWho"), trGiveQ = $("#trGiveQ"), trGetQ = $("#trGetQ"), trSend = $("#trSend");
+  var trGive = [], trGet = [], theirInv = null, theirName = "", whoTimer = 0, MAXT = 5;
+  function loadTrades() { return api.trades().then(function (t) { TR = t; paintTradeDot(); if (!vTrade.hidden) paintTrades(); }, function () {}); }
+  function paintTradeDot() { var dot = $("#tradeDot"), n = TR.incoming.length; dot.hidden = !n; dot.textContent = n; tabTrade.setAttribute("aria-label", n ? "Trade, " + n + " offers for you" : "Trade"); }
+  function cardLine(c) {
+    var t = BY_NUM[c.num], T = TIERS[c.tier];
+    return '<span class="tr-card" style="--tc:' + T.color + '"><i></i><b>' + c.num + '</b> ' + esc(t ? t.name : "Team " + c.num) + ' <em>' + T.label + (c.serial ? ' · No. ' + c.serial : '') + '</em></span>';
+  }
+  function tradeRow(t, kind) {
+    var el = document.createElement("div"); el.className = "tr-item";
+    var head = kind === "in" ? "<b>" + esc(t.with) + "</b> offers" : kind === "out" ? "You offered <b>" + esc(t.with) + "</b>" : "With <b>" + esc(t.with) + "</b> · " + t.status;
+    el.innerHTML = '<div class="tr-head">' + head + '</div><div class="tr-swap"><div><small>You give</small>' + t.youGive.map(cardLine).join("") + '</div><div><small>You get</small>' + t.youGet.map(cardLine).join("") + '</div></div>';
+    var row = document.createElement("div"); row.className = "cta-row tr-act";
+    function act(label, cls, run) { var b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = label; b.onclick = function () { b.disabled = true; run().then(function () {}, function (e) { b.disabled = false; offline(e); loadTrades(); }); }; row.appendChild(b); }
+    if (kind === "in") {
+      act("Accept", "cta small", function () {
+        return api.acceptTrade(t.id).then(function (r) {
+          applyState(r.state); applyCollection(r.collection); TR = r.trades;
+          t.youGet.forEach(function (c) { S.unseen[c.num] = 1; }); save();
+          sfx.claim(); paintStatus(); paintTabDot(); paintTradeDot(); paintTrades();
+          say("Trade done with " + t.with + (r.sets.length ? " · " + r.sets.join(", ") + " set complete! +" + r.sets.length + (r.sets.length === 1 ? " pack" : " packs") : ""), 3600);
+        });
+      });
+      act("Decline", "chip", function () { return api.declineTrade(t.id).then(function (x) { TR = x; paintTradeDot(); paintTrades(); }); });
+    } else if (kind === "out") {
+      act("Cancel", "chip", function () { return api.cancelTrade(t.id).then(function (x) { TR = x; paintTrades(); }); });
+    }
+    if (row.children.length) el.appendChild(row);
+    return el;
+  }
+  function paintTrades() {
+    function fill(id, list, kind, empty) {
+      var box = $(id); box.innerHTML = "";
+      if (!list.length) { var p = document.createElement("p"); p.className = "tr-empty"; p.textContent = empty; box.appendChild(p); }
+      list.forEach(function (t) { box.appendChild(tradeRow(t, kind)); });
+    }
+    fill("#trIncoming", TR.incoming, "in", "No offers right now.");
+    fill("#trOutgoing", TR.outgoing, "out", "You haven't offered anything yet.");
+    fill("#trRecent", TR.recent, "recent", "Nothing yet.");
+    $("#tradeSum").textContent = TR.incoming.length ? TR.incoming.length + (TR.incoming.length === 1 ? " offer" : " offers") + " for you" : "";
+    paintPicker();
+  }
+  /* A picker lists one side's teams, best first, filtered by its search box; tap to add or remove (up to 5). */
+  function pickerList(box, inv, q, picked, side) {
+    box.innerHTML = "";
+    if (!inv) { box.innerHTML = '<p class="tr-empty">Type a player\'s username above to see their cards.</p>'; return; }
+    var list = Object.keys(inv).map(Number).filter(function (n) { return BY_NUM[n] && inv[n] > 0 && (!q || matches(BY_NUM[n], q)); })
+      .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return (picked.indexOf(b) >= 0) - (picked.indexOf(a) >= 0) || ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
+    if (!list.length) { box.innerHTML = '<p class="tr-empty">' + (q ? "No cards match." : side === "give" ? "Your binder is empty." : "They don't have any cards yet.") + '</p>'; return; }
+    list.slice(0, 60).forEach(function (n) {
+      var t = BY_NUM[n], on = picked.indexOf(n) >= 0, b = document.createElement("button");
+      b.type = "button"; b.className = "tr-opt" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on)); b.style.setProperty("--tc", TIERS[t.tier].color);
+      b.innerHTML = '<i></i><b>' + n + '</b><span>' + esc(t.name) + '</span><em>' + (inv[n] > 1 ? "×" + inv[n] : TIERS[t.tier].label) + '</em>';
+      if (side === "give" && inv[n] === 1) b.title = "Your only copy";
+      b.onclick = function () {
+        var i = picked.indexOf(n);
+        if (i >= 0) picked.splice(i, 1); else if (picked.length < MAXT) picked.push(n); else return say("Up to " + MAXT + " cards on each side.", 1800);
+        paintPicker();
+      };
+      box.appendChild(b);
+    });
+  }
+  function paintPicker() {
+    var mine = {}; Object.keys(S.inv).forEach(function (k) { if (S.inv[k].length) mine[k] = S.inv[k].length; });
+    trGive = trGive.filter(function (n) { return mine[n]; });
+    pickerList($("#trGive"), mine, trGiveQ.value.trim().toLowerCase(), trGive, "give");
+    pickerList($("#trGet"), theirInv, trGetQ.value.trim().toLowerCase(), trGet, "get");
+    $("#trGiveN").textContent = trGive.length + " of " + MAXT; $("#trGetN").textContent = trGet.length + " of " + MAXT;
+    var ready = theirInv && trGive.length && trGet.length;
+    trSend.disabled = !ready;
+    $("#trSummary").textContent = !theirInv ? "" : ready ? "You give " + trGive.length + (trGive.length === 1 ? " card" : " cards") + " and get " + trGet.length + " from " + theirName + "." : "Pick at least one card on each side.";
+  }
+  function loadTheirs() {
+    var name = trWho.value.trim();
+    if (!name || name.toLowerCase() === theirName.toLowerCase()) return;
+    api.playerCollection(name, PACK_ID).then(function (col) {
+      theirName = name; theirInv = {}; trGet = [];
+      col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
+      paintPicker();
+    }, function (e) { theirInv = null; theirName = ""; trGet = []; paintPicker(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
+  }
+  trWho.addEventListener("input", function () {
+    clearTimeout(whoTimer);
+    var q = trWho.value.trim();
+    whoTimer = setTimeout(function () {
+      if (q.length < 2) return;
+      api.players(q).then(function (names) {
+        var dl = $("#trWhoList"); dl.innerHTML = "";
+        names.forEach(function (n) { var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
+        if (names.some(function (n) { return n.toLowerCase() === q.toLowerCase(); })) loadTheirs();
+      }, function () {});
+    }, 220);
+  });
+  trWho.addEventListener("change", loadTheirs);
+  trGiveQ.addEventListener("input", paintPicker); trGetQ.addEventListener("input", paintPicker);
+  trSend.addEventListener("click", function () {
+    if (trSend.disabled) return; trSend.disabled = true;
+    api.offerTrade(theirName, PACK_ID, trGive, trGet).then(function (t) {
+      TR = t; trGive = []; trGet = []; sfx.whoosh(); say("Offer sent to " + theirName + ".", 2600);
+      loadTheirs(); paintTrades();
+    }, function (e) { offline(e); paintPicker(); });
+  });
+  /* Check for new offers now and then, so the tab dot shows up without a reload. */
+  setInterval(function () { if (!document.hidden) loadTrades(); }, 60000);
+
   /* ---------- controller ---------- */
   /* Any standard gamepad (Xbox, PlayStation, Switch Pro in a browser that maps it): A takes / opens / flips, B goes
      back, X turns the pack over, Y reveals the rest, the d-pad or left stick moves, the sticks tilt what you're
@@ -1038,17 +1163,23 @@ export function start(RECIPE) {
     document.body.classList.add("pad");
     if (!modal.hidden) return padMove(dir, modal);
     if (!vBinder.hidden) return padMove(dir, vBinder);
+    if (!vTrade.hidden) return padMove(dir, vTrade);
     if (state === "select" && (dir === "left" || dir === "right")) spinTo(Math.round(ringA / 36) * 36 + (dir === "left" ? -36 : 36), 220);
     else if (state === "stack" && (dir === "left" || dir === "right")) { var el = topEl(); if (el && !el._hidden) fling(el, dir === "right" ? 1 : -1); }
     else if (state === "summary" || state === "home") padMove(dir, vOpen);
   }
   function padButton(b) {
     actx(); document.body.classList.add("pad");
-    if (b === PAD.LB || b === PAD.RB) { if (modal.hidden) show(b === PAD.LB ? "open" : "binder"); return; }
+    if (b === PAD.LB || b === PAD.RB) {
+      if (!modal.hidden) return;
+      var tabs = ["open", "binder", "trade"], at = !vBinder.hidden ? 1 : !vTrade.hidden ? 2 : 0;
+      show(tabs[(at + (b === PAD.LB ? 2 : 1)) % 3]); return;
+    }
     if (b === PAD.START) { if (!claimBtn.hidden) padPress(claimBtn); return; }
     if (!modal.hidden) { if (b === PAD.A && modal.contains(document.activeElement)) padPress(document.activeElement); else if (b === PAD.A || b === PAD.B) closeModal(); return; }
-    if (!vBinder.hidden) {
-      if (b === PAD.A) { var f = document.activeElement; if (f && vBinder.contains(f)) padPress(f); else padMove("down", vBinder); }
+    var page = !vBinder.hidden ? vBinder : !vTrade.hidden ? vTrade : null;
+    if (page) {
+      if (b === PAD.A) { var f = document.activeElement; if (f && page.contains(f)) { if (f.matches("input")) f.focus(); else padPress(f); } else padMove("down", page); }
       else if (b === PAD.B) show("open");
       return;
     }
@@ -1112,7 +1243,7 @@ export function start(RECIPE) {
       applyCollection(col); paintToggles(); paintTabDot();
       if (S.pending) { say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
       else paintHome();
-      paintStatus(); show(hash === "binder" ? "binder" : "open");
+      paintStatus(); show(hash === "binder" || hash === "trade" ? hash : "open"); loadTrades();
       document.body.classList.add("ready");
     }, function (e) {
       setHud(e && e.status === 0 ? "Can't reach the server" : "Something went wrong", "Reload the page to try again");

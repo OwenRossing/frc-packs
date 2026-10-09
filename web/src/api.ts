@@ -140,6 +140,32 @@ export interface Scrapped {
   collection: Collection;
 }
 
+export interface CardRef {
+  num: number;
+  tier: Tier;
+  serial: number;
+}
+
+export interface Trade {
+  id: number;
+  /** True when you made the offer. */
+  mine: boolean;
+  /** The other player. */
+  with: string;
+  pack: string;
+  youGive: CardRef[];
+  youGet: CardRef[];
+  status: "open" | "accepted" | "declined" | "cancelled" | "failed";
+  createdAt: number;
+  decidedAt: number | null;
+}
+
+export interface Trades {
+  incoming: Trade[];
+  outgoing: Trade[];
+  recent: Trade[];
+}
+
 /** status 0 means the server couldn't be reached. */
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {
@@ -184,6 +210,18 @@ export const api = {
   scrap: (pack: string, num: number, count: number) => call<Scrapped>("POST", "/api/scrap", { pack, num, count }),
   /** Scrap every extra copy of these tiers. */
   scrapExtras: (pack: string, tiers: Tier[]) => call<Scrapped>("POST", "/api/scrap/extras", { pack, tiers }),
+  /** Players whose username contains `q`, for picking who to trade with. */
+  players: (q: string) => call<string[]>("GET", `/api/players?q=${encodeURIComponent(q)}`),
+  playerCollection: (name: string, pack: string) =>
+    call<Collection>("GET", `/api/players/${encodeURIComponent(name)}/collection/${encodeURIComponent(pack)}`),
+  trades: () => call<Trades>("GET", "/api/trades"),
+  /** Offer one copy each of `give` (your teams) for one copy each of `want` (theirs). */
+  offerTrade: (to: string, pack: string, give: number[], want: number[]) =>
+    call<Trades>("POST", "/api/trades", { to, pack, give, want }),
+  acceptTrade: (id: number) =>
+    call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),
+  declineTrade: (id: number) => call<Trades>("POST", `/api/trades/${id}/decline`),
+  cancelTrade: (id: number) => call<Trades>("POST", `/api/trades/${id}/cancel`),
   /** Spend parts on a boosted pack. */
   craft: () => call<State>("POST", "/api/craft"),
   recipe: (pack: string) => call<Recipe>("GET", `/packs/${encodeURIComponent(pack)}.json`),
@@ -228,6 +266,13 @@ export function explain(e: unknown): string {
     not_found: "That no longer exists. Reload the page.",
     not_enough_parts: "Not enough parts yet. Scrap some extra copies first.",
     no_extras: "No extra copies of that card to scrap.",
+    unknown_player: "There's no player with that username.",
+    not_owned: "One of those cards isn't available to trade any more.",
+    trade_stale: "One of the cards in that trade isn't there any more, so the trade was called off.",
+    trade_gone: "That trade was already answered or called off.",
+    too_many_offers: "You have 20 offers waiting. Cancel some first.",
+    bad_trade: "Pick 1 to 5 different cards on each side.",
+    not_your_trade: "That trade isn't yours to answer.",
   };
   return words[e.code] ?? "Something went wrong. Try again.";
 }

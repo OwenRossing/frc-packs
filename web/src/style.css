@@ -360,7 +360,12 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .grid { display: grid; grid-template-columns: repeat(auto-fill, var(--cw)); justify-content: center; gap: 18px 12px; margin-top: 16px; --cw: min(calc((100vw - 56px) / 3), 132px); padding-block: 8px; }
 .grid .slot.btn { transition: transform .15s; }
 .grid .slot.btn:hover { transform: translateY(-4px); }
-.slot.ghost { filter: grayscale(1) brightness(.36); opacity: .9; pointer-events: none; }
+.slot.ghost { pointer-events: none; }
+.slot.ghost .face { filter: grayscale(.85) brightness(.42) blur(calc(var(--cw) * .03)); }
+.ghost-tag { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: 2px; padding: 8%; text-align: center; color: var(--foam); font-size: max(10px, calc(var(--cw) * .085)); font-weight: 700; line-height: 1.15; text-shadow: 0 1px 4px rgba(0,0,0,.9); }
+.ghost-tag b { font-family: var(--display); font-weight: 400; font-size: max(16px, calc(var(--cw) * .2)); color: #fff; }
+.ghost-tag small { margin-top: 4px; font-size: max(9px, calc(var(--cw) * .07)); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim); }
+.binder-head .search { width: 100%; }
 .slot.ghost .count-badge { display: none; }
 .empty-binder { text-align: center; color: var(--ink-dim); padding: 36px 8px; line-height: 1.5; }
 .empty-binder b { display: block; font-family: var(--display); font-weight: inherit; font-size: 22px; color: var(--foam); margin-bottom: 6px; }
@@ -446,3 +451,45 @@ a.chip { text-decoration: none; display: inline-block; }
 /* Playing with a controller: whatever the d-pad is on gets a clear ring. */
 body.pad :focus { outline: 3px solid var(--tide); outline-offset: 3px; }
 body.pad .slot.btn:focus { outline-offset: 5px; border-radius: 10px; }
+
+/* ---------- trading ---------- */
+#viewTrade { margin-top: 12px; }
+.trade { display: grid; gap: 14px; }
+.tr-block, .tr-new { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 10px; }
+.trade h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 19px; color: var(--foam); }
+.tr-recent summary { cursor: pointer; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: var(--ink-dim); }
+.tr-list { display: grid; gap: 10px; }
+.tr-empty { margin: 0; font-size: 13px; color: var(--ink-dim); }
+.tr-item { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; background: #08202a; }
+.tr-head { font-size: 14px; color: var(--ink); }
+.tr-head b { color: var(--foam); }
+.tr-swap { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tr-swap > div { display: grid; gap: 4px; align-content: start; }
+.tr-swap small { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
+.tr-card { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--ink); min-width: 0; }
+.tr-card i, .tr-opt i { flex: none; width: 8px; height: 8px; border-radius: 2px; background: var(--tc); transform: rotate(45deg); align-self: center; }
+.tr-card b { color: var(--foam); font-variant-numeric: tabular-nums; }
+.tr-card em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--tc); white-space: nowrap; }
+.tr-act { justify-content: flex-start; }
+.tr-who { display: grid; gap: 5px; font-size: 13px; font-weight: 700; letter-spacing: .04em; max-width: 320px; }
+.tr-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tr-side { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.tr-side h4 { margin: 0; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); display: flex; justify-content: space-between; }
+.tr-side h4 small { color: var(--ink-dim); font-weight: 600; letter-spacing: 0; text-transform: none; }
+.tr-pick { display: grid; gap: 4px; max-height: 320px; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+.tr-opt { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: #08202a; border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; cursor: pointer; font-size: 13px; color: var(--ink); }
+.tr-opt b { color: var(--foam); font-variant-numeric: tabular-nums; min-width: 3.2em; }
+.tr-opt span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-opt em { font-style: normal; font-size: 11px; color: var(--tc); white-space: nowrap; }
+.tr-opt.on { border-color: var(--tide); background: #0f3a44; box-shadow: inset 3px 0 0 var(--tide); }
+.tr-send { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.tr-send p { margin: 0; font-size: 13px; color: var(--ink-dim); }
+@media (max-width: 560px) { .tr-sides, .tr-swap { grid-template-columns: 1fr; } }
+
+/* ---------- Google sign-in (off until the server has a Google client ID) ---------- */
+.auth-or { display: flex; align-items: center; gap: 10px; color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+.auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.google-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: #f2f5f7; color: #1f1f1f; font-weight: 700; font-size: 15px; cursor: pointer; }
+.google-btn svg { width: 18px; height: 18px; }
+.google-btn:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(.6); }
+#googleSoon { text-align: center; margin-top: -6px; }

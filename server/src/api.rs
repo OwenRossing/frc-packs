@@ -178,7 +178,7 @@ struct PackReq {
 
 // ---------- helpers ----------
 
-fn pack<'a>(s: &'a Shared, id: &str) -> ApiResult<&'a Pack> {
+pub(crate) fn pack<'a>(s: &'a Shared, id: &str) -> ApiResult<&'a Pack> {
     s.catalog.get(id).ok_or(err(StatusCode::NOT_FOUND, "unknown_pack"))
 }
 
@@ -574,6 +574,42 @@ async fn hand(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     Ok(Json(HandOut { best: roll::best(&cards), boosted }))
 }
 
+/// Division sets that getting these teams completed for the account: records them and returns their names. The
+/// caller adds a bonus pack for each.
+pub(crate) async fn award_sets(c: &mut PgConnection, user: Uuid, pack: &Pack, teams: &[i32]) -> ApiResult<Vec<String>> {
+    let done: Vec<String> = sqlx::query_scalar("select division from sets_done where user_id = $1 and pack_id = $2")
+        .bind(user)
+        .bind(pack.id())
+        .fetch_all(&mut *c)
+        .await?;
+    let mut sets: Vec<String> = Vec::new();
+    for num in teams {
+        let Some(div) = pack.team_div.get(num) else { continue };
+        if done.contains(div) || sets.contains(div) {
+            continue;
+        }
+        let members = &pack.divisions[div];
+        let have: i64 = sqlx::query_scalar(
+            "select count(distinct team) from cards where user_id = $1 and pack_id = $2 and team = any($3)",
+        )
+        .bind(user)
+        .bind(pack.id())
+        .bind(members)
+        .fetch_one(&mut *c)
+        .await?;
+        if have == members.len() as i64 {
+            sqlx::query("insert into sets_done (user_id, pack_id, division) values ($1, $2, $3)")
+                .bind(user)
+                .bind(pack.id())
+                .bind(div)
+                .execute(&mut *c)
+                .await?;
+            sets.push(div.clone());
+        }
+    }
+    Ok(sets)
+}
+
 #[derive(Serialize)]
 struct OpenOut {
     opening: OpeningOut,
@@ -647,36 +683,8 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     }
     let pity = roll::next_pity(Pity { m: up.pity_m.max(0) as u32, l: up.pity_l.max(0) as u32 }, &cards);
     // Division sets this pack completed.
-    let done: Vec<String> = sqlx::query_scalar("select division from sets_done where user_id = $1 and pack_id = $2")
-        .bind(user.id)
-        .bind(pack.id())
-        .fetch_all(&mut *tx)
-        .await?;
-    let mut sets: Vec<String> = Vec::new();
-    for c in &cards {
-        let div = &pack.team_div[&c.num];
-        if done.contains(div) || sets.contains(div) {
-            continue;
-        }
-        let teams = &pack.divisions[div];
-        let have: i64 = sqlx::query_scalar(
-            "select count(distinct team) from cards where user_id = $1 and pack_id = $2 and team = any($3)",
-        )
-        .bind(user.id)
-        .bind(pack.id())
-        .bind(teams)
-        .fetch_one(&mut *tx)
-        .await?;
-        if have == teams.len() as i64 {
-            sqlx::query("insert into sets_done (user_id, pack_id, division) values ($1, $2, $3)")
-                .bind(user.id)
-                .bind(pack.id())
-                .bind(div)
-                .execute(&mut *tx)
-                .await?;
-            sets.push(div.clone());
-        }
-    }
+    let nums: Vec<i32> = cards.iter().map(|c| c.num).collect();
+    let sets = award_sets(&mut tx, user.id, pack, &nums).await?;
     sqlx::query(
         "update user_packs set sealed = sealed - 1 + $3, boosted = boosted - $6, opened = opened + 1, pity_m = $4,
          pity_l = $5 where user_id = $1 and pack_id = $2",
@@ -730,13 +738,13 @@ struct OwnedOut {
 }
 
 #[derive(Serialize)]
-struct CollectionOut {
+pub(crate) struct CollectionOut {
     pack: String,
     cards: Vec<OwnedOut>,
     sets: Vec<String>,
 }
 
-async fn load_collection(c: &mut PgConnection, user: Uuid, pack: &Pack) -> ApiResult<CollectionOut> {
+pub(crate) async fn load_collection(c: &mut PgConnection, user: Uuid, pack: &Pack) -> ApiResult<CollectionOut> {
     let rows: Vec<(i32, Vec<i32>)> = sqlx::query_as(
         "select team, array_agg(serial order by id) from cards where user_id = $1 and pack_id = $2 group by team",
     )
@@ -791,7 +799,7 @@ struct ScrapOut {
 }
 
 /// Scraps extra copies: deletes them (their serial numbers are not reused) and adds their parts. Keeps each team's
-/// first copy, and never touches a card from a pack that is still being revealed. `teams` limits it to some teams
+/// first copy, and never touches a card from a pack that is still being revealed or one in an open trade offer. `teams` limits it to some teams
 /// (None = every team in `tiers`); `limit` caps copies per team.
 async fn scrap_copies(
     c: &mut PgConnection,
@@ -810,6 +818,7 @@ async fn scrap_copies(
            where c.user_id = $1 and c.pack_id = $2 and c.tier = any($3)
              and ($4::int[] is null or c.team = any($4))
              and (o.id is null or o.revealed >= 5)
+             and not exists (select 1 from trades t where t.status = 'open' and (c.id = any(t.give) or c.id = any(t.want)))
          ),
          pick as (select id, tier from ranked where n > 1 and n > total - $5)
          delete from cards where id in (select id from pick) returning tier",

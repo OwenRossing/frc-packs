@@ -27,6 +27,7 @@
       <div class="seg" role="tablist" aria-label="Screens">
         <button type="button" role="tab" id="tabOpen" aria-selected="true">Open</button>
         <button type="button" role="tab" id="tabBinder" aria-selected="false">Binder<span class="tabdot" id="tabDot" hidden></span></button>
+        <button type="button" role="tab" id="tabTrade" aria-selected="false">Trade<span class="tabdot" id="tradeDot" hidden></span></button>
       </div>
       <button type="button" class="chip" id="gear" aria-expanded="false" aria-controls="settings">Settings</button>
     </div>
@@ -55,6 +56,12 @@
         <p class="auth-alt">You only need the code once. After this, sign in with your username and password.</p>
       </form>
       <div class="auth-msg" id="authMsg" role="alert" hidden></div>
+      <div class="auth-or" aria-hidden="true"><span>or</span></div>
+      <button type="button" class="google-btn" id="googleBtn" disabled aria-describedby="googleSoon">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.6 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.2 1.5-5 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>
+        Continue with Google
+      </button>
+      <p class="auth-alt" id="googleSoon">Google sign-in is coming soon.</p>
     </div>
   </div>
 
@@ -67,10 +74,11 @@
       <button type="submit" class="cta small">Save</button>
       <div class="msg" id="pwMsg" role="status" hidden></div>
     </form>
+    <div class="line"><span>Google account<small>Sign in with Google instead of a password. Coming soon.</small></span><button type="button" class="chip" id="linkGoogle" disabled>Link</button></div>
     <div class="line" id="adminLine" hidden><span>Admin<small>Make invite codes and manage accounts.</small></span><a class="chip" href="/admin">Open panel</a></div>
     <div class="line"><span>Sound<small>Chimes, rip and reveal stings.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
     <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 400, and the Mythic meter guarantees one by pack 200.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
-    <div class="line"><span>Extra packs<small>Developer tools. Real packs come from the 5-hour claim.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
+    <div class="line"><span>Extra packs<small>Developer tools. Real packs come from the free-pack timer.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
     <div class="line"><span>Pack wheel every time<small>Pick from the wheel of 10 packs each time you open another pack.</small></span><button type="button" class="chip" id="wheelAgain" aria-pressed="true">On</button></div>
     <div class="line"><span>My team<small id="myTeamTxt">Not picked yet.</small></span><button type="button" class="chip" id="changeTeam">Change</button></div>
     <div class="line"><span>Start over<small>Developer tools. Deletes this account's cards and packs.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
@@ -145,12 +153,32 @@
         </div>
         <small class="ws-note">You always keep your first copy of every team. Boosted packs have better odds (Legendary or better in about half of them, Mythic 4x as likely) and open before your other packs.</small>
       </div>
+      <input class="input search" id="binderSearch" type="search" placeholder="Search by team number, name or place" aria-label="Search the binder" autocomplete="off" spellcheck="false">
       <div class="tiers" id="tiers" role="group" aria-label="Filter by rarity"></div>
       <div class="tiers divs" id="divs" role="group" aria-label="Division sets"></div>
       <div><button type="button" class="chip" id="missingBtn" aria-pressed="false" hidden>Show cards I'm missing</button></div>
     </div>
     <div class="grid" id="grid"></div>
     <div class="more"><button type="button" class="cta small ghost" id="more" hidden>Show more</button></div>
+  </section>
+
+  <section id="viewTrade" hidden>
+    <div class="trade">
+      <div class="binder-sum"><h2>Trades</h2><span id="tradeSum"></span></div>
+      <div class="tr-block"><h3>Offers for you</h3><div class="tr-list" id="trIncoming"></div></div>
+      <div class="tr-block"><h3>Your offers</h3><div class="tr-list" id="trOutgoing"></div></div>
+      <section class="tr-new" aria-labelledby="trNewTitle">
+        <h3 id="trNewTitle">New trade</h3>
+        <label class="tr-who">Trade with<input class="input" id="trWho" list="trWhoList" placeholder="Their username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20"></label>
+        <datalist id="trWhoList"></datalist>
+        <div class="tr-sides">
+          <div class="tr-side"><h4>You give <small id="trGiveN">0 of 5</small></h4><input class="input" id="trGiveQ" type="search" placeholder="Search your cards" aria-label="Search your cards"><div class="tr-pick" id="trGive" role="group" aria-label="Your cards"></div></div>
+          <div class="tr-side"><h4>You get <small id="trGetN">0 of 5</small></h4><input class="input" id="trGetQ" type="search" placeholder="Search their cards" aria-label="Search their cards"><div class="tr-pick" id="trGet" role="group" aria-label="Their cards"></div></div>
+        </div>
+        <div class="tr-send"><p id="trSummary"></p><button type="button" class="cta" id="trSend" disabled>Send offer</button></div>
+      </section>
+      <details class="tr-block tr-recent"><summary>Recent trades</summary><div class="tr-list" id="trRecent"></div></details>
+    </div>
   </section>
 
   <details class="note" id="note"><summary>About FRC Packs</summary><p>The 2026 Championship pack holds the <span id="poolN">515</span> teams from Houston's 8 divisions, with EPA and records from Statbotics. Mythic is the season's top 50 teams by EPA who made it to Houston; the rest are tiered by their EPA at Champs. Robot photos come from The Blue Alliance; the few teams without one get a drawing. Every pack, serial number and free-pack timer is decided by the server, and your cards are saved to your account, so you can sign in from any device.</p></details>
