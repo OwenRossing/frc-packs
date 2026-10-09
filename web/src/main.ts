@@ -3,6 +3,7 @@ import { api, ApiError, type State } from "./api";
 import { accountSettings } from "./account";
 import { signIn } from "./auth";
 import { start } from "./app.js";
+import { setupPwa } from "./pwa";
 
 const PACK = "cmp26";
 
@@ -18,6 +19,7 @@ async function main() {
     }
     document.body.classList.remove("signed-out");
     accountSettings(state.account);
+    setupPwa();
     start(await recipe);
   } catch (e) {
     const offline = e instanceof ApiError && e.status === 0;

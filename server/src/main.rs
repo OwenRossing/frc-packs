@@ -79,12 +79,14 @@ async fn serve(db: sqlx::PgPool, data_dir: PathBuf) -> anyhow::Result<()> {
     if cfg.dev_tools {
         tracing::warn!("DEV_TOOLS is on: anyone can give themselves packs and demo luck");
     }
-    let app = frc_packs_server::app(db, cfg)?;
+    let app = frc_packs_server::app(db.clone(), cfg)?;
     // On AWS Lambda (built with --features lambda), the same app answers Lambda's HTTP events instead of a port.
     #[cfg(feature = "lambda")]
     if std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok() {
         return lambda_http::run(app).await.map_err(|e| anyhow::anyhow!(e));
     }
+    // "Free pack ready" notifications, checked once a minute.
+    tokio::spawn(frc_packs_server::push::ready_loop(db));
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("listening on http://{bind}");
     axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;

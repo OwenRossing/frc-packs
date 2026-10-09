@@ -15,6 +15,7 @@ use crate::api::{self, CollectionOut};
 use crate::auth::User;
 use crate::error::{ApiError, ApiResult};
 use crate::packs::{Pack, Tier};
+use crate::push;
 
 /// Cards per side of one trade, and offers one player can have open at once.
 pub const MAX_CARDS: usize = 5;
@@ -145,7 +146,16 @@ async fn offer(State(s): State<Shared>, user: User, Json(req): Json<OfferReq>) -
         .bind(&want)
         .execute(&mut *tx)
         .await?;
+    let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
+    let me = me.unwrap_or_else(|| "Someone".into());
+    let cards = |n: usize| if n == 1 { "1 card".to_string() } else { format!("{n} cards") };
+    push::notify(&s.db, to, push::Note {
+        title: format!("{me} wants to trade"),
+        body: format!("They offer {} for {} of yours.", cards(give.len()), cards(want.len())),
+        url: "/#trade".into(),
+        tag: format!("trade-{me}"),
+    });
     list_for(&s, user.id).await
 }
 
@@ -329,7 +339,14 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
     }
     let state = api::load_state(&s, &mut tx, user.id).await?;
     let collection = api::load_collection(&mut tx, user.id, pack).await?;
+    let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
+    push::notify(&s.db, from, push::Note {
+        title: format!("{} accepted your trade", me.unwrap_or_else(|| "Someone".into())),
+        body: format!("{} {} in your binder.", want.len(), if want.len() == 1 { "new card is" } else { "new cards are" }),
+        url: "/#binder".into(),
+        tag: format!("trade-done-{id}"),
+    });
     let trades = list_for(&s, user.id).await?.0;
     Ok(Json(AcceptOut { sets: mine, state, collection, trades }))
 }

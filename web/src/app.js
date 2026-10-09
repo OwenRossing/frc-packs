@@ -1034,6 +1034,8 @@ export function start(RECIPE) {
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
     vBinder._was = b; paintTabDot();
   }
+  /* Notifications and home-screen shortcuts open a tab by its #hash. */
+  addEventListener("hashchange", function () { var h = (location.hash || "").replace("#", ""); if (h === "open" || h === "binder" || h === "trade") show(h); });
   tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); }; tabTrade.onclick = function () { show("trade"); };
   var gear = $("#gear"), settings = $("#settings");
   gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };

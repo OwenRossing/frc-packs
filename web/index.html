@@ -2,10 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FRC Packs</title>
 <meta name="description" content="Open packs of FRC robot cards and collect every team from the Championship.">
 <meta name="theme-color" content="#06161d">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FRC Packs">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='7' y='3' width='18' height='26' rx='3' fill='%2306161d' stroke='%2327d3c3' stroke-width='2.5'/%3E%3Cpath d='M16 10l2 4.2 4.5.5-3.4 3 1 4.5L16 20l-4.1 2.2 1-4.5-3.4-3 4.5-.5z' fill='%2327d3c3'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,6 +80,8 @@
       <button type="submit" class="cta small">Save</button>
       <div class="msg" id="pwMsg" role="status" hidden></div>
     </form>
+    <div class="line" id="installLine" hidden><span>Install the app<small id="installTxt"></small></span><button type="button" class="chip" id="installBtn" hidden>Install</button></div>
+    <div class="line"><span>Notifications<small id="pushTxt">Free pack ready, trade offers and accepted trades.</small></span><button type="button" class="chip" id="pushBtn" aria-pressed="false">Off</button></div>
     <div class="line"><span>Google account<small>Sign in with Google instead of a password. Coming soon.</small></span><button type="button" class="chip" id="linkGoogle" disabled>Link</button></div>
     <div class="line" id="adminLine" hidden><span>Admin<small>Make invite codes and manage accounts.</small></span><a class="chip" href="/admin">Open panel</a></div>
     <div class="line"><span>Sound<small>Chimes, rip and reveal stings.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>

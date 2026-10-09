@@ -224,6 +224,10 @@ export const api = {
     call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),
   declineTrade: (id: number) => call<Trades>("POST", `/api/trades/${id}/decline`),
   cancelTrade: (id: number) => call<Trades>("POST", `/api/trades/${id}/cancel`),
+  /** The server's push key (null when push isn't set up), and turning notifications on or off for this browser. */
+  pushKey: () => call<{ key: string | null }>("GET", "/api/push/key"),
+  pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => call<void>("POST", "/api/push/subscribe", sub),
+  pushUnsubscribe: (endpoint: string) => call<void>("POST", "/api/push/unsubscribe", { endpoint }),
   /** Spend parts on a boosted pack. */
   craft: () => call<State>("POST", "/api/craft"),
   recipe: (pack: string) => call<Recipe>("GET", `/packs/${encodeURIComponent(pack)}.json`),

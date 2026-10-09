@@ -38,6 +38,7 @@ Things to know on Lambda:
 - Failed sign-in counting lives in memory, so each warm Lambda counts separately. It still slows guessing; for a hard limit, add AWS WAF rate rules on `/api/login`.
 - A cold start is roughly a quarter second (Rust is quick; most of it is the database connection).
 - Nightly backups become RDS automated backups; the systemd backup timer doesn't come along.
+- "Free pack ready" notifications come from a once-a-minute check that runs inside the server. Lambda only runs while answering requests, so on Lambda that check needs an EventBridge schedule (or a small always-on task) instead. Trade notifications are sent while answering the request and work as is.
 
 ## Why not DynamoDB
 
