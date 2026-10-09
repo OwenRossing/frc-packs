@@ -897,8 +897,6 @@ body.signed-out .tabbar { display: none; }
 .info { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--ink-dim); font: 400 12px/1 var(--display); cursor: pointer; padding: 0; }
 .tippop { position: absolute; right: 0; top: calc(100% + 8px); width: min(250px, 70vw); background: #102f3a; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45; opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 30; }
 .tipwrap:hover .tippop, .tipwrap.show .tippop, .tipwrap:focus-within .tippop { opacity: 1; }
-.card .moves, .card .sub-l, .card .hp { display: none; }
-.card .ft .rar { display: none; }
 .card .ft .sn { font-family: var(--display); font-size: 1.15em; letter-spacing: .04em; }
 .card .ft .sn.low { color: #ffd34d; text-shadow: 0 0 8px rgba(255,211,77,.7); }
 .slot.locked .art, .slot.locked .fphoto, .slot.locked .fwrap { filter: brightness(0) saturate(0) contrast(.4); opacity: .35; }
