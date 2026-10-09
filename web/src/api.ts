@@ -227,6 +227,23 @@ export interface Trades {
   recent: Trade[];
 }
 
+/** One change to a player's packs, parts or cards, and why (open, scrap, craft, trade 12, claim, ...). */
+export interface LedgerEntry {
+  at: number;
+  item: "packs" | "boosted" | "parts" | "card";
+  delta: number;
+  detail: string | null;
+  reason: string;
+}
+
+/** Whether everything adds up: each player's packs, parts and cards against their ledger, and every serial. */
+export interface Audit {
+  players: number;
+  mismatches: { id: string; username: string | null; item: string; have: number; ledger: number }[];
+  badSerials: number;
+  staleOffers: number;
+}
+
 /** status 0 means the server couldn't be reached. */
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {
@@ -234,13 +251,16 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function call<T>(method: "GET" | "POST", path: string, body?: unknown, key?: string): Promise<T> {
   let res: Response;
   try {
+    const headers: Record<string, string> = {};
+    if (method === "POST") headers["Content-Type"] = "application/json";
+    if (key) headers["Idempotency-Key"] = key;
     res = await fetch(path, {
       method,
       credentials: "same-origin",
-      headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+      headers,
       body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
@@ -250,6 +270,48 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, (data && data.error) || "server_error");
   return data as T;
+}
+
+function newKey(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const x = Array.from(b, (v) => v.toString(16).padStart(2, "0")).join("");
+    return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
+  }
+}
+
+/* Actions that change what you own (opening, scrapping, crafting, offering a trade) carry an Idempotency-Key. The
+   key stays the same until the server gives an answer, so a retry after a dropped connection (tried here
+   automatically, or the player tapping again) can't do the action twice, and a double tap counts once. */
+const pending = new Map<string, string>();
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function act<T>(path: string, body?: unknown): Promise<T> {
+  const id = path + JSON.stringify(body ?? {});
+  let key = pending.get(id);
+  if (!key) {
+    key = newKey();
+    pending.set(id, key);
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const out = await call<T>("POST", path, body, key);
+      pending.delete(id);
+      return out;
+    } catch (e) {
+      // No answer, a server hiccup, or the same request still running: safe to ask again with the same key.
+      const retry = e instanceof ApiError && (e.status === 0 || e.status >= 500 || e.code === "in_progress");
+      if (retry && attempt < 2) {
+        await wait(700 * (attempt + 1));
+        continue;
+      }
+      if (!(e instanceof ApiError && e.status === 0)) pending.delete(id); // the server answered: a new tap is a new try
+      throw e;
+    }
+  }
 }
 
 export const api = {
@@ -265,13 +327,13 @@ export const api = {
   /** Pick up a pack: its cards are decided now; only the best rarity comes back, for the glow. */
   /** `boosted` picks the kind: true for a boosted pack, false for a standard one; left out, boosted goes first. */
   hand: (pack: string, boosted?: boolean) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack, boosted }),
-  open: (pack: string, boosted?: boolean) => call<{ opening: Opening; state: State; streakReward: boolean }>("POST", "/api/open", { pack, boosted }),
+  open: (pack: string, boosted?: boolean) => act<{ opening: Opening; state: State; streakReward: boolean }>("/api/open", { pack, boosted }),
   progress: (id: number, revealed: number) => call<void>("POST", `/api/openings/${id}/progress`, { revealed }),
   collection: (pack: string) => call<Collection>("GET", `/api/collection/${encodeURIComponent(pack)}`),
   /** Scrap extra copies of one team (the first copy is always kept). */
-  scrap: (pack: string, num: number, count: number) => call<Scrapped>("POST", "/api/scrap", { pack, num, count }),
+  scrap: (pack: string, num: number, count: number) => act<Scrapped>("/api/scrap", { pack, num, count }),
   /** Scrap every extra copy of these tiers. */
-  scrapExtras: (pack: string, tiers: Tier[]) => call<Scrapped>("POST", "/api/scrap/extras", { pack, tiers }),
+  scrapExtras: (pack: string, tiers: Tier[]) => act<Scrapped>("/api/scrap/extras", { pack, tiers }),
   /** Players whose username contains `q`, for picking who to trade with. */
   players: (q: string) => call<string[]>("GET", `/api/players?q=${encodeURIComponent(q)}`),
   playerCollection: (name: string, pack: string) =>
@@ -279,7 +341,7 @@ export const api = {
   trades: () => call<Trades>("GET", "/api/trades"),
   /** Offer one copy each of `give` (your teams) for one copy each of `want` (theirs). */
   offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveParts: number; wantParts: number }) =>
-    call<Trades>("POST", "/api/trades", { to, pack, give, want, ...extra }),
+    act<Trades>("/api/trades", { to, pack, give, want, ...extra }),
   acceptTrade: (id: number) =>
     call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),
   declineTrade: (id: number) => call<Trades>("POST", `/api/trades/${id}/decline`),
@@ -299,7 +361,7 @@ export const api = {
   /** Collect a finished daily mission's parts. */
   claimMission: (id: string) => call<State>("POST", `/api/missions/${encodeURIComponent(id)}/claim`),
   /** Spend parts on a boosted pack. */
-  craft: () => call<State>("POST", "/api/craft"),
+  craft: () => act<State>("/api/craft"),
   recipe: (pack: string) => call<Recipe>("GET", `/packs/${encodeURIComponent(pack)}.json`),
   dev: {
     demo: (on: boolean) => call<State>("POST", "/api/dev/demo", { on }),
@@ -322,6 +384,8 @@ export const api = {
     deleteUser: (id: string, confirm: string) => call<void>("POST", `/api/admin/users/${id}/delete`, { confirm }),
     settings: () => call<Rules>("GET", "/api/admin/settings"),
     saveSettings: (r: Rules) => call<Rules>("POST", "/api/admin/settings", r),
+    ledger: (id: string) => call<LedgerEntry[]>("GET", `/api/admin/users/${id}/ledger`),
+    audit: () => call<Audit>("GET", "/api/admin/audit"),
   },
 };
 
@@ -351,10 +415,15 @@ export function explain(e: unknown): string {
     trade_stale: "One of the cards in that trade isn't there any more, so the trade was called off.",
     trade_gone: "That trade was already answered or called off.",
     too_many_offers: "You have 20 offers waiting. Cancel some first.",
-    bad_trade: "Pick 1 to 5 different cards on each side.",
+    bad_trade: "Each side needs something: up to 5 different cards, packs or parts.",
     not_your_trade: "That trade isn't yours to answer.",
     not_enough_to_trade: "You don't have that many packs or parts to trade (boosted packs can't be traded).",
     they_lack: "They don't have that many packs or parts.",
+    too_new: "New accounts can trade packs and parts after their first day. You can trade cards right away.",
+    they_too_new: "They joined today. New accounts can trade packs and parts after their first day.",
+    trade_limit: "You can take in up to 10 packs and 2,000 parts a day through trades. Try a smaller trade, or tomorrow.",
+    their_trade_limit: "They've taken in as many packs or parts as they can today through trades. Try a smaller trade, or tomorrow.",
+    in_progress: "Still working on that. Give it a moment.",
     mission_not_ready: "That mission isn't finished yet.",
     wishlist_full: "Your wishlist is full (50). Take something off first.",
     username_not_allowed: "That username isn't allowed. Pick something else.",

@@ -13,6 +13,8 @@ use tower::ServiceExt;
 
 async fn setup(dev_tools: bool) -> Option<(Router, PgPool)> {
     let url = std::env::var("DATABASE_URL").ok()?;
+    // Server errors (say, a database error) print with the failing test.
+    let _ = tracing_subscriber::fmt().with_test_writer().with_env_filter("frc_packs_server=error").try_init();
     let db = PgPool::connect(&url).await.unwrap();
     migrate(&db).await.unwrap();
     let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data");
@@ -27,7 +29,15 @@ struct Res {
 }
 
 async fn call(app: &Router, method: &str, path: &str, cookie: Option<&str>, body: Option<Value>) -> Res {
+    call_key(app, method, path, cookie, body, None).await
+}
+
+/// `call` with an Idempotency-Key header.
+async fn call_key(app: &Router, method: &str, path: &str, cookie: Option<&str>, body: Option<Value>, key: Option<&str>) -> Res {
     let mut b = Request::builder().method(method).uri(path);
+    if let Some(k) = key {
+        b = b.header("idempotency-key", k);
+    }
     if let Some(c) = cookie {
         b = b.header(header::COOKIE, c);
     }
@@ -904,8 +914,10 @@ async fn trades_never_duplicate_cards() {
     give_card(&db, b, y, "uncommon").await; // B has two copies of y, so scrapping has something to try
     give_card(&db, c, z, "common").await;
     let total = |db: PgPool| async move {
-        sqlx::query_scalar::<_, i64>("select count(*) from cards where pack_id = 'cmp26' and team = any($1)")
+        // Only these three players' cards: other tests open packs at the same time.
+        sqlx::query_scalar::<_, i64>("select count(*) from cards where pack_id = 'cmp26' and team = any($1) and user_id = any($2)")
             .bind(vec![x, y, z])
+            .bind(vec![a, b, c])
             .fetch_one(&db)
             .await
             .unwrap()
@@ -1094,6 +1106,10 @@ async fn choose_pack_kind_and_trade_packs_and_parts() {
     assert_eq!(too_many.status, StatusCode::BAD_REQUEST, "both sides need something");
     let too_many = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 2, "givePrts": 0, "wantPacks": 1 }))).await;
     assert_eq!((too_many.status, too_many.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_enough_to_trade")));
+    // Brand-new accounts can't hand out packs or parts (against farming extra accounts).
+    let fresh = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 1, "wantPacks": 1 }))).await;
+    assert_eq!(fresh.body["error"], "too_new");
+    age(&db, &[a, b]).await;
     // B has 2 standard packs (starting packs). A offers 1 pack + 200 parts for 2 of B's packs.
     let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 1, "giveParts": 200, "wantPacks": 2 }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
@@ -1115,4 +1131,223 @@ async fn choose_pack_kind_and_trade_packs_and_parts() {
     assert_eq!(stale.body["error"], "trade_stale");
     let parts_b: i32 = sqlx::query_scalar("select parts from users where id = $1").bind(b).fetch_one(&db).await.unwrap();
     assert_eq!(parts_b, 200);
+}
+
+/// Makes accounts two days old, past the new-account trading rule.
+async fn age(db: &PgPool, ids: &[uuid::Uuid]) {
+    sqlx::query("update users set created_at = now() - interval '2 days' where id = any($1)").bind(ids).execute(db).await.unwrap();
+}
+
+fn packs_of(st: &Value) -> (i64, i64) {
+    let p = st["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    (p["sealed"].as_i64().unwrap(), p["boosted"].as_i64().unwrap())
+}
+
+#[tokio::test]
+async fn a_retried_request_happens_once() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let me = user_id(&db, &c).await;
+    let start = packs_of(&st).0;
+    // Open: the same key twice (say the answer was lost and the app tried again) opens one pack, with one answer.
+    let k = uuid::Uuid::new_v4().to_string();
+    let a = call_key(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" })), Some(&k)).await;
+    let b = call_key(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" })), Some(&k)).await;
+    assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK));
+    assert_eq!(a.body["opening"]["id"], b.body["opening"]["id"], "the retry gets the same pack");
+    assert_eq!(a.body["opening"]["cards"], b.body["opening"]["cards"]);
+    let now = call(&app, "GET", "/api/state", Some(&c), None).await.body;
+    assert_eq!(packs_of(&now).0, start - 1, "only one pack was used");
+    // Ten copies of one request at once still open one pack.
+    let k = uuid::Uuid::new_v4().to_string();
+    let mut jobs = Vec::new();
+    for _ in 0..10 {
+        let (app, c, k) = (app.clone(), c.clone(), k.clone());
+        jobs.push(tokio::spawn(async move { call_key(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" })), Some(&k)).await }));
+    }
+    let mut ids = std::collections::HashSet::new();
+    for j in jobs {
+        let r = j.await.unwrap();
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        ids.insert(r.body["opening"]["id"].as_i64().unwrap());
+    }
+    assert_eq!(ids.len(), 1, "one pack for ten copies of the request");
+    assert_eq!(packs_of(&call(&app, "GET", "/api/state", Some(&c), None).await.body).0, start - 2);
+    // Without a key, two requests are two packs (that's two taps).
+    sqlx::query("update user_packs set sealed = sealed + 2 where user_id = $1").bind(me).execute(&db).await.unwrap();
+    // Craft: one key, parts spent once.
+    sqlx::query("update users set parts = 600 where id = $1").bind(me).execute(&db).await.unwrap();
+    let k = uuid::Uuid::new_v4().to_string();
+    let a = call_key(&app, "POST", "/api/craft", Some(&c), Some(json!({})), Some(&k)).await;
+    let b = call_key(&app, "POST", "/api/craft", Some(&c), Some(json!({})), Some(&k)).await;
+    assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK));
+    assert_eq!(a.body["parts"], 350);
+    assert_eq!(call(&app, "GET", "/api/state", Some(&c), None).await.body["parts"], 350, "crafted once");
+    // Scrap: one key, one copy scrapped.
+    let team = team_of("common", 40);
+    for _ in 0..3 {
+        give_card(&db, me, team, "common").await;
+    }
+    let copies = |db: PgPool| async move {
+        sqlx::query_scalar::<_, i64>("select count(*) from cards where user_id = $1 and team = $2").bind(me).bind(team).fetch_one(&db).await.unwrap()
+    };
+    let had = copies(db.clone()).await; // 3, or more if a pack opened above had this team
+    let k = uuid::Uuid::new_v4().to_string();
+    let body = json!({ "pack": "cmp26", "num": team, "count": 1 });
+    let a = call_key(&app, "POST", "/api/scrap", Some(&c), Some(body.clone()), Some(&k)).await;
+    let b = call_key(&app, "POST", "/api/scrap", Some(&c), Some(body), Some(&k)).await;
+    assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK), "{} {}", a.body, b.body);
+    assert_eq!(copies(db.clone()).await, had - 1, "one copy scrapped, not two");
+    // A key can't be reused for a different action.
+    let wrong = call_key(&app, "POST", "/api/craft", Some(&c), Some(json!({})), Some(&k)).await;
+    assert_eq!(wrong.body["error"], "key_reused");
+    // A request that failed can be retried with its key and then goes through.
+    sqlx::query("update users set parts = 0 where id = $1").bind(me).execute(&db).await.unwrap();
+    let k = uuid::Uuid::new_v4().to_string();
+    assert_eq!(call_key(&app, "POST", "/api/craft", Some(&c), Some(json!({})), Some(&k)).await.body["error"], "not_enough_parts");
+    sqlx::query("update users set parts = 250 where id = $1").bind(me).execute(&db).await.unwrap();
+    assert_eq!(call_key(&app, "POST", "/api/craft", Some(&c), Some(json!({})), Some(&k)).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn trade_offers_retry_once_and_daily_limits() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    age(&db, &[a, b]).await;
+    sqlx::query("update user_packs set sealed = 30 where user_id = any($1)").bind(vec![a, b]).execute(&db).await.unwrap();
+    sqlx::query("update users set parts = 5000 where id = any($1)").bind(vec![a, b]).execute(&db).await.unwrap();
+    // The same offer sent twice with one key is one offer.
+    let k = uuid::Uuid::new_v4().to_string();
+    let offer = json!({ "to": b_name, "pack": "cmp26", "givePacks": 6, "wantParts": 10 });
+    call_key(&app, "POST", "/api/trades", Some(&ca), Some(offer.clone()), Some(&k)).await;
+    let again = call_key(&app, "POST", "/api/trades", Some(&ca), Some(offer.clone()), Some(&k)).await;
+    assert_eq!(again.body["outgoing"].as_array().unwrap().len(), 1);
+    let id = again.body["outgoing"][0]["id"].as_i64().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await.status, StatusCode::OK);
+    // B has taken in 6 packs today; 5 more is over the daily 10.
+    let over = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 5, "wantParts": 10 }))).await;
+    assert_eq!(over.body["error"], "their_trade_limit");
+    let fine = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 4, "wantParts": 10 }))).await;
+    assert_eq!(fine.status, StatusCode::OK, "{}", fine.body);
+    // Parts: at most 2000 a day in. A has taken in 10 already.
+    let over = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "giveParts": 1, "wantParts": 1995 }))).await;
+    assert_eq!(over.body["error"], "trade_limit");
+}
+
+#[tokio::test]
+async fn finished_trades_keep_their_cards_in_history() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let (x, y) = (team_of("common", 130), team_of("common", 131));
+    give_card(&db, a, x, "common").await;
+    give_card(&db, b, y, "common").await;
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [y] }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    // B later loses the card A gave (scrapped, say); A's history still shows what was traded.
+    sqlx::query("delete from cards where user_id = $1 and team = $2").bind(b).bind(x).execute(&db).await.unwrap();
+    let h = call(&app, "GET", "/api/trades", Some(&ca), None).await.body;
+    let t = h["recent"].as_array().unwrap().iter().find(|t| t["id"] == id).unwrap();
+    assert_eq!(t["youGive"][0]["num"], x);
+    assert_eq!(t["youGet"][0]["num"], y);
+}
+
+#[tokio::test]
+async fn everything_is_in_the_ledger_and_the_audit_adds_up() {
+    let (app, db) = need_db!(setup(true));
+    let admin = make_admin(&app, &db).await;
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    age(&db, &[a, b]).await;
+    call(&app, "POST", "/api/claim", Some(&ca), Some(json!({}))).await;
+    for _ in 0..3 {
+        let o = call(&app, "POST", "/api/open", Some(&ca), Some(json!({ "pack": "cmp26" }))).await;
+        assert_eq!(o.status, StatusCode::OK, "{}", o.body);
+    }
+    let extra = team_of("common", 50);
+    give_card(&db, a, extra, "common").await;
+    give_card(&db, a, extra, "common").await;
+    let sc = call(&app, "POST", "/api/scrap/extras", Some(&ca), Some(json!({ "pack": "cmp26", "tiers": ["common", "uncommon", "rare"] }))).await;
+    assert_eq!(sc.status, StatusCode::OK, "{}", sc.body);
+    sqlx::query("update users set parts = parts + 300 where id = $1").bind(a).execute(&db).await.unwrap();
+    assert_eq!(call(&app, "POST", "/api/craft", Some(&ca), Some(json!({}))).await.status, StatusCode::OK);
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "giveParts": 20, "wantPacks": 1 }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await.status, StatusCode::OK);
+    // The ledger has each kind of change with its reason.
+    let l = call(&app, "GET", &format!("/api/admin/users/{a}/ledger"), Some(&admin), None).await;
+    assert_eq!(l.status, StatusCode::OK);
+    let reasons: Vec<String> = l.body.as_array().unwrap().iter().map(|e| e["reason"].as_str().unwrap().to_string()).collect();
+    for want in ["new account", "claim", "open", "scrap", "craft", &format!("trade {id}")] {
+        assert!(reasons.iter().any(|r| r == want), "ledger has {want}: {reasons:?}");
+    }
+    let cards_in: i64 = l.body.as_array().unwrap().iter().filter(|e| e["item"] == "card" && e["reason"] == "open").map(|e| e["delta"].as_i64().unwrap()).sum();
+    assert_eq!(cards_in, 15, "three packs, five cards each");
+    // Every player's packs, parts and cards match their ledger.
+    let audit = call(&app, "GET", "/api/admin/audit", Some(&admin), None).await;
+    assert_eq!(audit.status, StatusCode::OK);
+    assert_eq!(audit.body["mismatches"], json!([]), "{}", audit.body);
+    assert!(call(&app, "GET", "/api/admin/audit", Some(&ca), None).await.status == StatusCode::FORBIDDEN);
+}
+
+/// Everything at once on two accounts: opening, crafting, scrapping, offering and accepting trades with cards, packs
+/// and parts. No request may fail with a server error (a deadlock would), and afterwards everything adds up.
+#[tokio::test]
+async fn hammering_two_accounts_loses_nothing() {
+    let (app, db) = need_db!(setup(true));
+    let admin = make_admin(&app, &db).await;
+    let (ca, sa) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let a_name = sa["account"]["username"].as_str().unwrap().to_string();
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    age(&db, &[a, b]).await;
+    sqlx::query("update user_packs set sealed = 40 where user_id = any($1)").bind(vec![a, b]).execute(&db).await.unwrap();
+    sqlx::query("update users set parts = 3000 where id = any($1)").bind(vec![a, b]).execute(&db).await.unwrap();
+    for c in [&ca, &cb] {
+        for _ in 0..6 {
+            call(&app, "POST", "/api/open", Some(c), Some(json!({ "pack": "cmp26" }))).await;
+        }
+    }
+    let mut jobs = Vec::new();
+    for i in 0..120 {
+        let (app, ca, cb, a_name, b_name) = (app.clone(), ca.clone(), cb.clone(), a_name.clone(), b_name.clone());
+        jobs.push(tokio::spawn(async move {
+            let (me, other, other_cookie) = if i % 2 == 0 { (ca, b_name, cb) } else { (cb, a_name, ca) };
+            let r = match i % 6 {
+                0 | 1 => call(&app, "POST", "/api/open", Some(&me), Some(json!({ "pack": "cmp26" }))).await,
+                2 => call(&app, "POST", "/api/craft", Some(&me), Some(json!({}))).await,
+                3 => call(&app, "POST", "/api/scrap/extras", Some(&me), Some(json!({ "pack": "cmp26", "tiers": ["common", "uncommon"] }))).await,
+                _ => {
+                    let r = call(&app, "POST", "/api/trades", Some(&me), Some(json!({ "to": other, "pack": "cmp26", "givePacks": 1, "giveParts": 7, "wantParts": 5 }))).await;
+                    match r.body["outgoing"].as_array().and_then(|o| o.first()).and_then(|t| t["id"].as_i64()) {
+                        Some(id) => call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&other_cookie), Some(json!({}))).await,
+                        None => r,
+                    }
+                }
+            };
+            (r.status, r.body)
+        }));
+    }
+    for j in jobs {
+        let (st, body) = j.await.unwrap();
+        assert!(st.as_u16() < 500, "server error under load: {st} {body}");
+    }
+    let audit = call(&app, "GET", "/api/admin/audit", Some(&admin), None).await;
+    assert_eq!(audit.body["mismatches"], json!([]), "{}", audit.body);
+    // Packs and parts never go negative, and boosted packs are never more than sealed ones (the database enforces it too).
+    let bad: i64 = sqlx::query_scalar("select count(*) from user_packs where user_id = any($1) and (sealed < 0 or boosted < 0 or boosted > sealed)")
+        .bind(vec![a, b])
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(bad, 0);
 }

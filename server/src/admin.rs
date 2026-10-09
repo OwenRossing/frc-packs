@@ -28,6 +28,85 @@ pub fn routes() -> Router<Shared> {
         .route("/reports", get(reports))
         .route("/reports/{id}/resolve", post(resolve_report))
         .route("/users/{id}/rename", post(rename_user))
+        .route("/users/{id}/ledger", get(ledger))
+        .route("/audit", get(audit))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LedgerOut {
+    at: i64,
+    item: String,
+    delta: i32,
+    detail: Option<String>,
+    reason: String,
+}
+
+/// Everything that changed one player's packs, parts and cards, newest first: for answering "where did my card go?"
+async fn ledger(State(s): State<Shared>, _admin: Admin, Path(id): Path<Uuid>) -> ApiResult<Json<Vec<LedgerOut>>> {
+    let rows: Vec<(DateTime<Utc>, String, i32, Option<String>, String)> = sqlx::query_as(
+        "select at, item, delta, detail, reason from ledger where user_id = $1 order by id desc limit 500",
+    )
+    .bind(id)
+    .fetch_all(&s.db)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(at, item, delta, detail, reason)| LedgerOut { at: ms(at), item, delta, detail, reason })
+            .collect(),
+    ))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditOut {
+    /// Players checked.
+    players: i64,
+    /// Players whose packs, parts or cards don't match their ledger (should always be empty).
+    mismatches: Vec<Value>,
+    /// Serial numbers that two cards share, or that are higher than were ever printed (should always be empty).
+    bad_serials: i64,
+    /// Cards promised in more than one open offer from the same player, or offers for cards their maker no longer has.
+    stale_offers: i64,
+}
+
+/// Checks the whole game adds up: every player's packs, parts and cards against their ledger, and every serial number.
+async fn audit(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<AuditOut>> {
+    let players: i64 = sqlx::query_scalar("select count(*) from users").fetch_one(&s.db).await?;
+    let rows: Vec<(Uuid, Option<String>, String, i64, i64)> = sqlx::query_as(
+        "with have as (
+           select id as user_id, 'parts' as item, parts::bigint as n from users
+           union all select user_id, 'packs', sum(sealed - boosted)::bigint from user_packs group by user_id
+           union all select user_id, 'boosted', sum(boosted)::bigint from user_packs group by user_id
+           union all select user_id, 'card', count(*)::bigint from cards group by user_id),
+         booked as (select user_id, item, sum(delta)::bigint as n from ledger group by user_id, item),
+         cmp as (
+           select coalesce(h.user_id, b.user_id) as user_id, coalesce(h.item, b.item) as item,
+                  coalesce(h.n, 0) as have, coalesce(b.n, 0) as booked
+           from have h full join booked b on b.user_id = h.user_id and b.item = h.item)
+         select c.user_id, u.username, c.item, c.have, c.booked from cmp c join users u on u.id = c.user_id
+         where c.have <> c.booked order by u.username limit 200",
+    )
+    .fetch_all(&s.db)
+    .await?;
+    let mismatches = rows
+        .into_iter()
+        .map(|(id, name, item, have, booked)| json!({ "id": id, "username": name, "item": item, "have": have, "ledger": booked }))
+        .collect();
+    let bad_serials: i64 = sqlx::query_scalar(
+        "select (select count(*) from (select 1 from cards group by pack_id, team, serial having count(*) > 1) d)
+              + (select count(*) from cards c left join printings p on p.pack_id = c.pack_id and p.team = c.team
+                 where p.minted is null or c.serial > p.minted or c.serial < 1)",
+    )
+    .fetch_one(&s.db)
+    .await?;
+    let stale_offers: i64 = sqlx::query_scalar(
+        "select count(*) from trades t where t.status = 'open' and exists (
+           select 1 from unnest(t.give) g(id) left join cards c on c.id = g.id where c.id is null or c.user_id <> t.from_user)",
+    )
+    .fetch_one(&s.db)
+    .await?;
+    Ok(Json(AuditOut { players, mismatches, bad_serials, stale_offers }))
 }
 
 #[derive(Serialize)]
@@ -315,6 +394,8 @@ async fn give_packs(
     if !(1..=100).contains(&req.count) {
         return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
     }
+    let mut tx = s.db.begin().await?;
+    api::reason(&mut tx, "admin gift").await?;
     let n = sqlx::query(
         "insert into user_packs (user_id, pack_id, sealed) select id, $2, $3 from users where id = $1
          on conflict (user_id, pack_id) do update set sealed = user_packs.sealed + excluded.sealed",
@@ -322,9 +403,10 @@ async fn give_packs(
     .bind(id)
     .bind(s.catalog.claimable().id())
     .bind(req.count)
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    tx.commit().await?;
     if n == 0 { Err(err(StatusCode::NOT_FOUND, "not_found")) } else { Ok(StatusCode::NO_CONTENT) }
 }
 

@@ -1,8 +1,9 @@
 //! The JSON API under /api. Every rule that matters (odds, pity, timers, serials, sets) is enforced here.
 
-use axum::extract::{Path, State};
+use axum::extract::{FromRequestParts, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::IntoResponse;
+use axum::http::request::Parts;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
@@ -90,6 +91,80 @@ pub fn routes() -> Router<Shared> {
 
 fn err(status: StatusCode, code: &'static str) -> ApiError {
     ApiError::new(status, code)
+}
+
+// ---------- safety for anything that changes what a player owns ----------
+
+/// Says why this transaction changes a player's packs, parts or cards. The ledger triggers record it with each change.
+pub(crate) async fn reason(c: &mut PgConnection, why: &str) -> ApiResult<()> {
+    sqlx::query("select set_config('frc.reason', $1, true)").bind(why).execute(&mut *c).await?;
+    Ok(())
+}
+
+/// Locks the player's row. Everything that changes what a player owns takes this first (then their packs, then
+/// cards), so two of their requests run one after the other and can't deadlock each other. It's a "no key update"
+/// lock: it still lines up every change to the player, but doesn't block the light lock a foreign key check takes
+/// (another player's trade offer naming them, say). A plain "for update" would, and two players offering each other
+/// trades at the same moment could deadlock on it.
+pub(crate) async fn lock_user(c: &mut PgConnection, user: Uuid) -> ApiResult<()> {
+    sqlx::query("select 1 from users where id = $1 for no key update").bind(user).execute(&mut *c).await?;
+    Ok(())
+}
+
+/// A client-chosen id for one action, from the Idempotency-Key header. Sending the same request again with the same
+/// key (say the connection dropped before the answer came back) returns the first answer instead of doing it twice.
+pub struct IdemKey(pub Option<Uuid>);
+
+impl<S: Send + Sync> FromRequestParts<S> for IdemKey {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<IdemKey, Self::Rejection> {
+        Ok(IdemKey(parts.headers.get("idempotency-key").and_then(|v| v.to_str().ok()).and_then(|v| Uuid::parse_str(v.trim()).ok())))
+    }
+}
+
+/// Call first in the transaction. Some(answer) means this key was already done: send that answer and do nothing.
+/// A second request with a key that is still running waits for it here (on the row's lock), then gets its answer.
+pub(crate) async fn idem_begin(c: &mut PgConnection, user: Uuid, key: &IdemKey, kind: &str) -> ApiResult<Option<Response>> {
+    let Some(k) = key.0 else { return Ok(None) };
+    let fresh = sqlx::query("insert into requests (user_id, key, kind) values ($1, $2, $3) on conflict do nothing")
+        .bind(user)
+        .bind(k)
+        .bind(kind)
+        .execute(&mut *c)
+        .await?
+        .rows_affected()
+        == 1;
+    if fresh {
+        if rand::random::<u8>() == 0 {
+            sqlx::query("delete from requests where created_at < now() - interval '2 days'").execute(&mut *c).await?;
+        }
+        return Ok(None);
+    }
+    let prev: Option<(String, Option<serde_json::Value>)> =
+        sqlx::query_as("select kind, response from requests where user_id = $1 and key = $2")
+            .bind(user)
+            .bind(k)
+            .fetch_optional(&mut *c)
+            .await?;
+    match prev {
+        Some((was, _)) if was != kind => Err(err(StatusCode::BAD_REQUEST, "key_reused")),
+        Some((_, Some(v))) => Ok(Some(Json(v).into_response())),
+        _ => Err(err(StatusCode::CONFLICT, "in_progress")),
+    }
+}
+
+/// Call last, before committing: keeps the answer for a retry with the same key.
+pub(crate) async fn idem_end<T: Serialize>(c: &mut PgConnection, user: Uuid, key: &IdemKey, out: &T) -> ApiResult<()> {
+    if let Some(k) = key.0 {
+        sqlx::query("update requests set response = $3 where user_id = $1 and key = $2")
+            .bind(user)
+            .bind(k)
+            .bind(sqlx::types::Json(out))
+            .execute(&mut *c)
+            .await?;
+    }
+    Ok(())
 }
 
 /// For uptime checks and the install script: the server is up and can reach the database.
@@ -551,7 +626,8 @@ async fn state(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>>
 
 async fn claim(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
     let mut tx = s.db.begin().await?;
-    let mut next: DateTime<Utc> = sqlx::query_scalar("select next_claim_at from users where id = $1 for update")
+    reason(&mut tx, "claim").await?;
+    let mut next: DateTime<Utc> = sqlx::query_scalar("select next_claim_at from users where id = $1 for no key update")
         .bind(user.id)
         .fetch_one(&mut *tx)
         .await?;
@@ -667,9 +743,14 @@ struct OpenOut {
 
 /// Opens one sealed pack: the pack in hand if there is one, otherwise a fresh roll. Mints serial numbers, updates
 /// the pity meter, and awards a bonus pack for each division set this pack completes.
-async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> ApiResult<Json<OpenOut>> {
+async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json<PackReq>) -> ApiResult<Response> {
     let pack = pack(&s, &req.pack)?;
     let mut tx = s.db.begin().await?;
+    if let Some(done) = idem_begin(&mut tx, user.id, &key, "open").await? {
+        return Ok(done);
+    }
+    reason(&mut tx, "open").await?;
+    lock_user(&mut tx, user.id).await?;
     let up = lock_user_pack(&mut tx, user.id, pack.id()).await?;
     let kind = pack_kind(&up, req.boosted)?;
     let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
@@ -754,12 +835,14 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     sqlx::query("update openings set sets = $2 where id = $1").bind(opening_id).bind(&sets).execute(&mut *tx).await?;
     let streak_reward = crate::missions::on_open(&mut tx, user.id, pack.id()).await?;
     let state = load_state(&s, &mut tx, user.id).await?;
-    tx.commit().await?;
-    Ok(Json(OpenOut {
+    let done = OpenOut {
         opening: OpeningOut { id: opening_id, pack: pack.id().to_string(), revealed: 0, cards: out, sets },
         streak_reward,
         state,
-    }))
+    };
+    idem_end(&mut tx, user.id, &key, &done).await?;
+    tx.commit().await?;
+    Ok(Json(done).into_response())
 }
 
 #[derive(Deserialize)]
@@ -910,46 +993,68 @@ async fn scrap_copies(
     Ok((gained, scrapped, (extras - scrapped).max(0)))
 }
 
-async fn scrapped(s: &Shared, mut tx: sqlx::Transaction<'_, sqlx::Postgres>, user: Uuid, pack: &Pack, r: (i32, i64, i64)) -> ApiResult<Json<ScrapOut>> {
+async fn scrapped(
+    s: &Shared,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    user: Uuid,
+    pack: &Pack,
+    r: (i32, i64, i64),
+    key: &IdemKey,
+) -> ApiResult<Response> {
     let state = load_state(s, &mut tx, user).await?;
     let collection = load_collection(&mut tx, user, pack).await?;
+    let out = ScrapOut { gained: r.0, scrapped: r.1, held: r.2, state, collection };
+    idem_end(&mut tx, user, key, &out).await?;
     tx.commit().await?;
-    Ok(Json(ScrapOut { gained: r.0, scrapped: r.1, held: r.2, state, collection }))
+    Ok(Json(out).into_response())
 }
 
 /// Scraps extra copies of one team.
-async fn scrap(State(s): State<Shared>, user: User, Json(req): Json<ScrapReq>) -> ApiResult<Json<ScrapOut>> {
+async fn scrap(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json<ScrapReq>) -> ApiResult<Response> {
     let pack = pack(&s, &req.pack)?;
     let tier = *pack.team_tier.get(&req.num).ok_or(err(StatusCode::NOT_FOUND, "unknown_team"))?;
     if req.count < 1 {
         return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
     }
     let mut tx = s.db.begin().await?;
-    sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
+    if let Some(done) = idem_begin(&mut tx, user.id, &key, "scrap").await? {
+        return Ok(done);
+    }
+    reason(&mut tx, "scrap").await?;
+    lock_user(&mut tx, user.id).await?;
     let r = scrap_copies(&mut tx, user.id, pack, Some(&[req.num]), &[tier], i64::from(req.count)).await?;
     if r.1 == 0 {
         return Err(err(StatusCode::CONFLICT, if r.2 > 0 { "extras_held" } else { "no_extras" }));
     }
     crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Scrapped, r.1).await?;
-    scrapped(&s, tx, user.id, pack, r).await
+    scrapped(&s, tx, user.id, pack, r, &key).await
 }
 
 /// Scraps every extra copy of the chosen tiers.
-async fn scrap_extras(State(s): State<Shared>, user: User, Json(req): Json<ScrapExtrasReq>) -> ApiResult<Json<ScrapOut>> {
+async fn scrap_extras(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json<ScrapExtrasReq>) -> ApiResult<Response> {
     let pack = pack(&s, &req.pack)?;
     if req.tiers.is_empty() {
         return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
     }
     let mut tx = s.db.begin().await?;
-    sqlx::query("select 1 from users where id = $1 for update").bind(user.id).execute(&mut *tx).await?;
+    if let Some(done) = idem_begin(&mut tx, user.id, &key, "scrap_extras").await? {
+        return Ok(done);
+    }
+    reason(&mut tx, "scrap").await?;
+    lock_user(&mut tx, user.id).await?;
     let r = scrap_copies(&mut tx, user.id, pack, None, &req.tiers, i64::MAX).await?;
     crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Scrapped, r.1).await?;
-    scrapped(&s, tx, user.id, pack, r).await
+    scrapped(&s, tx, user.id, pack, r, &key).await
 }
 
 /// Spends parts on a boosted pack of the free pack. Boosted packs open before plain ones.
-async fn craft(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
+async fn craft(State(s): State<Shared>, user: User, key: IdemKey) -> ApiResult<Response> {
     let mut tx = s.db.begin().await?;
+    if let Some(done) = idem_begin(&mut tx, user.id, &key, "craft").await? {
+        return Ok(done);
+    }
+    reason(&mut tx, "craft").await?;
+    lock_user(&mut tx, user.id).await?;
     let cost = rules(&mut *tx).await?.boost_cost;
     let paid = sqlx::query("update users set parts = parts - $2 where id = $1 and parts >= $2")
         .bind(user.id)
@@ -968,8 +1073,9 @@ async fn craft(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>>
         .execute(&mut *tx)
         .await?;
     let out = load_state(&s, &mut tx, user.id).await?;
+    idem_end(&mut tx, user.id, &key, &out).await?;
     tx.commit().await?;
-    Ok(Json(out))
+    Ok(Json(out).into_response())
 }
 
 // ---------- testing helpers (DEV_TOOLS=1 only) ----------
@@ -997,6 +1103,7 @@ async fn dev_pack(State(s): State<Shared>, user: User, Json(req): Json<PackReq>)
     dev(&s)?;
     let pack = pack(&s, &req.pack)?;
     let mut tx = s.db.begin().await?;
+    reason(&mut tx, "dev tools").await?;
     lock_user_pack(&mut tx, user.id, pack.id()).await?;
     sqlx::query("update user_packs set sealed = sealed + 1 where user_id = $1 and pack_id = $2")
         .bind(user.id)
@@ -1022,6 +1129,7 @@ async fn dev_skip_timer(State(s): State<Shared>, user: User) -> ApiResult<Json<S
 async fn dev_reset(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
     dev(&s)?;
     let mut tx = s.db.begin().await?;
+    reason(&mut tx, "dev tools").await?;
     for table in ["cards", "openings", "hands", "sets_done", "user_packs"] {
         sqlx::query(&format!("delete from {table} where user_id = $1")).bind(user.id).execute(&mut *tx).await?;
     }

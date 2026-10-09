@@ -55,3 +55,14 @@ a.cta { text-decoration: none; display: inline-block; }
   .item { grid-template-columns: minmax(0, 1fr); }
   .actions { justify-content: flex-start; }
 }
+/* An account history (the ledger) and the health check. */
+.ledger summary { cursor: pointer; font-size: 13px; color: var(--ink-dim); }
+.ledger[open] summary { margin-bottom: 6px; }
+.ledger-list { display: grid; gap: 2px; max-height: 320px; overflow-y: auto; font-size: 12px; }
+.lrow { display: grid; grid-template-columns: 120px 110px 1fr; gap: 8px; padding: 4px 6px; border-radius: 6px; background: rgba(6,22,29,.5); }
+.lrow time { color: var(--ink-dim); white-space: nowrap; }
+.lrow.in b { color: var(--tide); } .lrow.out b { color: #ffb4a2; }
+.lrow span { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#auditOut { display: grid; gap: 4px; }
+#auditOut .good { color: var(--tide); margin: 0; font-weight: 600; } #auditOut .bad { color: #ffb4a2; margin: 0; font-weight: 600; }
+@media (max-width: 520px) { .lrow { grid-template-columns: 1fr 1fr; } .lrow span { grid-column: 1 / -1; } }

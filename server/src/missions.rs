@@ -79,7 +79,7 @@ pub async fn on_open(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResult<
     bump(c, user, Kind::Opened, 1).await?;
     let (streak, advanced): (i32, bool) = sqlx::query_as(
         "with today as (select (now() at time zone $2)::date as d),
-              old as (select streak, streak_day from users where id = $1 for update)
+              old as (select streak, streak_day from users where id = $1 for no key update)
          update users u set
            streak = case when old.streak_day = today.d then old.streak
                          when old.streak_day = today.d - 1 then old.streak + 1
@@ -93,6 +93,7 @@ pub async fn on_open(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResult<
     .fetch_one(&mut *c)
     .await?;
     if advanced && streak > 0 && streak % STREAK_REWARD_EVERY == 0 {
+        api::reason(&mut *c, "streak").await?;
         sqlx::query(
             "insert into user_packs (user_id, pack_id, sealed, boosted) values ($1, $2, 1, 1)
              on conflict (user_id, pack_id) do update set sealed = user_packs.sealed + 1, boosted = user_packs.boosted + 1",
@@ -173,6 +174,8 @@ async fn claim(State(s): State<Shared>, user: User, Path(id): Path<String>) -> A
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown_mission"));
     };
     let mut tx = s.db.begin().await?;
+    api::reason(&mut tx, "mission").await?;
+    api::lock_user(&mut tx, user.id).await?;
     let col = kind.column();
     let done: Option<bool> = sqlx::query_scalar(&format!(
         "select {col} >= $3 and not ($4 = any(claimed)) from daily

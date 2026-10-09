@@ -57,6 +57,13 @@
       <div class="list" id="reports"></div>
     </section>
 
+    <section class="card" aria-labelledby="auditTitle">
+      <div class="card-head"><h2 id="auditTitle">Health check</h2></div>
+      <p class="meta">Checks that every player's packs, parts and cards match the ledger of everything that changed them, and that no serial number appears twice.</p>
+      <div class="mrow"><button type="button" class="cta small" id="auditBtn">Check everything</button></div>
+      <div class="result" id="auditOut" hidden></div>
+    </section>
+
     <section class="card" aria-labelledby="userTitle">
       <div class="card-head"><h2 id="userTitle">Accounts</h2><span class="count" id="userCount"></span></div>
       <input class="input search" id="userFilter" type="search" placeholder="Search by username or note" aria-label="Search accounts">

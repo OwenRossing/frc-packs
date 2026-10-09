@@ -135,6 +135,7 @@ pub async fn create(
     .bind(admin)
     .execute(&mut *c)
     .await?;
+    sqlx::query("select set_config('frc.reason', 'new account', true)").execute(&mut *c).await?;
     sqlx::query("insert into user_packs (user_id, pack_id, sealed) values ($1, $2, $3)")
         .bind(id)
         .bind(start_pack)

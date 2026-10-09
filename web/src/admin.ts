@@ -287,6 +287,7 @@ function manage(u: AdminUser): HTMLElement {
       ),
     ),
   );
+  panel.append(history(u));
   if (self) {
     panel.append(h("p", { class: "meta" }, "This is your account. Change your password in Settings on the main page."));
     return panel;
@@ -376,6 +377,54 @@ function manage(u: AdminUser): HTMLElement {
   );
   return panel;
 }
+
+/* An account's history: every change to their packs, parts and cards, newest first, from the ledger. */
+const ITEM: Record<string, [string, string]> = { packs: ["pack", "packs"], boosted: ["boosted pack", "boosted packs"], parts: ["part", "parts"], card: ["card", "cards"] };
+function history(u: AdminUser): HTMLElement {
+  const box = h("details", { class: "ledger" });
+  const list = h("div", { class: "ledger-list" }, "Loading…");
+  box.append(h("summary", {}, "History of packs, parts and cards"), list);
+  box.addEventListener("toggle", async () => {
+    if (!box.open || box.dataset.done) return;
+    try {
+      const rows = await api.admin.ledger(u.id);
+      box.dataset.done = "1";
+      if (!rows.length) return list.replaceChildren(h("p", { class: "meta" }, "Nothing yet."));
+      list.replaceChildren(
+        ...rows.slice(0, 200).map((r) => {
+          const n = Math.abs(r.delta), word = ITEM[r.item][n === 1 ? 0 : 1];
+          return h("div", { class: "lrow" + (r.delta < 0 ? " out" : " in") },
+            h("time", {}, new Date(r.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })),
+            h("b", {}, `${r.delta < 0 ? "−" : "+"}${n} ${word}`),
+            h("span", {}, [r.detail, r.reason].filter(Boolean).join(" · ")));
+        }),
+      );
+    } catch (e) {
+      list.replaceChildren(h("p", { class: "meta" }, explain(e)));
+    }
+  });
+  return box;
+}
+
+$("#auditBtn").addEventListener("click", async () => {
+  const out = $("#auditOut"), b = $<HTMLButtonElement>("#auditBtn");
+  b.disabled = true;
+  try {
+    const a = await api.admin.audit();
+    const ok = !a.mismatches.length && !a.badSerials;
+    out.replaceChildren(
+      h("p", { class: ok ? "good" : "bad" }, ok ? `All ${plural(a.players, "player")} add up. No serial number is used twice.` : "Something doesn't add up:"),
+      ...a.mismatches.map((m) => h("p", { class: "meta" }, `${m.username ?? "a guest"}: has ${m.have} ${m.item}, the ledger says ${m.ledger}.`)),
+      ...(a.badSerials ? [h("p", { class: "meta" }, `${plural(a.badSerials, "card")} with a serial number that's repeated or was never printed.`)] : []),
+      ...(a.staleOffers ? [h("p", { class: "meta" }, `${plural(a.staleOffers, "open offer")} for cards the sender no longer has (they'll fail if accepted).`)] : []),
+    );
+    out.hidden = false;
+  } catch (e) {
+    fail(e);
+  } finally {
+    b.disabled = false;
+  }
+});
 
 function paintUsers() {
   const q = $<HTMLInputElement>("#userFilter").value.trim().toLowerCase();
