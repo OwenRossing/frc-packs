@@ -165,20 +165,50 @@
 
   <section id="viewTrade" hidden>
     <div class="trade">
-      <div class="binder-sum"><h2>Trades</h2><span id="tradeSum"></span></div>
-      <div class="tr-block"><h3>Offers for you</h3><div class="tr-list" id="trIncoming"></div></div>
-      <div class="tr-block"><h3>Your offers</h3><div class="tr-list" id="trOutgoing"></div></div>
-      <section class="tr-new" aria-labelledby="trNewTitle">
-        <h3 id="trNewTitle">New trade</h3>
-        <label class="tr-who">Trade with<input class="input" id="trWho" list="trWhoList" placeholder="Their username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20"></label>
-        <datalist id="trWhoList"></datalist>
-        <div class="tr-sides">
-          <div class="tr-side"><h4>You give <small id="trGiveN">0 of 5</small></h4><input class="input" id="trGiveQ" type="search" placeholder="Search your cards" aria-label="Search your cards"><div class="tr-pick" id="trGive" role="group" aria-label="Your cards"></div></div>
-          <div class="tr-side"><h4>You get <small id="trGetN">0 of 5</small></h4><input class="input" id="trGetQ" type="search" placeholder="Search their cards" aria-label="Search their cards"><div class="tr-pick" id="trGet" role="group" aria-label="Their cards"></div></div>
+      <header class="tr-hero">
+        <div class="tr-hero-art" aria-hidden="true"><span class="hc a"></span><span class="hc b"></span><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></div>
+        <div><h2>Trading post</h2><p>Swap cards with other players. Serial numbers travel with the card.</p></div>
+      </header>
+      <div class="seg tr-tabs" role="tablist" aria-label="Trades">
+        <button type="button" role="tab" id="trTabNew" aria-selected="true">New trade</button>
+        <button type="button" role="tab" id="trTabIn" aria-selected="false">For you<span class="tabdot" id="trInN" hidden></span></button>
+        <button type="button" role="tab" id="trTabOut" aria-selected="false">Sent</button>
+        <button type="button" role="tab" id="trTabPast" aria-selected="false">History</button>
+      </div>
+
+      <section id="trPaneNew" class="tr-pane">
+        <div class="tr-whobox">
+          <label for="trWho">Trade with</label>
+          <div class="tr-whoin"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input class="input" id="trWho" placeholder="Search players by username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20"></div>
+          <div class="tr-sugg" id="trSugg" aria-live="polite"></div>
         </div>
-        <div class="tr-send"><p id="trSummary"></p><button type="button" class="cta" id="trSend" disabled>Send offer</button></div>
+        <div class="tr-table">
+          <div class="tr-side mine">
+            <div class="tr-side-h"><span id="avMe" class="av me"></span><div><b>You give</b><small id="trGiveN">0 / 5</small></div></div>
+            <div class="tr-slots" id="trGiveSlots"></div>
+          </div>
+          <div class="tr-mid" aria-hidden="true">
+            <span class="tr-swap"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>
+          </div>
+          <div class="tr-side theirs">
+            <div class="tr-side-h"><span id="avThem" class="av them empty">?</span><div><b id="trThemName">Pick a player</b><small id="trGetN">0 / 5</small></div></div>
+            <div class="tr-slots" id="trGetSlots"></div>
+          </div>
+          <div class="tr-fair" hidden><div class="tr-fairbar" id="trFairBar"><i></i></div><small id="trFairTxt"></small></div>
+          <div class="tr-send"><p id="trSummary"></p><button type="button" class="cta" id="trSend" disabled>Send offer</button></div>
+        </div>
+        <div class="tr-browse" id="trBrowse">
+          <div class="tr-browse-h">
+            <div class="seg tr-which" role="tablist" aria-label="Whose cards"><button type="button" role="tab" id="trPickMine" aria-selected="true">Your cards</button><button type="button" role="tab" id="trPickTheirs" aria-selected="false">Their cards</button></div>
+            <input class="input" id="trPickQ" type="search" placeholder="Search by number or name" aria-label="Search cards" autocomplete="off">
+          </div>
+          <div class="tr-tierf" id="trTierF" role="group" aria-label="Rarity"></div>
+          <div class="tr-grid" id="trGrid"></div>
+        </div>
       </section>
-      <details class="tr-block tr-recent"><summary>Recent trades</summary><div class="tr-list" id="trRecent"></div></details>
+      <section id="trPaneIn" class="tr-pane" hidden><div class="tr-list" id="trIncoming"></div></section>
+      <section id="trPaneOut" class="tr-pane" hidden><div class="tr-list" id="trOutgoing"></div></section>
+      <section id="trPanePast" class="tr-pane" hidden><div class="tr-list" id="trRecent"></div></section>
     </div>
   </section>
 

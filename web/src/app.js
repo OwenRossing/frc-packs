@@ -57,9 +57,11 @@ export function start(RECIPE) {
   } catch (e) {}
   function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
+  var ME = ""; // this account's username
   var stamp = 0; // bumped by everything that changes the account, so a sync started earlier can't undo it
   function applyState(st, fromSync) {
     if (!fromSync) stamp++;
+    if (st.account && st.account.username) ME = st.account.username;
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
@@ -1027,7 +1029,7 @@ export function start(RECIPE) {
     tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr));
     $("#status").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
     if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
-    if (tr) { paintTrades(); loadTrades(); }
+    if (tr) { enterTrade(); paintTrades(); loadTrades(); }
     try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
     vBinder._was = b; paintTabDot();
@@ -1079,34 +1081,75 @@ export function start(RECIPE) {
   paintToggles();
 
   /* ---------- trading ---------- */
-  /* Offer up to 5 of your cards for up to 5 of another player's. One copy of each team changes hands, serial number
-     and all; the server picks the newest copy, so you keep your earliest serial longest. */
-  var TR = { incoming: [], outgoing: [], recent: [] }, trWho = $("#trWho"), trGiveQ = $("#trGiveQ"), trGetQ = $("#trGetQ"), trSend = $("#trSend");
-  var trGive = [], trGet = [], theirInv = null, theirName = "", whoTimer = 0, MAXT = 5;
+  /* The trading post: pick a player, lay up to 5 of your cards and up to 5 of theirs on the table, and send the
+     offer. One copy of each team changes hands, serial number and all; the server picks the newest copy, so you keep
+     your earliest serial longest. Offers for you, sent offers and history each have a tab. */
+  var TR = { incoming: [], outgoing: [], recent: [] }, MAXT = 5;
+  var trWho = $("#trWho"), trSend = $("#trSend"), trPickQ = $("#trPickQ"), trGrid = $("#trGrid");
+  var trGive = [], trGet = [], theirInv = null, theirName = "", whoTimer = 0, theirsReq = 0;
+  var trPane = "new", trSide = "mine", trTier = "all", trFresh = {};
   function loadTrades() { return api.trades().then(function (t) { TR = t; paintTradeDot(); if (!vTrade.hidden) paintTrades(); }, function () {}); }
-  function paintTradeDot() { var dot = $("#tradeDot"), n = TR.incoming.length; dot.hidden = !n; dot.textContent = n; tabTrade.setAttribute("aria-label", n ? "Trade, " + n + " offers for you" : "Trade"); }
-  function cardLine(c) {
-    var t = BY_NUM[c.num], T = TIERS[c.tier];
-    return '<span class="tr-card" style="--tc:' + T.color + '"><i></i><b>' + c.num + '</b> ' + esc(t ? t.name : "Team " + c.num) + ' <em>' + T.label + (c.serial ? ' · No. ' + c.serial : '') + '</em></span>';
+  function paintTradeDot() {
+    var n = TR.incoming.length, dot = $("#tradeDot"), inN = $("#trInN");
+    dot.hidden = inN.hidden = !n; dot.textContent = inN.textContent = n;
+    tabTrade.setAttribute("aria-label", n ? "Trade, " + n + " offers for you" : "Trade");
   }
-  function tradeRow(t, kind) {
-    var el = document.createElement("div"); el.className = "tr-item";
-    var head = kind === "in" ? "<b>" + esc(t.with) + "</b> offers" : kind === "out" ? "You offered <b>" + esc(t.with) + "</b>" : "With <b>" + esc(t.with) + "</b> · " + t.status;
-    el.innerHTML = '<div class="tr-head">' + head + '</div><div class="tr-swap"><div><small>You give</small>' + t.youGive.map(cardLine).join("") + '</div><div><small>You get</small>' + t.youGet.map(cardLine).join("") + '</div></div>';
-    var row = document.createElement("div"); row.className = "cta-row tr-act";
-    function act(label, cls, run) { var b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = label; b.onclick = function () { b.disabled = true; run().then(function () {}, function (e) { b.disabled = false; offline(e); loadTrades(); }); }; row.appendChild(b); }
+  function initials(name) { return esc((name || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "?"); }
+  function avatar(name, cls) {
+    var h = 0; for (var i = 0; i < (name || "").length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+    return '<span class="av ' + (cls || "") + '" style="--ah:' + h + '" aria-hidden="true">' + initials(name) + '</span>';
+  }
+  function ago(ms) {
+    var s = Math.max(0, (Date.now() - ms) / 1000);
+    return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : Math.floor(s / 86400) + "d ago";
+  }
+  /* A small card: the team's photo (or its colors), number, name and rarity, framed in its tier. */
+  function miniCard(num, opts) {
+    opts = opts || {}; var t = BY_NUM[num], T = TIERS[t.tier];
+    var art = t.photo ? '<img src="/photos/' + num + '.webp" alt="" loading="lazy" decoding="async" draggable="false">' : '<span class="mc-gear" aria-hidden="true">' + num + '</span>';
+    var foot = opts.serial ? "No. " + esc(opts.serial) : opts.count > 1 ? "×" + opts.count : T.label;
+    return '<span class="mc card" data-tier="' + t.tier + '" style="--tc:' + T.color + '"><span class="mc-in">' +
+      '<span class="mc-art">' + art + '</span><span class="mc-num">' + num + '</span><span class="mc-name">' + esc(t.name) + '</span>' +
+      '<span class="mc-foot"><i>' + T.gems + '</i>' + foot + '</span></span></span>';
+  }
+  /* Parts a card would scrap for: a rough sense of what each side of a trade is worth. */
+  function worth(nums) { return nums.reduce(function (a, n) { return a + (S.scrapParts[BY_NUM[n].tier] || 0); }, 0); }
+  function setPane(p) {
+    trPane = p;
+    [["new", "#trTabNew", "#trPaneNew"], ["in", "#trTabIn", "#trPaneIn"], ["out", "#trTabOut", "#trPaneOut"], ["past", "#trTabPast", "#trPanePast"]].forEach(function (x) {
+      $(x[1]).setAttribute("aria-selected", String(x[0] === p)); $(x[2]).hidden = x[0] !== p;
+    });
+  }
+  $("#trTabNew").onclick = function () { setPane("new"); }; $("#trTabIn").onclick = function () { setPane("in"); };
+  $("#trTabOut").onclick = function () { setPane("out"); }; $("#trTabPast").onclick = function () { setPane("past"); };
+  function offerCard(t, kind) {
+    var el = document.createElement("article"); el.className = "tr-offer " + kind + (t.status !== "open" ? " " + t.status : "");
+    var when = kind === "past" && t.decidedAt ? t.decidedAt : t.createdAt;
+    var who = kind === "in" ? "<b>" + esc(t.with) + "</b> wants to trade" : kind === "out" ? "Waiting on <b>" + esc(t.with) + "</b>" : "With <b>" + esc(t.with) + "</b>";
+    var side = function (label, cards) { return '<div class="tr-o-side"><small>' + label + '</small><div class="tr-o-cards">' + cards.map(function (c) { return BY_NUM[c.num] ? miniCard(c.num, { serial: c.serial }) : ""; }).join("") + '</div></div>'; };
+    el.innerHTML = '<header>' + avatar(t.with) + '<p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
+      '<div class="tr-o-body">' + side("You give", t.youGive) + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet) + '</div>';
+    var row = document.createElement("div"); row.className = "tr-o-act";
+    function act(label, cls, run) {
+      var b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = label;
+      b.onclick = function () { b.disabled = true; run(b).then(null, function (e) { b.disabled = false; offline(e); loadTrades(); }); };
+      row.appendChild(b);
+    }
     if (kind === "in") {
-      act("Accept", "cta small", function () {
+      act("Accept trade", "cta small", function (b) {
         return api.acceptTrade(t.id).then(function (r) {
+          var at = b.getBoundingClientRect();
           applyState(r.state); applyCollection(r.collection); TR = r.trades;
           t.youGet.forEach(function (c) { S.unseen[c.num] = 1; }); save();
-          sfx.claim(); paintStatus(); paintTabDot(); paintTradeDot(); paintTrades();
-          say("Trade done with " + t.with + (r.sets.length ? " · " + r.sets.join(", ") + " set complete! +" + r.sets.length + (r.sets.length === 1 ? " pack" : " packs") : ""), 3600);
+          sfx.promote(); burst(at.left + at.width / 2, at.top + at.height / 2, 70, null, 9, true);
+          paintStatus(); paintTabDot(); paintTradeDot(); paintTrades();
+          say("Trade done with " + t.with + "! " + t.youGet.length + (t.youGet.length === 1 ? " card is" : " cards are") + " in your binder" +
+            (r.sets.length ? " · " + r.sets.join(", ") + " set complete! +" + r.sets.length + (r.sets.length === 1 ? " pack" : " packs") : ""), 3800);
         });
       });
       act("Decline", "chip", function () { return api.declineTrade(t.id).then(function (x) { TR = x; paintTradeDot(); paintTrades(); }); });
     } else if (kind === "out") {
-      act("Cancel", "chip", function () { return api.cancelTrade(t.id).then(function (x) { TR = x; paintTrades(); }); });
+      act("Cancel offer", "chip", function () { return api.cancelTrade(t.id).then(function (x) { TR = x; paintTrades(); }); });
     }
     if (row.children.length) el.appendChild(row);
     return el;
@@ -1114,80 +1157,129 @@ export function start(RECIPE) {
   function paintTrades() {
     function fill(id, list, kind, empty) {
       var box = $(id); box.innerHTML = "";
-      if (!list.length) { var p = document.createElement("p"); p.className = "tr-empty"; p.textContent = empty; box.appendChild(p); }
-      list.forEach(function (t) { box.appendChild(tradeRow(t, kind)); });
+      if (!list.length) box.innerHTML = '<div class="tr-empty"><b>' + empty[0] + '</b>' + empty[1] + '</div>';
+      list.forEach(function (t) { box.appendChild(offerCard(t, kind)); });
     }
-    fill("#trIncoming", TR.incoming, "in", "No offers right now.");
-    fill("#trOutgoing", TR.outgoing, "out", "You haven't offered anything yet.");
-    fill("#trRecent", TR.recent, "recent", "Nothing yet.");
-    $("#tradeSum").textContent = TR.incoming.length ? TR.incoming.length + (TR.incoming.length === 1 ? " offer" : " offers") + " for you" : "";
-    paintPicker();
+    fill("#trIncoming", TR.incoming, "in", ["No offers right now", "When someone wants to trade with you, it shows up here."]);
+    fill("#trOutgoing", TR.outgoing, "out", ["Nothing sent", "Offers you send wait here until they answer."]);
+    fill("#trRecent", TR.recent, "past", ["No trades yet", "Finished, declined and cancelled trades show up here."]);
+    paintTable(); paintGrid();
   }
-  /* A picker lists one side's teams, best first, filtered by its search box; tap to add or remove (up to 5). */
-  function pickerList(box, inv, q, picked, side) {
+  /* The table: your side, their side, and how even it looks. */
+  function slots(box, nums, side) {
     box.innerHTML = "";
-    if (!inv) { box.innerHTML = '<p class="tr-empty">Type a player\'s username above to see their cards.</p>'; return; }
-    var list = Object.keys(inv).map(Number).filter(function (n) { return BY_NUM[n] && inv[n] > 0 && (!q || matches(BY_NUM[n], q)); })
-      .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return (picked.indexOf(b) >= 0) - (picked.indexOf(a) >= 0) || ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
-    if (!list.length) { box.innerHTML = '<p class="tr-empty">' + (q ? "No cards match." : side === "give" ? "Your binder is empty." : "They don't have any cards yet.") + '</p>'; return; }
-    list.slice(0, 60).forEach(function (n) {
-      var t = BY_NUM[n], on = picked.indexOf(n) >= 0, b = document.createElement("button");
-      b.type = "button"; b.className = "tr-opt" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on)); b.style.setProperty("--tc", TIERS[t.tier].color);
-      b.innerHTML = '<i></i><b>' + n + '</b><span>' + esc(t.name) + '</span><em>' + (inv[n] > 1 ? "×" + inv[n] : TIERS[t.tier].label) + '</em>';
-      if (side === "give" && inv[n] === 1) b.title = "Your only copy";
+    for (var i = 0; i < MAXT; i++) {
+      var n = nums[i], s = document.createElement("button"); s.type = "button";
+      if (n) {
+        s.className = "tr-slot full" + (trFresh[side + n] ? " pop" : ""); s.innerHTML = miniCard(n) + '<span class="tr-x" aria-hidden="true">×</span>';
+        s.setAttribute("aria-label", "Remove " + BY_NUM[n].name);
+        s.onclick = (function (n) { return function () { (side === "give" ? trGive : trGet).splice((side === "give" ? trGive : trGet).indexOf(n), 1); sfx.tick(); paintTable(); paintGrid(); }; })(n);
+      } else {
+        s.className = "tr-slot"; s.innerHTML = '<span class="tr-plus" aria-hidden="true">+</span>';
+        s.setAttribute("aria-label", side === "give" ? "Add one of your cards" : "Add one of their cards");
+        s.onclick = function () { trSide = side === "give" ? "mine" : "theirs"; paintGrid(); try { trPickQ.focus({ preventScroll: true }); $("#trBrowse").scrollIntoView({ block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} };
+      }
+      box.appendChild(s);
+    }
+    trFresh = {};
+  }
+  function paintTable() {
+    var mine = myInv(); trGive = trGive.filter(function (n) { return mine[n]; });
+    slots($("#trGiveSlots"), trGive, "give"); slots($("#trGetSlots"), trGet, "get");
+    $("#trGiveN").textContent = trGive.length + " / " + MAXT; $("#trGetN").textContent = trGet.length + " / " + MAXT;
+    $("#avThem").outerHTML = avatar(theirName || "?", "them" + (theirName ? "" : " empty")).replace('class="av', 'id="avThem" class="av');
+    $("#trThemName").textContent = theirName || "Pick a player";
+    var g = worth(trGive), w = worth(trGet), total = g + w, bar = $("#trFairBar"), txt = $("#trFairTxt");
+    var lean = total ? (w - g) / total : 0; // -1: you give it all, +1: you get it all
+    bar.style.setProperty("--lean", lean.toFixed(3)); bar.parentNode.hidden = !total;
+    txt.textContent = !total ? "" : Math.abs(lean) < .2 ? "Looks even" : lean > 0 ? (lean > .6 ? "A big ask" : "You get more") : (lean < -.6 ? "Very generous" : "You give more");
+    var ready = theirName && trGive.length && trGet.length;
+    trSend.disabled = !ready;
+    $("#trSummary").textContent = !theirName ? "Start by picking who to trade with." : !trGive.length && !trGet.length ? "Tap cards below to put them on the table." :
+      !trGive.length ? "Add at least one of your cards." : !trGet.length ? "Add at least one of " + theirName + "'s cards." : "Ready to send to " + theirName + ".";
+  }
+  function myInv() { var m = {}; Object.keys(S.inv).forEach(function (k) { if (S.inv[k].length) m[k] = S.inv[k].length; }); return m; }
+  /* The card shelf under the table: your cards or theirs, searchable, by rarity. Tap to put one on the table. */
+  function paintGrid() {
+    var mineSide = trSide === "mine", inv = mineSide ? myInv() : theirInv, picked = mineSide ? trGive : trGet, q = trPickQ.value.trim().toLowerCase();
+    $("#trPickMine").setAttribute("aria-selected", String(mineSide)); $("#trPickTheirs").setAttribute("aria-selected", String(!mineSide));
+    $("#trPickTheirs").textContent = theirName ? theirName + "'s cards" : "Their cards";
+    var tf = $("#trTierF"); tf.innerHTML = "";
+    ["all"].concat(ORDER).forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (trTier === t ? " on" : ""); b.setAttribute("aria-pressed", String(trTier === t));
+      b.textContent = t === "all" ? "All" : TIERS[t].label; if (t !== "all") b.style.color = TIERS[t].color;
+      b.onclick = function () { trTier = t; paintGrid(); }; tf.appendChild(b);
+    });
+    trGrid.innerHTML = "";
+    if (!inv) { trGrid.innerHTML = '<div class="tr-empty"><b>Whose cards?</b>Type a player\'s username above to see what they have.</div>'; return; }
+    var list = Object.keys(inv).map(Number).filter(function (n) { return BY_NUM[n] && inv[n] > 0 && (trTier === "all" || BY_NUM[n].tier === trTier) && (!q || matches(BY_NUM[n], q)); })
+      .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
+    if (!list.length) { trGrid.innerHTML = '<div class="tr-empty"><b>' + (q || trTier !== "all" ? "No cards match" : mineSide ? "Your binder is empty" : "No cards yet") + '</b>' + (q || trTier !== "all" ? "Try another search or rarity." : mineSide ? "Open some packs first." : "They haven't opened any packs.") + '</div>'; return; }
+    list.slice(0, 80).forEach(function (n) {
+      var on = picked.indexOf(n) >= 0, b = document.createElement("button");
+      b.type = "button"; b.className = "tr-pick" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", BY_NUM[n].name + ", team " + n + ", " + TIERS[BY_NUM[n].tier].label + (inv[n] > 1 ? ", " + inv[n] + " copies" : "") + (mineSide && inv[n] === 1 ? ", your only copy" : ""));
+      b.innerHTML = miniCard(n, { count: inv[n] }) + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "");
       b.onclick = function () {
         var i = picked.indexOf(n);
-        if (i >= 0) picked.splice(i, 1); else if (picked.length < MAXT) picked.push(n); else return say("Up to " + MAXT + " cards on each side.", 1800);
-        paintPicker();
+        if (i >= 0) { picked.splice(i, 1); sfx.tick(); }
+        else if (picked.length >= MAXT) return say("Up to " + MAXT + " cards on each side.", 1800);
+        else { picked.push(n); trFresh[(mineSide ? "give" : "get") + n] = 1; sfx.pick(); }
+        paintTable(); paintGrid();
       };
-      box.appendChild(b);
+      trGrid.appendChild(b);
     });
+    if (list.length > 80) { var more = document.createElement("p"); more.className = "tr-more"; more.textContent = "Showing 80 of " + list.length + ". Search to find the rest."; trGrid.appendChild(more); }
   }
-  function paintPicker() {
-    var mine = {}; Object.keys(S.inv).forEach(function (k) { if (S.inv[k].length) mine[k] = S.inv[k].length; });
-    trGive = trGive.filter(function (n) { return mine[n]; });
-    pickerList($("#trGive"), mine, trGiveQ.value.trim().toLowerCase(), trGive, "give");
-    pickerList($("#trGet"), theirInv, trGetQ.value.trim().toLowerCase(), trGet, "get");
-    $("#trGiveN").textContent = trGive.length + " of " + MAXT; $("#trGetN").textContent = trGet.length + " of " + MAXT;
-    var ready = theirInv && trGive.length && trGet.length;
-    trSend.disabled = !ready;
-    $("#trSummary").textContent = !theirInv ? "" : ready ? "You give " + trGive.length + (trGive.length === 1 ? " card" : " cards") + " and get " + trGet.length + " from " + theirName + "." : "Pick at least one card on each side.";
-  }
-  var theirsReq = 0;
+  $("#trPickMine").onclick = function () { trSide = "mine"; paintGrid(); };
+  $("#trPickTheirs").onclick = function () { trSide = "theirs"; paintGrid(); if (!theirName) try { trWho.focus(); } catch (e) {} };
+  trPickQ.addEventListener("input", paintGrid);
   function loadTheirs(force) {
     var name = trWho.value.trim();
     if (!name || (!force && name.toLowerCase() === theirName.toLowerCase())) return;
     var n = ++theirsReq;
     api.playerCollection(name, PACK_ID).then(function (col) {
       if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
-      if (name.toLowerCase() !== theirName.toLowerCase()) trGet = [];
+      if (name.toLowerCase() !== theirName.toLowerCase()) { trGet = []; trSide = "theirs"; }
       theirName = name; theirInv = {};
       col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
-      paintPicker();
-    }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintPicker(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
+      $("#trSugg").innerHTML = ""; paintTable(); paintGrid();
+    }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintTable(); paintGrid(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
   }
+  /* Matching players appear as chips under the box as you type. */
   trWho.addEventListener("input", function () {
     clearTimeout(whoTimer);
     var q = trWho.value.trim();
-    if (theirName && q.toLowerCase() !== theirName.toLowerCase()) { theirName = ""; theirInv = null; trGet = []; paintPicker(); }
+    if (theirName && q.toLowerCase() !== theirName.toLowerCase()) { theirName = ""; theirInv = null; trGet = []; paintTable(); paintGrid(); }
     whoTimer = setTimeout(function () {
-      if (q.length < 2) return;
+      var box = $("#trSugg");
+      if (q.length < 1) { box.innerHTML = ""; return; }
       api.players(q).then(function (names) {
-        var dl = $("#trWhoList"); dl.innerHTML = "";
-        names.forEach(function (n) { var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
-        if (names.some(function (n) { return n.toLowerCase() === q.toLowerCase(); })) loadTheirs();
+        if (trWho.value.trim() !== q) return;
+        box.innerHTML = "";
+        names.forEach(function (nm) {
+          var b = document.createElement("button"); b.type = "button"; b.className = "tr-sug"; b.innerHTML = avatar(nm) + "<span>" + esc(nm) + "</span>";
+          b.onclick = function () { trWho.value = nm; box.innerHTML = ""; loadTheirs(); };
+          box.appendChild(b);
+        });
+        if (!names.length && q.length > 1) box.innerHTML = '<span class="tr-nobody">No players match "' + esc(q) + '"</span>';
+        if (names.some(function (nm) { return nm.toLowerCase() === q.toLowerCase(); })) loadTheirs();
       }, function () {});
-    }, 220);
+    }, 200);
   });
   trWho.addEventListener("change", function () { loadTheirs(); });
-  trGiveQ.addEventListener("input", paintPicker); trGetQ.addEventListener("input", paintPicker);
+  trWho.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); var first = $("#trSugg .tr-sug"); if (first) first.click(); else loadTheirs(); } });
   trSend.addEventListener("click", function () {
     if (trSend.disabled) return; trSend.disabled = true;
+    var r = trSend.getBoundingClientRect();
     api.offerTrade(theirName, PACK_ID, trGive, trGet).then(function (t) {
-      TR = t; trGive = []; trGet = []; sfx.whoosh(); say("Offer sent to " + theirName + ".", 2600);
-      loadTheirs(true); paintTrades();
-    }, function (e) { offline(e); paintPicker(); });
+      TR = t; trGive = []; trGet = []; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
+      say("Offer sent to " + theirName + ". You'll see it under Sent until they answer.", 3000);
+      loadTheirs(true); paintTrades(); paintTradeDot();
+    }, function (e) { offline(e); paintTable(); });
   });
+  /* Open the trading post on the offers waiting for you, if there are any. */
+  function enterTrade() { setPane(TR.incoming.length ? "in" : trPane === "in" && !TR.incoming.length ? "new" : trPane); $("#avMe").outerHTML = avatar(ME, "me").replace('class="av', 'id="avMe" class="av'); }
   /* Check for new offers now and then, so the tab dot shows up without a reload. */
   setInterval(function () { if (!document.hidden) loadTrades(); }, 60000);
 
