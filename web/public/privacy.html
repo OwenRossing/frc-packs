@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · FRC Packs</title>
+<meta name="theme-color" content="#06161d">
+<link rel="icon" href="/icon-192.png">
+<style>
+  :root { color-scheme: dark; --bg: #06161d; --panel: #0a222b; --line: #1f4650; --ink: #e8f6f4; --dim: #9fbfc3; --tide: #27d3c3; }
+  body { margin: 0; background: radial-gradient(120% 90% at 50% 0%, #0b2b36, var(--bg) 70%) fixed; color: var(--ink); font: 16px/1.6 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 18px 60px; }
+  a { color: var(--tide); }
+  h1 { font-size: 30px; margin: 8px 0 4px; }
+  h2 { font-size: 19px; margin: 28px 0 6px; }
+  p, li { color: var(--ink); }
+  .dim { color: var(--dim); font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 18px 10px; margin-top: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <a href="/">← Back to FRC Packs</a>
+  <h1>Privacy</h1>
+  <p class="dim">Last updated October 9, 2026</p>
+
+  <p>FRC Packs is a free card game for the FIRST Robotics community, run by volunteers. We collect only what the game needs to work. There are no ads, no tracking or analytics scripts, and we never sell or share your information.</p>
+
+  <div class="card">
+    <h2>What we keep</h2>
+    <table>
+      <tr><th>What</th><th>Why</th></tr>
+      <tr><td>Your username and the invite code you joined with</td><td>So you can sign in, and so other players can trade with you. Usernames are visible to other players.</td></tr>
+      <tr><td>Your password, stored only as a one-way hash (argon2)</td><td>To check it when you sign in. Nobody, including the admin, can read it.</td></tr>
+      <tr><td>Your packs, cards, serial numbers, parts, trades, missions, streak, wishlist and showcase</td><td>That's the game. Your profile (showcase, stats, wishlist) is visible to other signed-in players.</td></tr>
+      <tr><td>Reports you send about other players</td><td>So the admin can deal with them. Only the admin sees reports.</td></tr>
+      <tr><td>A push subscription for each device where you turn on notifications</td><td>To send "free pack ready" and trade notifications. Turn them off in Settings to delete it.</td></tr>
+    </table>
+  </div>
+
+  <h2>Cookies and storage</h2>
+  <p>One cookie keeps you signed in. It's only used by FRC Packs. Your browser also stores a few preferences (sound, which tips you've seen, which rarities to scrap) on your device only.</p>
+
+  <h2>Your IP address</h2>
+  <p>To slow down password guessing, the server counts failed sign-ins per address for 15 minutes, in memory only. It isn't saved. The site is served through Cloudflare, which handles connections under <a href="https://www.cloudflare.com/privacypolicy/">its privacy policy</a>.</p>
+
+  <h2>Other services the page uses</h2>
+  <ul>
+    <li>Fonts load from Google Fonts, which sees your IP address when they load (<a href="https://policies.google.com/privacy">Google's policy</a>).</li>
+    <li>Notifications, if you turn them on, go through your browser's push service (Google, Mozilla or Apple).</li>
+    <li>Robot photos come from <a href="https://www.thebluealliance.com">The Blue Alliance</a> and team stats from <a href="https://www.statbotics.io">Statbotics</a>. They're copied onto our server, so your browser doesn't contact those sites.</li>
+  </ul>
+
+  <h2>Deleting your account</h2>
+  <p>Ask the person who invited you or the site admin, and your account and all its cards are deleted. Serial numbers aren't reused. Database backups are kept for two weeks and then deleted.</p>
+
+  <h2>Young players</h2>
+  <p>FRC Packs is made for FIRST teams, and many players are students. We don't ask for real names, emails, ages or locations. Usernames are filtered for offensive words, and any player can be reported.</p>
+
+  <h2>Changes</h2>
+  <p>If this page changes in a way that matters, we'll say so in the game.</p>
+</main>
+</body>
+</html>

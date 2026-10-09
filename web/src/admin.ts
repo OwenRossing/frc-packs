@@ -3,7 +3,7 @@
 
 import "./style.css";
 import "./admin.css";
-import { api, ApiError, explain, type AdminUser, type Invite } from "./api";
+import { api, ApiError, explain, type AdminUser, type Invite, type Report, type Rules } from "./api";
 
 type Kid = Node | string | null | undefined | false;
 
@@ -86,6 +86,72 @@ function say(text: string, bad = false) {
   toastTimer = window.setTimeout(() => toast.classList.remove("show"), 3200);
 }
 const fail = (e: unknown) => say(explain(e), true);
+
+// ---------- free packs ----------
+
+const rulesForm = $<HTMLFormElement>("#rulesForm");
+const field = (n: string) => rulesForm.elements.namedItem(n) as HTMLInputElement;
+
+/** Reads the form. Hours are shown to people; the server keeps whole minutes. */
+function readRules(): Rules | null {
+  const hours = Number(field("hours").value);
+  const r = {
+    claimMinutes: Math.round(hours * 60),
+    claimPacks: Number(field("claimPacks").value),
+    bank: Number(field("bank").value),
+    startPacks: Number(field("startPacks").value),
+    boostCost: Number(field("boostCost").value),
+    donateUrl: field("donateUrl").value.trim() || null,
+  };
+  const int = (n: number, lo: number, hi: number) => Number.isInteger(n) && n >= lo && n <= hi;
+  const ok = int(r.claimMinutes, 5, 10080) && int(r.claimPacks, 1, 20) && int(r.bank, 1, 10) && int(r.startPacks, 0, 50) && int(r.boostCost, 1, 100000) &&
+    (!r.donateUrl || (/^https:\/\/\S+$/.test(r.donateUrl) && r.donateUrl.length <= 300));
+  return ok ? r : null;
+}
+
+function paintRulesSum() {
+  const r = readRules();
+  const sum = $("#rulesSum");
+  if (!r) return (sum.textContent = "");
+  const perDay = (24 * 60 / r.claimMinutes) * r.claimPacks;
+  const fmtN = (n: number) => (n >= 10 ? Math.round(n).toString() : (Math.round(n * 10) / 10).toString());
+  sum.textContent =
+    `That's up to ${fmtN(perDay)} packs a day for someone who claims every time, ` +
+    `and up to ${plural(r.claimPacks * r.bank, "pack")} waiting for someone who's been away.`;
+}
+
+function showRules(r: Rules) {
+  field("hours").value = String(Math.round((r.claimMinutes / 60) * 100) / 100);
+  field("claimPacks").value = String(r.claimPacks);
+  field("bank").value = String(r.bank);
+  field("startPacks").value = String(r.startPacks);
+  field("boostCost").value = String(r.boostCost);
+  field("donateUrl").value = r.donateUrl ?? "";
+  paintRulesSum();
+}
+
+rulesForm.addEventListener("input", paintRulesSum);
+rulesForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#rulesMsg");
+  const r = readRules();
+  if (!r) {
+    msg.textContent = "Hours between can be 0.1 to 168, packs each time 1 to 20, missed timers 1 to 10, starting packs 0 to 50, a boosted pack 1 to 100000 parts, and the donation link must start with https://.";
+    msg.hidden = false;
+    return;
+  }
+  msg.hidden = true;
+  const btn = rulesForm.querySelector("button")!;
+  btn.disabled = true;
+  try {
+    showRules(await api.admin.saveSettings(r));
+    say("Saved. Everyone's timer uses the new rules.");
+  } catch (err) {
+    fail(err);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ---------- invite codes ----------
 
@@ -226,6 +292,28 @@ function manage(u: AdminUser): HTMLElement {
     return panel;
   }
 
+  if (u.username) {
+    const nameIn = h("input", { class: "input", value: u.username, "aria-label": `New username for ${u.username}`, maxlength: "20", autocapitalize: "none", spellcheck: "false" });
+    panel.append(
+      h("div", { class: "mrow" }, h("span", {}, "Rename"), nameIn,
+        button("Save", async (b) => {
+          const name = nameIn.value.trim();
+          if (name === u.username) return;
+          b.disabled = true;
+          try {
+            await api.admin.rename(u.id, name);
+            say(`Renamed ${u.username} to ${name}. Their cards and password stay.`);
+            await loadUsers();
+          } catch (e) {
+            fail(e);
+          } finally {
+            b.disabled = false;
+          }
+        }, "cta small"),
+      ),
+    );
+  }
+
   const row = h("div", { class: "mrow wrap" });
   if (u.username) {
     row.append(
@@ -342,14 +430,65 @@ async function loadUsers() {
   paintUsers();
 }
 
+// ---------- reports ----------
+
+const REASON: Record<Report["reason"], string> = { username: "Offensive username", cheating: "Cheating or abuse", harassment: "Harassment", other: "Something else" };
+let reports: Report[] = [];
+
+function paintReports() {
+  $("#repCount").textContent = reports.length ? `${reports.length} open` : "";
+  const list = $("#reports");
+  list.replaceChildren();
+  if (!reports.length) list.append(h("p", { class: "empty" }, "No reports. When a player reports someone, it shows up here."));
+  for (const r of reports) {
+    list.append(
+      h(
+        "div",
+        { class: "item" },
+        h(
+          "div",
+          { class: "item-main" },
+          h("div", { class: "who" }, h("b", {}, r.target), h("span", { class: "badge off" }, REASON[r.reason] ?? r.reason)),
+          r.details ? h("div", { class: "meta" }, `"${r.details}"`) : null,
+          h("div", { class: "meta" }, h("span", {}, `from ${r.reporter}`), h("span", {}, when(r.createdAt))),
+        ),
+        h(
+          "div",
+          { class: "actions" },
+          button("Manage account", () => {
+            openId = r.targetId;
+            ($("#userFilter") as HTMLInputElement).value = r.target;
+            paintUsers();
+            $("#users").scrollIntoView({ behavior: "smooth", block: "start" });
+          }),
+          button("Mark handled", async (b) => {
+            b.disabled = true;
+            try {
+              await api.admin.resolveReport(r.id);
+              reports = reports.filter((x) => x.id !== r.id);
+              paintReports();
+            } catch (e) {
+              fail(e);
+              b.disabled = false;
+            }
+          }),
+        ),
+      ),
+    );
+  }
+}
+
 // ---------- start ----------
 
 async function boot() {
   try {
-    const [st, inv, us] = await Promise.all([api.state(), api.admin.invites(), api.admin.users()]);
+    const [st, inv, us, rules, reps] = await Promise.all([api.state(), api.admin.invites(), api.admin.users(), api.admin.settings(), api.admin.reports()]);
+    reports = reps;
     me = st.account.username;
     invites = inv;
     users = us;
+    showRules(rules);
+    paintReports();
     $("#panel").hidden = false;
     paintInvites();
     paintUsers();

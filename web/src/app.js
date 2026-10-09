@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, explain } from "./api";
 
 /* The game UI. Everything that matters (what's in a pack, serial numbers, timers, pity) comes from the server
    through `api`; this file only shows it. RECIPE is the pack recipe (data/packs/<id>.json), the same file the
@@ -47,7 +47,7 @@ export function start(RECIPE) {
   /* S mirrors the server: sealed packs, the free-pack timer, pity, the collection and the pack being revealed.
      Only display preferences (sound, the wheel setting, which cards are marked new) are kept in this browser. */
   var PREFS = "frcpacks.prefs";
-  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
+  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, boosted: 0, parts: 0, boostCost: 250, scrapParts: {}, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
@@ -57,32 +57,47 @@ export function start(RECIPE) {
   } catch (e) {}
   function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
-  function applyState(st) {
-    var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank;
-    var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, opened: 0, pity: { m: 0, l: 0 } };
-    S.packs = p.sealed; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
+  /* The donation link is off for now: set DONATIONS to true (and the link in the admin panel) to show it. */
+  var DONATIONS = false;
+  var ME = ""; // this account's username
+  var stamp = 0; // bumped by everything that changes the account, so a sync started earlier can't undo it
+  function applyState(st, fromSync) {
+    if (!fromSync) stamp++;
+    if (st.account && st.account.username) ME = st.account.username;
+    var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
+    var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
+    S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
+    S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
+    if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
+    if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
+    /* The donation link only shows when the admin set one (always https, checked by the server). */
+    var don = DONATIONS && st.donateUrl && /^https:\/\//.test(st.donateUrl) ? st.donateUrl : "";
+    $("#donateLink").hidden = $("#donateLine").hidden = !don; if (don) { $("#donateLink").href = $("#donateBtn").href = don; }
     S.demo = st.demo; S.devTools = st.devTools;
   }
   function applyCollection(col) {
     S.inv = {}; col.cards.forEach(function (c) { if (BY_NUM[c.num]) S.inv[c.num] = c.serials.map(String); });
     S.sets = {}; col.sets.forEach(function (d) { S.sets[d] = 1; });
+    hidePending(); // the server lists cards still to be dealt; they join the binder as they're dealt
   }
   function pendingFrom(o) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
     return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy }; }) };
   }
-  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : "Something went wrong. Try again.", 3200); }
+  function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : explain(e), 3600); }
   /* Another tab or device may have opened packs. Refresh whenever this tab is between packs. */
-  function sync() {
-    if (state !== "select" && state !== "summary" && state !== "home") return;
+  function sync(force) {
+    if (!force && state !== "select" && state !== "summary" && state !== "home") return;
+    var at = stamp;
     Promise.all([api.state(), api.collection(PACK_ID)]).then(function (r) {
-      if (state !== "select" && state !== "summary" && state !== "home") return;
-      applyState(r[0]); applyCollection(r[1]);
+      if (at !== stamp || (state !== "select" && state !== "summary" && state !== "home")) return;
+      applyState(r[0], true); applyCollection(r[1]);
       paintStatus(); paintToggles(); paintTabDot(); if (!vBinder.hidden) paintBinder(); if (state === "select" || state === "home") paintSelectHud();
     }, function () {});
+    loadTrades();
   }
   document.addEventListener("visibilitychange", function () { if (!document.hidden) sync(); });
-  addEventListener("focus", sync);
+  addEventListener("focus", function () { sync(); });
 
   /* ---------- sound ---------- */
   var ac = null;
@@ -103,7 +118,8 @@ export function start(RECIPE) {
     var g = a.createGain(); g.gain.value = v; s.connect(bp); bp.connect(g); g.connect(a.destination); s.start();
   }
   function chord(freqs, step, type, v) { freqs.forEach(function (f, i) { blip(f, .5, type, v, i * step); }); }
-  function buzz(ms) { try { if (!S.muted && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+  /* Chrome refuses (and logs an error) if the page vibrates before the first tap, e.g. a wheel tick after a reload. */
+  function buzz(ms) { try { if (!S.muted && navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(ms); } catch (e) {} }
   var sfx = {
     tick: function () { blip(900, .03, "square", .02); },
     pick: function () { blip(520, .08, "triangle", .08); blip(780, .1, "triangle", .06, .06); },
@@ -295,16 +311,60 @@ export function start(RECIPE) {
   /* ---------- status bar, timer, claim ---------- */
   var packCount = $("#packCount"), timerEl = $("#timer"), claimBtn = $("#claim");
   function fmt(ms) { var s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ":" + String(m).padStart(2, "0") + ":" + String(x).padStart(2, "0"); }
-  /* Free packs bank up to 2, so missing one timer overnight doesn't cost a pack. */
-  var BANK = 2;
+  /* The admin sets the timer, how many packs each one gives (PER) and how many missed timers wait (BANK), so missing
+     one overnight doesn't cost packs. */
+  var BANK = 2, PER = 1;
   function banked(now) { return now < S.nextClaimAt ? 0 : Math.min(BANK, 1 + Math.floor((now - S.nextClaimAt) / CLAIM_MS)); }
+  function packsWord(n) { return n === 1 ? "pack" : "packs"; }
+  /* ---------- daily missions and the streak ---------- */
+  var dailyDirty = true, dailyOpen = false;
+  try { dailyOpen = localStorage.getItem("frcpacks.daily") === "1"; } catch (e) {}
+  function paintDaily() {
+    dailyDirty = false;
+    var ms = S.missions || [], st = S.streak || { days: 0, today: false, alive: false, every: 7 };
+    var done = ms.filter(function (m) { return m.claimed; }).length, ready = ms.filter(function (m) { return !m.claimed && m.progress >= m.goal; }).length;
+    var flame = $("#streakFlame"); flame.classList.toggle("lit", st.today && st.days > 0); flame.classList.toggle("warm", !st.today && st.days > 0);
+    var toGift = st.every - (st.days % st.every || (st.today ? st.every : 0));
+    $("#streakTxt").textContent = st.days ? st.days + "-day streak" : "Start a streak";
+    $("#dailySum").textContent = (ready ? ready + " to collect · " : "") + done + " of " + ms.length + " missions done" + (st.days && !st.today ? " · open a pack today to keep your streak" : "");
+    $("#dailyDots").innerHTML = ms.map(function (m) { return '<i class="' + (m.claimed ? "done" : m.progress >= m.goal ? "ready" : "") + '"></i>'; }).join("");
+    $("#dailyToggle").setAttribute("aria-expanded", String(dailyOpen)); $("#dailyBody").hidden = !dailyOpen;
+    var list = $("#dailyList"); list.innerHTML = "";
+    ms.forEach(function (m) {
+      var el = document.createElement("div"), full = m.progress >= m.goal;
+      el.className = "mission" + (m.claimed ? " claimed" : full ? " ready" : "");
+      el.innerHTML = '<b>' + esc(m.label) + '</b><span class="mbar"><i style="width:' + (m.progress / m.goal * 100) + '%"></i></span>';
+      var act = document.createElement(full && !m.claimed ? "button" : "span"); act.className = "act";
+      if (m.claimed) act.innerHTML = '<span class="reward">✓ +' + m.reward + '</span>';
+      else if (full) { act.type = "button"; act.className = "act cta small"; act.textContent = "Collect +" + m.reward; act.onclick = function () { collect(m, act); }; }
+      else act.innerHTML = '<span class="reward">' + m.progress + "/" + m.goal + ' · +' + m.reward + '</span>';
+      el.appendChild(act); list.appendChild(el);
+    });
+    var into = st.days % st.every || (st.days ? st.every : 0), week = "";
+    for (var i = 1; i <= st.every; i++) week += '<i class="' + (i <= into ? "on" : i === st.every ? "gift" : "") + '"></i>';
+    $("#streakNote").innerHTML = '<span class="streak-week" aria-hidden="true">' + week + '</span>' +
+      (st.today ? "You've opened a pack today. " : st.days ? "Open a pack today to keep your streak. " : "Open a pack each day to build a streak. ") +
+      (toGift === st.every && st.today ? "Boosted pack earned! Next one in " + st.every + " days." : "A boosted pack every " + st.every + " days in a row" + (st.days ? " · " + toGift + " to go." : ".")) +
+      " Missions reset at midnight; parts go toward boosted packs in the binder.";
+  }
+  $("#dailyToggle").onclick = function () { dailyOpen = !dailyOpen; try { localStorage.setItem("frcpacks.daily", dailyOpen ? "1" : "0"); } catch (e) {} paintDaily(); };
+  function collect(m, btn) {
+    btn.disabled = true; actx();
+    api.claimMission(m.id).then(function (st) {
+      var r = btn.getBoundingClientRect(); applyState(st); paintDaily(); paintStatus(); sfx.claim();
+      burst(r.left + r.width / 2, r.top + r.height / 2, 26, "#ffd34d", 6);
+      say("+" + m.reward + " parts", 1800);
+    }, function (e) { btn.disabled = false; offline(e); });
+  }
   function paintStatus() {
+    if (dailyDirty) paintDaily();
     var now = Date.now(); if (S.nextClaimAt > now + CLAIM_MS) S.nextClaimAt = now + CLAIM_MS;
     packCount.textContent = S.packs;
-    var n = banked(now);
-    if (n >= BANK) { timerEl.textContent = BANK + " free packs are ready"; claimBtn.hidden = false; claimBtn.textContent = "Claim " + BANK + " packs"; }
-    else if (n === 1) { timerEl.innerHTML = "A free pack is ready · another in <b>" + fmt(S.nextClaimAt + CLAIM_MS - now) + "</b>"; claimBtn.hidden = false; claimBtn.textContent = "Claim pack"; }
-    else { timerEl.innerHTML = "Next free pack in <b>" + fmt(S.nextClaimAt - now) + "</b>"; claimBtn.hidden = true; }
+    var n = banked(now), ready = n * PER, next = PER === 1 ? "another" : PER + " more";
+    claimBtn.hidden = !n; claimBtn.textContent = ready === 1 ? "Claim pack" : "Claim " + ready + " packs";
+    if (n >= BANK) timerEl.textContent = (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready";
+    else if (n) timerEl.innerHTML = (ready === 1 ? "A free pack is" : ready + " free packs are") + " ready · " + next + " in <b>" + fmt(S.nextClaimAt + n * CLAIM_MS - now) + "</b>";
+    else timerEl.innerHTML = "Next " + (PER === 1 ? "free pack" : PER + " free packs") + " in <b>" + fmt(S.nextClaimAt - now) + "</b>";
     paintMeter();
   }
   function paintMeter() {
@@ -337,21 +397,61 @@ export function start(RECIPE) {
     document.body.classList.toggle("focus", which === "inspect");
     document.body.classList.toggle("playing", which === "inspect" || which === "stack");
     document.body.classList.remove("cutting"); skipBtn.hidden = which !== "stack";
+    setTimeout(coach, 0);
   }
+  /* ---------- first-run tips ---------- */
+  /* A new player gets one short tip per step of their first pack, pointing at what to do. Skippable, shown once. */
+  var TOUR = "frcpacks.tour", tourOn = false, coachEl = $("#coach"), coachAt = null;
+  try { tourOn = localStorage.getItem(TOUR) !== "done"; } catch (e) {}
+  var TIPS = {
+    home: [function () { return collectionEl.querySelector(".ptype"); }, "Here's your first pack. " + TAP + " it to start opening."],
+    select: [function () { return ringwrap; }, SWIPE + " to spin the wheel, then " + TAP.toLowerCase() + " the pack in front to take it."],
+    inspect: [function () { return inspectEl; }, SWIPE + " across the top of the pack to tear it open. The glow tells you how good it is."],
+    stack: [function () { return stackEl; }, TAP + " a shiny card to flip it. " + TAP + " or swipe to deal the next one."],
+    summary: [function () { return tabBinder; }, "Every card lands in your Binder. Come back daily for free packs, missions and your streak!"]
+  };
+  var ORDER_TIPS = ["home", "select", "inspect", "stack", "summary"];
+  function endTour() { tourOn = false; coachEl.hidden = true; try { localStorage.setItem(TOUR, "done"); } catch (e) {} }
+  $("#coachSkip").onclick = endTour;
+  function coach() {
+    if (!tourOn) return;
+    if (S.opened > 1 || (S.opened > 0 && state !== "summary" && state !== "stack" && state !== "dealing")) return endTour(); // not their first pack
+    var tip = TIPS[state === "dealing" ? "stack" : state];
+    if (!tip || !vOpen || vOpen.hidden || !modal.hidden) { coachEl.hidden = true; return; }
+    var at = tip[0](); if (!at) { coachEl.hidden = true; return; }
+    $("#coachTxt").textContent = tip[1];
+    $("#coachStep").textContent = "Tip " + (ORDER_TIPS.indexOf(state === "dealing" ? "stack" : state) + 1) + " of " + ORDER_TIPS.length;
+    coachAt = at; coachEl.hidden = false; placeCoach();
+    if (state === "summary") setTimeout(function () { if (state === "summary") endTour(); }, 9000);
+  }
+  function placeCoach() {
+    if (coachEl.hidden || !coachAt) return;
+    var r = coachAt.getBoundingClientRect(), w = coachEl.offsetWidth, h = coachEl.offsetHeight;
+    var below = r.bottom + h + 16 < innerHeight || r.top - h - 16 < 0;
+    var x = Math.max(16, Math.min(innerWidth - w - 16, r.left + r.width / 2 - w / 2));
+    var y = below ? Math.min(r.bottom + 12, innerHeight - h - 8) : r.top - h - 12;
+    if (state === "inspect" || state === "stack" || state === "dealing" || state === "flipping") { y = Math.max(8, r.top - h - 12); below = false; } // keep the card clear
+    coachEl.style.left = x + "px"; coachEl.style.top = Math.max(8, y) + "px";
+    coachEl.classList.toggle("below", below); coachEl.classList.toggle("above", !below);
+    coachEl.style.setProperty("--ax", Math.max(18, Math.min(w - 18, r.left + r.width / 2 - x)) + "px");
+  }
+  addEventListener("resize", placeCoach); addEventListener("scroll", placeCoach, true);
   function packsLeftHud(title, more) {
     if (S.packs > 0) setHud(title, more);
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
   }
   function paintSelectHud() {
     if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · tap one");
-    else packsLeftHud("Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    else packsLeftHud(S.boosted ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
     ringwrap.classList.toggle("out", S.packs < 1);
+    ringwrap.classList.toggle("boosted", S.boosted > 0 && S.packs > 0); // boosted packs open first
     var tile = collectionEl.querySelector(".ptype"); if (tile) paintTile(tile, PACKS[0]);
   }
   /* ---------- home: your pack collection ---------- */
   function paintTile(b, pk) {
     var n = S.packs; // every pack you own is a 2026 Championship pack for now
     b.classList.toggle("empty", n < 1); b.querySelector(".cnt").textContent = "×" + n;
+    var bst = b.querySelector(".bst"); bst.hidden = !S.boosted; bst.textContent = S.boosted + " boosted";
     b.querySelector(".pt-sub").textContent = n ? "Tap to open" : "None left";
     b.setAttribute("aria-label", pk.name + " pack, " + n + " to open");
   }
@@ -360,7 +460,7 @@ export function start(RECIPE) {
     collectionEl.innerHTML = ""; collectionEl.classList.toggle("one", PACKS.length === 1);
     PACKS.forEach(function (pk) {
       var b = document.createElement("button"); b.type = "button"; b.className = "ptype"; b.setAttribute("role", "listitem");
-      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
+      b.innerHTML = '<span class="cnt"></span><span class="bst" hidden></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
       paintTile(b, pk);
       b.addEventListener("click", function () { openRing(b); });
       b.addEventListener("pointermove", function (e) {
@@ -379,13 +479,18 @@ export function start(RECIPE) {
   }
   /* ---------- the wheel of 10 packs ---------- */
   var ringA = 0, ringFront = -1, ringRaf = 0, ringDragged = false;
+  /* Runs every frame while the wheel turns, so it writes plain properties on as few elements as it can. A custom
+     property set on the wheel or a pack is inherited by everything inside it, and restyling all ten packs each frame
+     is what made spinning stutter on phones. */
   function setRing(a) {
-    ringA = a; ringEl.style.setProperty("--a", a + "deg");
+    ringA = a; ringEl.style.transform = "translateZ(calc(var(--R) * -1)) rotateX(-7deg) rotateY(" + a + "deg)";
     var front = ((Math.round(-a / 36) % SHELF_N) + SHELF_N) % SHELF_N;
     Array.prototype.forEach.call(ringEl.children, function (el, i) {
-      var th = (i * 36 + a) * Math.PI / 180; el.style.setProperty("--d", ((1 - Math.cos(th)) / 2).toFixed(3));
-      el.style.setProperty("--sheen", (100 + Math.sin(th) * 110).toFixed(1) + "%");
-      el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front));
+      var th = (i * 36 + a) * Math.PI / 180, sheen = (100 + Math.sin(th) * 110).toFixed(1) + "%";
+      el.style.opacity = (1 - (1 - Math.cos(th)) / 2 * .6).toFixed(3);
+      if (!el._lit) el._lit = el.querySelectorAll(".pk-front .pk-top, .pk-front .pk-body");
+      for (var j = 0; j < el._lit.length; j++) el._lit[j].style.backgroundPositionX = sheen + ", 0, 0";
+      if (i === front !== el.classList.contains("front")) { el.classList.toggle("front", i === front); el.setAttribute("aria-selected", String(i === front)); }
     });
     if (front !== ringFront) { if (ringFront !== -1) { sfx.tick(); buzz(4); } ringFront = front; }
   }
@@ -455,7 +560,7 @@ export function start(RECIPE) {
     if (state !== "select") return; actx();
     if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
-    inspectEl.className = "inspect"; rotY = 0; rotX = 0;
+    inspectEl.className = "inspect" + (S.boosted > 0 ? " boosted" : ""); rotY = 0; rotX = 0;
     /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
     promoted = false; nextBest = "common"; openReq = null; inspectEl.style.setProperty("--tp", 0);
     holdPack();
@@ -487,7 +592,8 @@ export function start(RECIPE) {
     api.hand(PACK_ID).then(function (r) {
       if (n !== holdN || state !== "inspect") return;
       nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
-    }, function (e) { if (n === holdN && e && e.code === "no_packs") sync(); });
+      inspectEl.classList.toggle("boosted", !!r.boosted);
+    }, function (e) { if (n === holdN && state === "inspect" && e && e.code === "no_packs") { paintHome(); say("Out of packs", 2000); sync(true); } });
   }
   /* Like opening a loot pack: the light leaking out of the tear gets brighter the further you swipe, in the best card's color. A Mythic starts gold and flips to rainbow past halfway. */
   function glow(t) {
@@ -538,7 +644,7 @@ export function start(RECIPE) {
 
   /* Opens the pack on the server, once, even if the swipe and the button both ask. */
   function startOpen() {
-    if (!openReq) openReq = api.open(PACK_ID);
+    if (!openReq) { openReq = api.open(PACK_ID); openReq.catch(function () {}); }
     return openReq;
   }
   function cut() {
@@ -546,18 +652,50 @@ export function start(RECIPE) {
     startOpen().then(function (res) {
       openReq = null;
       var o = res.opening;
-      o.cards.forEach(function (c) { (S.inv[c.num] || (S.inv[c.num] = [])).push(String(c.serial)); if (c.isNew) S.unseen[c.num] = 1; });
       o.sets.forEach(function (d) { S.sets[d] = 1; });
+      var was = S.streak || { days: 0, today: false };
       applyState(res.state); save();
       S.pending = pendingFrom(o);
+      if (res.streakReward) setTimeout(function () { sfx.promote(); say(S.streak.days + "-day streak! A boosted pack is yours", 4000); }, 2600);
+      else if (!was.today && S.streak && S.streak.today && S.streak.days > 1) setTimeout(function () { say(S.streak.days + "-day streak! Keep it going tomorrow", 3000); }, 2600);
+      if (!S.pending) return lostPack(); // a card this page doesn't know (an older tab after an update)
       ripOpen();
     }, function (e) {
-      openReq = null; state = "inspect"; inspectEl.classList.remove("swiping"); glow(0);
-      var line = $("#cutline"); if (line) line.style.width = "0";
-      if (e && e.code === "no_packs") { sync(); paintHome(); say("Out of packs", 2000); } else offline(e);
+      openReq = null;
+      if (e && e.code === "no_packs") { paintHome(); say("Out of packs", 2000); sync(true); return; }
+      /* The server may have opened it and only the answer got lost: pick that pack up instead of opening another. */
+      api.state().then(function (st) {
+        var p = pendingFrom(st.pending);
+        if (state === "cutting" && p) { applyState(st); S.pending = p; ripOpen(p.revealed); return; }
+        retry();
+      }, retry);
+      function retry() {
+        if (state !== "cutting") return;
+        state = "inspect"; inspectEl.classList.remove("swiping"); glow(0);
+        var line = $("#cutline"); if (line) line.style.width = "0";
+        offline(e);
+      }
     });
   }
-  function ripOpen() {
+  /* Something about the opened pack doesn't fit this page: reload to show it properly. */
+  function lostPack() { state = "home"; say("Your pack opened. Reloading to show it…", 2400); setTimeout(function () { location.reload(); }, 1200); }
+  /* A card joins the binder when it's dealt, so switching to the binder mid-reveal doesn't spoil what's coming. */
+  function stash(c) {
+    if (c._in) return; c._in = 1;
+    var have = S.inv[c.num] || (S.inv[c.num] = []); if (have.indexOf(String(c.serial)) < 0) have.push(String(c.serial));
+    if (c.isNew) S.unseen[c.num] = 1;
+  }
+  /* After loading the collection mid-reveal: cards not dealt yet come out of the binder until they are. */
+  function hidePending() {
+    if (!S.pending) return;
+    S.pending.cards.forEach(function (c, i) {
+      if (i < (S.pending.revealed || 0)) { c._in = 1; return; }
+      var have = S.inv[c.num]; if (!have) return;
+      var at = have.indexOf(String(c.serial)); if (at >= 0) have.splice(at, 1);
+      if (!have.length) delete S.inv[c.num];
+    });
+  }
+  function ripOpen(from) {
     /* The tear glows in the color of the best card inside. A Mythic shows gold first, then turns rainbow. */
     var best = S.pending.cards[4].tier, big = best === "legendary" || best === "mythic", promo = best === "mythic";
     paintStatus(); sfx.rip(best); shake(false); document.body.classList.add("cutting");
@@ -565,7 +703,8 @@ export function start(RECIPE) {
     var r = inspectEl.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height * .12, big ? 60 : 40, promo ? null : TIERS[best].color, 7, promo);
     ripFx(r, promo ? "#ffd34d" : TIERS[best].color, promo, big);
     setHud("", "");
-    buildStack(0, r);
+    if (from) hidePending();
+    buildStack(from || 0, r);
   }
   /* fromPack = the torn pack's rect: the real cards rise out of it, fanned, and settle into the stack while the empty pack drops away. */
   function buildStack(from, fromPack) {
@@ -581,28 +720,39 @@ export function start(RECIPE) {
     showOnly("stack");
     stackEl.classList.remove("rise"); void stackEl.offsetWidth;
     paintCounter(); sfx.whoosh();
-    var flight = fromPack && !RM ? dealFromPack(fromPack) : 0;
-    if (!flight) stackEl.classList.add("rise");
-    if (flight) { state = "dealing"; setTimeout(function () { if (state !== "dealing") return; state = "stack"; armTop(); }, flight); }
-    else { state = "stack"; armTop(); }
+    var flight = fromPack && !RM && dealFromPack(fromPack, function () { if (state !== "dealing") return; state = "stack"; armTop(); });
+    if (flight) state = "dealing";
+    else { stackEl.classList.add("rise"); state = "stack"; armTop(); }
     try { stackEl.focus({ preventScroll: true }); } catch (e) {}
   }
-  function dealFromPack(pr) {
+  /* Calls done when the cards have landed. Returns false when there's nothing to animate. */
+  function dealFromPack(pr, done) {
     /* The empty pack: a copy of the torn pack, drawn on top so the cards come up out of its open top. */
-    var gp = document.createElement("div"); gp.className = "ghostpack inspect told"; gp.setAttribute("aria-hidden", "true");
+    var gp = document.createElement("div"); gp.className = "ghostpack inspect told" + (inspectEl.classList.contains("boosted") ? " boosted" : ""); gp.setAttribute("aria-hidden", "true");
     gp.style.cssText = "left:" + pr.left + "px;top:" + pr.top + "px;width:" + pr.width + "px;min-width:0;--tp:1;--tell:" + inspectEl.style.getPropertyValue("--tell");
     gp.innerHTML = '<div class="lift" style="animation:none"><div class="rot">' + packHTML(false) + '</div></div>';
     document.body.appendChild(gp);
-    requestAnimationFrame(function () { requestAnimationFrame(function () { gp.classList.add("drop"); }); });
-    setTimeout(function () { gp.remove(); }, 900);
     /* Start inside the pack (same width as the pack, sunk below its top), rise above it, then glide down into place. */
     var start = { left: pr.left + pr.width * .08, top: pr.top + pr.height * .2, width: pr.width * .84, height: pr.width * .84 * 1.4 };
     var all = stackEl.children, n = all.length;
     for (var i = 0; i < n; i++) all[i].style.setProperty("--k", n - 1 - i);
     stackEl.classList.add("fan");
-    flyFrom(stackEl, start, 720, 0, function (dx, dy, sc) { return { offset: .42, transform: "translate(" + (dx * .5) + "px," + (dy - pr.height * .42) + "px) scale(" + ((sc + 1) / 2) + ")" }; });
-    setTimeout(function () { stackEl.classList.remove("fan"); }, 380);
-    return 720;
+    var anim = flyFrom(stackEl, start, 720, 0, function (dx, dy, sc) { return { offset: .42, transform: "translate(" + (dx * .5) + "px," + (dy - pr.height * .42) + "px) scale(" + ((sc + 1) / 2) + ")" }; });
+    if (!anim) { gp.remove(); stackEl.classList.remove("fan"); return false; }
+    /* The first frame with five new cards on screen takes the browser a while to draw (100ms+ on a laptop). The
+       animation's clock would keep running through it and the cards would skip the rise out of the pack, so they
+       wait, hidden inside the pack, until frames are coming smoothly again, then go. */
+    anim.pause();
+    var last = performance.now(), t0 = last, slow = false;
+    requestAnimationFrame(function wait(now) {
+      var smooth = now - last < 30; last = now; if (!smooth) slow = true;
+      if (now - t0 < 600 && !(smooth && (slow || now - t0 > 150))) return requestAnimationFrame(wait);
+      gp.classList.add("drop"); anim.play();
+      setTimeout(function () { stackEl.classList.remove("fan"); }, 380);
+      setTimeout(function () { gp.remove(); }, 900);
+      setTimeout(done, 720);
+    });
+    return true;
   }
   function paintCounter() { counterEl.innerHTML = deck.map(function (c, i) { return '<i class="' + (i < idx ? "done" : i === idx ? "now" : "") + '"></i>'; }).join(""); }
   function topEl() { return stackEl.lastElementChild; }
@@ -661,6 +811,7 @@ export function start(RECIPE) {
     el.classList.remove("drag"); el.classList.add("gone");
     el.style.transform = "translate(" + (dir * 130) + "vw, -10vh) rotate(" + (dir * 30) + "deg)";
     document.body.classList.remove("takeover");
+    stash(deck[idx]); save();
     idx++; S.pending.revealed = idx; api.progress(S.pending.id, idx).catch(function () {}); paintCounter();
     setTimeout(function () {
       el.remove();
@@ -707,6 +858,7 @@ export function start(RECIPE) {
   }
   function summary(skipped) {
     var sets = (S.pending && S.pending.sets) || [], fromR = !stackView.hidden && stackEl.getBoundingClientRect();
+    deck.forEach(stash); save();
     state = "summary"; if (S.pending) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover");
     summaryEl.innerHTML = "";
     deck.forEach(function (c, i) {
@@ -755,6 +907,10 @@ export function start(RECIPE) {
 
   /* ---------- binder ---------- */
   var gridEl = $("#grid"), tiersEl = $("#tiers"), moreBtn = $("#more"), missingBtn = $("#missingBtn"), filter = "all", shown = 48, showMissing = false;
+  var searchEl = $("#binderSearch");
+  /* Search looks through every team in the pack, owned or not, so you can see what you're missing. */
+  searchEl.addEventListener("input", function () { shown = 48; paintBinder(); });
+  function matches(t, q) { return String(t.num).indexOf(q) === 0 || t.name.toLowerCase().indexOf(q) >= 0 || (t.loc || "").toLowerCase().indexOf(q) >= 0; }
   missingBtn.addEventListener("click", function () { showMissing = !showMissing; shown = 48; paintBinder(); });
   function ownedList() {
     var out = [];
@@ -768,7 +924,7 @@ export function start(RECIPE) {
     var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
     $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
     $("#binderTitle").textContent = "Cards";
-    paintPacks(owned, counts);
+    paintPacks(owned, counts); paintWorkshop();
     tiersEl.innerHTML = "";
     var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
     all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
@@ -789,17 +945,31 @@ export function start(RECIPE) {
     });
     var isDiv = filter.indexOf("div:") === 0, dname = filter.slice(4);
     missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
-    var list = (showMissing && filter !== "all") ? (isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; })
+    var q = searchEl.value.trim().toLowerCase();
+    var everyone = (filter === "all" ? TEAMS : isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
+    var have = function (t) { return S.inv[t.num] && S.inv[t.num].length ? 1 : 0; };
+    var list = q ? everyone.filter(function (t) { return matches(t, q); }).sort(function (a, b) { return have(b) - have(a); }) // yours first
+      : (showMissing && filter !== "all") ? everyone
       : owned.filter(function (t) { return filter === "all" || (isDiv ? t.div === dname : t.tier === filter); });
     gridEl.innerHTML = "";
     if (!list.length) {
       var e = document.createElement("div"); e.className = "empty-binder"; e.style.gridColumn = "1 / -1";
-      e.innerHTML = owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
+      e.innerHTML = q ? "<b>No team matches</b>Try a team number like 254, or part of a name." : owned.length ? "<b>None of these yet</b>Keep opening packs." : "<b>Your binder is empty</b>Open a pack and every robot you pull lands here.";
       gridEl.appendChild(e);
     }
     list.slice(0, shown).forEach(function (t) {
       var serials = S.inv[t.num] || [];
-      if (!serials.length) { var gh = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); gh.classList.add("ghost"); gridEl.appendChild(gh); return; }
+      if (!serials.length) {
+        /* A card you don't own is blurred: you can see its rarity and who it is, not the card itself. */
+        var gh = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); gh.classList.add("ghost");
+        var tag = document.createElement("div"); tag.className = "ghost-tag"; tag.innerHTML = "<b>" + t.num + "</b>" + esc(t.name) + "<small>Not yet</small>";
+        gh.appendChild(tag); gh.setAttribute("aria-label", t.name + ", team " + t.num + ", " + TIERS[t.tier].label + ", not owned yet" + (wished(t.num) ? ", on your wishlist" : ""));
+        gh.setAttribute("role", "button"); gh.tabIndex = 0;
+        if (wished(t.num)) { var wl = document.createElement("span"); wl.className = "tr-want mine"; wl.textContent = "♥ Wishlist"; gh.appendChild(wl); }
+        gh.addEventListener("click", function () { viewCard(t.num, {}); });
+        gh.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); viewCard(t.num, {}); } });
+        gridEl.appendChild(gh); return;
+      }
       var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
       if (S.unseen[t.num]) showRibbon(el);
       el.addEventListener("click", function () { inspect(t); });
@@ -809,6 +979,80 @@ export function start(RECIPE) {
     moreBtn.hidden = list.length <= shown;
   }
   moreBtn.addEventListener("click", function () { shown += 48; paintBinder(); });
+
+  /* ---------- workshop: scrap extra copies for parts, craft boosted packs ---------- */
+  /* Which rarities the scrap button takes. Common to Rare by default; Legendary and Mythic only when you pick them.
+     Remembered on this device. */
+  var scrapPick = { common: true, uncommon: true, rare: true, legendary: false, mythic: false }, scrapArmed = 0;
+  try { var sp = JSON.parse(localStorage.getItem("frcpacks.scrap") || "null"); if (sp && typeof sp === "object") ORDER.forEach(function (t) { if (typeof sp[t] === "boolean") scrapPick[t] = sp[t]; }); } catch (e) {}
+  var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
+  /* Copies the server won't scrap yet: cards from the pack being revealed, and cards in open trade offers. Keyed
+     "team:serial". */
+  function heldCopies() {
+    var held = {};
+    if (S.pending) S.pending.cards.forEach(function (c) { held[c.num + ":" + c.serial] = 1; });
+    TR.outgoing.concat(TR.incoming).forEach(function (t) { t.youGive.forEach(function (c) { held[c.num + ":" + c.serial] = 1; }); });
+    return held;
+  }
+  /* Extra copies by tier that scrapping will take now, the same way the server counts them: of the copies that
+     aren't held back, all but one. `held` counts the extras that have to wait. */
+  function extras() {
+    var out = { held: 0 }, h = heldCopies(); ORDER.forEach(function (t) { out[t] = 0; });
+    Object.keys(S.inv).forEach(function (k) {
+      var t = BY_NUM[k], all = S.inv[k].length; if (!t || all < 2) return;
+      var free = S.inv[k].filter(function (s) { return !h[k + ":" + s]; }).length, now = Math.max(0, free - 1);
+      out[t.tier] += now; if (scrapPick[t.tier]) out.held += all - 1 - now;
+    });
+    return out;
+  }
+  function paintWorkshop() {
+    var ex = extras(), n = 0, gain = 0, cost = S.boostCost;
+    $("#partsN").textContent = S.parts;
+    $("#partsBar").style.width = Math.min(100, S.parts / cost * 100) + "%";
+    $("#partsTxt").textContent = S.parts >= cost ? Math.floor(S.parts / cost) + " boosted pack" + (S.parts >= cost * 2 ? "s" : "") + " ready to craft" : (cost - S.parts) + " more for a boosted pack";
+    craftBtn.disabled = S.parts < cost; craftBtn.textContent = "Craft boosted pack · " + cost;
+    var row = $("#scrapTiers"); row.innerHTML = "";
+    ORDER.slice().reverse().forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (scrapPick[t] ? " on" : "");
+      b.setAttribute("aria-pressed", String(!!scrapPick[t])); b.style.setProperty("--tc", TIERS[t].color);
+      b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b> <em>' + ex[t] + '</em>';
+      b.title = "+" + (S.scrapParts[t] || 0) + " parts each";
+      b.onclick = function () { scrapPick[t] = !scrapPick[t]; scrapArmed = 0; try { localStorage.setItem("frcpacks.scrap", JSON.stringify(scrapPick)); } catch (e) {} paintWorkshop(); };
+      row.appendChild(b);
+      if (scrapPick[t]) { n += ex[t]; gain += ex[t] * (S.scrapParts[t] || 0); }
+    });
+    /* Extras in rarities that aren't picked: say so, so they don't look forgotten. */
+    var skipped = ORDER.filter(function (t) { return !scrapPick[t] && ex[t]; });
+    var other = $("#scrapOther"), more = skipped.reduce(function (a, t) { return a + ex[t]; }, 0);
+    other.hidden = !more;
+    other.textContent = more + (more === 1 ? " more extra copy" : " more extra copies") + " in " + skipped.map(function (t) { return TIERS[t].label; }).join(" and ") + ". Tap " + (skipped.length === 1 ? "it" : "them") + " above to include " + (more === 1 ? "it" : "them") + ".";
+    scrapBtn.disabled = !n;
+    var note = $("#scrapHeld"); note.hidden = !ex.held;
+    note.textContent = ex.held + (ex.held === 1 ? " extra copy waits" : " extra copies wait") + " until you finish the pack you're opening or the trade offer it's in.";
+    scrapBtn.textContent = !n ? "No extras to scrap" : scrapArmed ? "Tap again to scrap " + n : "Scrap " + n + (n === 1 ? " extra" : " extras") + " · +" + gain + " parts";
+    scrapBtn.classList.toggle("armed", !!scrapArmed);
+  }
+  function scrapped(r) {
+    applyState(r.state); applyCollection(r.collection);
+    Object.keys(S.unseen).forEach(function (k) { if (!S.inv[k]) delete S.unseen[k]; }); save();
+    sfx.whoosh(); paintStatus(); if (!vBinder.hidden) paintBinder(); paintTabDot();
+    if (r.scrapped) say("Scrapped " + r.scrapped + (r.scrapped === 1 ? " copy" : " copies") + " · +" + r.gained + " parts" + (r.held ? " · " + r.held + " held back" : ""), 3000);
+  }
+  scrapBtn.addEventListener("click", function () {
+    var tiers = ORDER.filter(function (t) { return scrapPick[t]; }); if (!tiers.length) return;
+    if (!scrapArmed) { scrapArmed = 1; paintWorkshop(); setTimeout(function () { if (scrapArmed) { scrapArmed = 0; paintWorkshop(); } }, 3500); return; }
+    scrapArmed = 0; scrapBtn.disabled = true;
+    api.scrapExtras(PACK_ID, tiers).then(scrapped, offline).then(paintWorkshop);
+  });
+  craftBtn.addEventListener("click", function () {
+    if (S.parts < S.boostCost) return; actx(); craftBtn.disabled = true;
+    api.craft().then(function (st) {
+      applyState(st); paintStatus(); paintWorkshop(); sfx.promote();
+      var r = craftBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, "#ffd34d", 7);
+      say("Boosted pack crafted. Boosted packs open before your other packs.", 2800);
+      if (state === "home" || state === "select") paintSelectHud();
+    }, function (e) { offline(e); paintWorkshop(); });
+  });
   function paintPacks(owned, counts) {
     var row = $("#packRow"); row.innerHTML = "";
     PACKS.forEach(function (pk) {
@@ -847,29 +1091,161 @@ export function start(RECIPE) {
       };
       row.appendChild(cp);
     }
+    row.appendChild(pinButton(t.num));
     modalIn.appendChild(row);
-    lastFocus = document.activeElement; modal.hidden = false; close.focus();
+    var hc = heldCopies(), free = serials.filter(function (x) { return !hc[t.num + ":" + x]; }).length;
+    if (serials.length > 1 && free < 2) {
+      var wait = document.createElement("p"); wait.className = "ws-note ws-held";
+      wait.textContent = "Your extra copies are in the pack you're opening or a trade offer, so they can't be scrapped yet.";
+      modalIn.appendChild(wait);
+    }
+    if (free > 1) {
+      var each = S.scrapParts[t.tier] || 0, more = free - 1, srow = document.createElement("div"); srow.className = "cta-row";
+      var one = document.createElement("button"); one.type = "button"; one.className = "chip"; one.textContent = "Scrap 1 extra · +" + each + " parts";
+      one.onclick = function () { scrapOne(t, 1, one); }; srow.appendChild(one);
+      if (more > 1) { var all = document.createElement("button"); all.type = "button"; all.className = "chip"; all.textContent = "Scrap all " + more + " extras · +" + each * more; all.onclick = function () { scrapOne(t, more, all); }; srow.appendChild(all); }
+      modalIn.appendChild(srow);
+    }
+    lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
   }
-  function closeModal() { modal.hidden = true; modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
+  /* The first copy (the lowest serial you got first) is always kept. */
+  function scrapOne(t, count, btn) {
+    if (!btn._armed && (t.tier === "legendary" || t.tier === "mythic")) { btn._armed = true; btn.textContent = "Tap again to scrap"; return; }
+    btn.disabled = true;
+    api.scrap(PACK_ID, t.num, count).then(function (r) { scrapped(r); inspect(t); }, function (e) { btn.disabled = false; offline(e); });
+  }
+  /* A card up close from the trading post: the full card (tilt it), its team stats, and whose copy it is. */
+  function viewCard(num, o) {
+    o = o || {}; var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
+    modalIn.innerHTML = "";
+    modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: true }));
+    var facts = document.createElement("div"); facts.className = "serials card-facts";
+    facts.innerHTML = '<dl>' +
+      '<dt>Team</dt><dd>' + num + ' · ' + esc(t.name) + '</dd>' +
+      '<dt>Rarity</dt><dd style="color:' + T.color + '">' + T.label + '</dd>' +
+      '<dt>Division</dt><dd>' + esc(t.div) + '</dd>' +
+      (t.loc ? '<dt>From</dt><dd>' + esc(t.loc) + '</dd>' : '') +
+      '<dt>EPA</dt><dd>' + (t.epa == null ? "–" : Math.round(t.epa)) + ' · #' + t.rank + ' at Champs</dd>' +
+      '<dt>Record</dt><dd>' + esc(t.wl) + '</dd>' +
+      (o.serial ? '<dt>Serial</dt><dd>No. ' + esc(o.serial) + '</dd>' : '') +
+      '</dl><p>' + (o.from ? o.from + " " : "") + (mine ? "You own " + (mine === 1 ? "1 copy" : mine + " copies") + "." : "You don't have this one yet.") + '</p>';
+    modalIn.appendChild(facts);
+    var row = document.createElement("div"); row.className = "cta-row";
+    var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    row.appendChild(mine ? pinButton(num) : wishButton(num));
+    modalIn.appendChild(row);
+    lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+  }
+  /* ---------- wishlist, showcase and profiles ---------- */
+  function wished(n) { return (S.wishlist || []).indexOf(n) >= 0; }
+  function wishButton(num) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta ghost";
+    var paint = function () { b.textContent = wished(num) ? "♥ On your wishlist" : "♡ Add to wishlist"; b.setAttribute("aria-pressed", String(wished(num))); };
+    paint();
+    b.onclick = function () {
+      b.disabled = true;
+      api.setWish(PACK_ID, num, !wished(num)).then(function (list) {
+        S.wishlist = list; b.disabled = false; paint(); sfx.tick();
+        if (!vBinder.hidden) paintBinder(); if (!vTrade.hidden) paintGrid();
+      }, function (e) { b.disabled = false; offline(e); });
+    };
+    return b;
+  }
+  function pinButton(num) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta ghost";
+    var pinned = function () { return (S.showcase || []).indexOf(num) >= 0; };
+    var paint = function () { b.textContent = pinned() ? "★ On your profile" : "☆ Pin to profile"; b.setAttribute("aria-pressed", String(pinned())); };
+    paint();
+    b.onclick = function () {
+      var list = (S.showcase || []).filter(function (n) { return n !== num; });
+      if (!pinned()) { if (list.length >= 3) return say("Your profile shows 3 cards. Unpin one first (open it and tap On your profile).", 3200); list.push(num); }
+      b.disabled = true;
+      api.setShowcase(PACK_ID, list).then(function (l) { S.showcase = l; b.disabled = false; paint(); sfx.tick(); }, function (e) { b.disabled = false; offline(e); });
+    };
+    return b;
+  }
+  /* A player's profile: who they are, how far their collection is, their showcase, rarest pulls and wishlist. */
+  function openProfile(name) {
+    if (!name) return;
+    api.profile(name, PACK_ID).then(function (p) {
+      var pct = p.total ? Math.round(p.teams / p.total * 100) : 0, joined = new Date(p.joined).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+      var cards = function (list, empty, max) {
+        var html = list.slice(0, max).filter(function (c) { return BY_NUM[c.num || c]; }).map(function (c) {
+          var n = c.num || c; return '<button type="button" class="tr-view" data-num="' + n + '"' + (c.serial ? ' data-serial="' + c.serial + '"' : '') + '>' + miniCard(n, c.serial ? { serial: c.serial } : {}) + '</button>';
+        }).join("");
+        return html || empty;
+      };
+      var slots = ""; for (var i = p.showcase.length; i < 3; i++) slots += '<div class="pf-empty">' + (p.me ? "Pin a card from your binder" : "Empty") + '</div>';
+      modalIn.innerHTML = '<div class="profile">' +
+        '<div class="pf-head">' + avatar(p.username) + '<div><h2>' + esc(p.username) + '</h2><p>Joined ' + joined + (p.streak ? ' · ' + p.streak + '-day streak' : '') + '</p></div></div>' +
+        '<div class="pf-stats"><div><b>' + pct + '%</b><small>collected</small></div><div><b>' + p.teams + '</b><small>teams</small></div><div><b>' + p.sets + '</b><small>sets</small></div><div><b>' + p.trades + '</b><small>trades</small></div></div>' +
+        '<section class="pf-sec"><h3>Showcase</h3><div class="pf-row">' + cards(p.showcase, "", 3) + slots + '</div></section>' +
+        '<section class="pf-sec"><h3>Rarest pulls</h3><div class="pf-row">' + cards(p.rarest, '<p class="hint">No cards yet.</p>', 3) + '</div></section>' +
+        '<section class="pf-sec"><h3>Wishlist' + (p.wishlist.length ? " · " + p.wishlist.length : "") + '</h3>' + (p.wishlist.length ? '<div class="pf-row wide">' + cards(p.wishlist, "", 12) + '</div>' : '<p class="hint">' + (p.me ? "Tap a card you don't have in the binder to add it." : "Nothing yet.") + '</p>') + '</section>' +
+        '</div>';
+      var row = document.createElement("div"); row.className = "cta-row";
+      var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+      if (!p.me && REPORTS) {
+        var rep = document.createElement("button"); rep.type = "button"; rep.className = "textbtn pf-report"; rep.textContent = "Report " + p.username;
+        rep.onclick = function () { reportForm(p.username); };
+        modalIn.querySelector(".profile").appendChild(rep);
+        var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta ghost"; tr.textContent = "Trade with " + p.username;
+        tr.onclick = function () { closeModal(); show("trade"); setPane("new"); trWho.value = p.username; loadTheirs(true); };
+        row.appendChild(tr);
+      }
+      modalIn.appendChild(row);
+      Array.prototype.forEach.call(modalIn.querySelectorAll(".tr-view"), function (b) {
+        b.onclick = function () { var back = p.username; viewCard(+b.dataset.num, { serial: b.dataset.serial, from: esc(back) + "'s card." }); };
+      });
+      lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+    }, offline);
+  }
+  $("#myProfile").onclick = function () { openProfile(ME); };
+  /* Reporting a player goes to the admin, who can rename or turn off the account. Off for now: set REPORTS to true to
+     show the Report link on profiles (the server and the admin panel's Reports list are ready). */
+  var REPORTS = false;
+  function reportForm(name) {
+    var reasons = [["username", "Offensive username"], ["cheating", "Cheating or abuse"], ["harassment", "Harassment"], ["other", "Something else"]];
+    modalIn.innerHTML = '<form class="profile report" novalidate><div class="pf-sec"><h3>Report ' + esc(name) + '</h3>' +
+      '<div class="report-reasons" role="radiogroup">' + reasons.map(function (r, i) { return '<label><input type="radio" name="reason" value="' + r[0] + '"' + (i ? '' : ' checked') + '> ' + r[1] + '</label>'; }).join("") + '</div>' +
+      '<textarea class="input" name="details" maxlength="500" rows="3" placeholder="What happened? (optional)"></textarea>' +
+      '<p class="hint">Only the admin sees reports. They can rename or turn off the account.</p></div>' +
+      '<div class="cta-row"><button type="submit" class="cta">Send report</button><button type="button" class="cta ghost" id="repCancel">Cancel</button></div></form>';
+    var f = modalIn.querySelector("form");
+    $("#repCancel").onclick = function () { openProfile(name); };
+    f.onsubmit = function (e) {
+      e.preventDefault();
+      var btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+      api.report(name, f.reason.value, f.details.value).then(function () { closeModal(); say("Thanks. The admin will take a look.", 3000); }, function (er) { btn.disabled = false; offline(er); });
+    };
+    try { f.querySelector("input").focus(); } catch (e2) {}
+  }
+  function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
+    if (modal.hidden && vOpen.hidden) return; // the Open screen is behind another tab
     if (!modal.hidden) closeModal(); else if (state === "inspect") back(); else if (state === "select") paintHome();
   });
 
   /* ---------- tabs and settings ---------- */
-  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder");
+  var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), tabTrade = $("#tabTrade"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder"), vTrade = $("#viewTrade");
   function show(which) {
-    var b = which === "binder";
+    var b = which === "binder", tr = which === "trade", open = !b && !tr;
     banner.classList.remove("show");
-    vOpen.hidden = b; vBinder.hidden = !b; tabOpen.setAttribute("aria-selected", String(!b)); tabBinder.setAttribute("aria-selected", String(b));
-    $("#status").hidden = b; paintTeamPick(b); document.body.classList.toggle("focus", !b && state === "inspect");
-    if (b) { paintBinder(); try { history.replaceState(null, "", "#binder"); } catch (e) {} }
-    else { try { history.replaceState(null, "", "#open"); } catch (e) {} }
+    vOpen.hidden = !open; vBinder.hidden = !b; vTrade.hidden = !tr;
+    tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr));
+    $("#status").hidden = !open; $("#daily").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
+    setTimeout(coach, 0);
+    if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
+    if (tr) { enterTrade(); paintTrades(); loadTrades(); }
+    try { history.replaceState(null, "", "#" + (b ? "binder" : tr ? "trade" : "open")); } catch (e) {}
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
     vBinder._was = b; paintTabDot();
   }
-  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); };
+  /* Notifications and home-screen shortcuts open a tab by its #hash. */
+  addEventListener("hashchange", function () { var h = (location.hash || "").replace("#", ""); if (h === "open" || h === "binder" || h === "trade") show(h); });
+  tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); }; tabTrade.onclick = function () { show("trade"); };
   var gear = $("#gear"), settings = $("#settings");
   gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
@@ -915,6 +1291,339 @@ export function start(RECIPE) {
   };
   paintToggles();
 
+  /* ---------- trading ---------- */
+  /* The trading post: pick a player, lay up to 5 of your cards and up to 5 of theirs on the table, and send the
+     offer. One copy of each team changes hands, serial number and all; the server picks the newest copy, so you keep
+     your earliest serial longest. Offers for you, sent offers and history each have a tab. */
+  var TR = { incoming: [], outgoing: [], recent: [] }, MAXT = 5;
+  var trWho = $("#trWho"), trSend = $("#trSend"), trPickQ = $("#trPickQ"), trGrid = $("#trGrid");
+  var trGive = [], trGet = [], theirInv = null, theirName = "", whoTimer = 0, theirsReq = 0;
+  var trPane = "new", trSide = "mine", trTier = "all", trFresh = {};
+  function loadTrades() { return api.trades().then(function (t) { TR = t; paintTradeDot(); if (!vTrade.hidden) paintTrades(); }, function () {}); }
+  function paintTradeDot() {
+    var n = TR.incoming.length, dot = $("#tradeDot"), inN = $("#trInN");
+    dot.hidden = inN.hidden = !n; dot.textContent = inN.textContent = n;
+    tabTrade.setAttribute("aria-label", n ? "Trade, " + n + " offers for you" : "Trade");
+  }
+  function initials(name) { return esc((name || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "?"); }
+  function avatar(name, cls) {
+    var h = 0; for (var i = 0; i < (name || "").length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+    return '<span class="av ' + (cls || "") + '" style="--ah:' + h + '" aria-hidden="true">' + initials(name) + '</span>';
+  }
+  function ago(ms) {
+    var s = Math.max(0, (Date.now() - ms) / 1000);
+    return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : Math.floor(s / 86400) + "d ago";
+  }
+  /* A small card: the team's photo (or its colors), number, name and rarity, framed in its tier. */
+  function miniCard(num, opts) {
+    opts = opts || {}; var t = BY_NUM[num], T = TIERS[t.tier];
+    var art = t.photo ? '<img src="/photos/' + num + '.webp" alt="" loading="lazy" decoding="async" draggable="false">' : '<span class="mc-gear" aria-hidden="true">' + num + '</span>';
+    var foot = opts.serial ? "No. " + esc(opts.serial) : opts.count > 1 ? "×" + opts.count : T.label;
+    return '<span class="mc card" data-tier="' + t.tier + '" style="--tc:' + T.color + '"><span class="mc-in">' +
+      '<span class="mc-art">' + art + '</span><span class="mc-num">' + num + '</span><span class="mc-name">' + esc(t.name) + '</span>' +
+      '<span class="mc-foot"><i>' + T.gems + '</i>' + foot + '</span></span></span>';
+  }
+  /* Parts a card would scrap for: a rough sense of what each side of a trade is worth. */
+  function worth(nums) { return nums.reduce(function (a, n) { return a + (S.scrapParts[BY_NUM[n].tier] || 0); }, 0); }
+  function setPane(p) {
+    trPane = p;
+    [["new", "#trTabNew", "#trPaneNew"], ["in", "#trTabIn", "#trPaneIn"], ["out", "#trTabOut", "#trPaneOut"], ["past", "#trTabPast", "#trPanePast"]].forEach(function (x) {
+      $(x[1]).setAttribute("aria-selected", String(x[0] === p)); $(x[2]).hidden = x[0] !== p;
+    });
+  }
+  $("#trTabNew").onclick = function () { setPane("new"); }; $("#trTabIn").onclick = function () { setPane("in"); };
+  $("#trTabOut").onclick = function () { setPane("out"); }; $("#trTabPast").onclick = function () { setPane("past"); };
+  function offerCard(t, kind) {
+    var el = document.createElement("article"); el.className = "tr-offer " + kind + (t.status !== "open" ? " " + t.status : "");
+    var when = kind === "past" && t.decidedAt ? t.decidedAt : t.createdAt;
+    var who = kind === "in" ? "<b>" + esc(t.with) + "</b> wants to trade" : kind === "out" ? "Waiting on <b>" + esc(t.with) + "</b>" : "With <b>" + esc(t.with) + "</b>";
+    var side = function (label, cards, whose) {
+      return '<div class="tr-o-side"><small>' + label + '</small><div class="tr-o-cards">' + cards.map(function (c) {
+        return BY_NUM[c.num] ? '<button type="button" class="tr-view" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
+      }).join("") + '</div></div>';
+    };
+    el.innerHTML = '<header><button type="button" class="who-btn" data-who="' + esc(t.with) + '" aria-label="See ' + esc(t.with) + '\'s profile">' + avatar(t.with) + '</button><p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
+      '<div class="tr-o-body">' + side("You give", t.youGive, "you") + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet, t.with) + '</div>' +
+      '<p class="tr-tip">Tap a card to see it up close.</p>';
+    el.querySelector(".who-btn").onclick = function () { openProfile(t.with); };
+    Array.prototype.forEach.call(el.querySelectorAll(".tr-view"), function (b) {
+      b.onclick = function () { viewCard(+b.dataset.num, { serial: b.dataset.serial, from: b.dataset.whose === "you" ? "You'd give this copy." : esc(b.dataset.whose) + " would give this copy." }); };
+    });
+    var row = document.createElement("div"); row.className = "tr-o-act";
+    function act(label, cls, run) {
+      var b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = label;
+      b.onclick = function () { b.disabled = true; run(b).then(null, function (e) { b.disabled = false; offline(e); loadTrades(); }); };
+      row.appendChild(b);
+    }
+    if (kind === "in") {
+      act("Accept trade", "cta small", function (b) {
+        return api.acceptTrade(t.id).then(function (r) {
+          var at = b.getBoundingClientRect();
+          applyState(r.state); applyCollection(r.collection); TR = r.trades;
+          t.youGet.forEach(function (c) { S.unseen[c.num] = 1; }); save();
+          sfx.promote(); burst(at.left + at.width / 2, at.top + at.height / 2, 70, null, 9, true);
+          paintStatus(); paintTabDot(); paintTradeDot(); paintTrades();
+          say("Trade done with " + t.with + "! " + t.youGet.length + (t.youGet.length === 1 ? " card is" : " cards are") + " in your binder" +
+            (r.sets.length ? " · " + r.sets.join(", ") + " set complete! +" + r.sets.length + (r.sets.length === 1 ? " pack" : " packs") : ""), 3800);
+        });
+      });
+      act("Decline", "chip", function () { return api.declineTrade(t.id).then(function (x) { TR = x; paintTradeDot(); paintTrades(); }); });
+    } else if (kind === "out") {
+      act("Cancel offer", "chip", function () { return api.cancelTrade(t.id).then(function (x) { TR = x; paintTrades(); }); });
+    }
+    if (row.children.length) el.appendChild(row);
+    return el;
+  }
+  function paintTrades() {
+    function fill(id, list, kind, empty) {
+      var box = $(id); box.innerHTML = "";
+      if (!list.length) box.innerHTML = '<div class="tr-empty"><b>' + empty[0] + '</b>' + empty[1] + '</div>';
+      list.forEach(function (t) { box.appendChild(offerCard(t, kind)); });
+    }
+    fill("#trIncoming", TR.incoming, "in", ["No offers right now", "When someone wants to trade with you, it shows up here."]);
+    fill("#trOutgoing", TR.outgoing, "out", ["Nothing sent", "Offers you send wait here until they answer."]);
+    fill("#trRecent", TR.recent, "past", ["No trades yet", "Finished, declined and cancelled trades show up here."]);
+    paintTable(); paintGrid();
+  }
+  /* The table: your side, their side, and how even it looks. */
+  function slots(box, nums, side) {
+    box.innerHTML = "";
+    for (var i = 0; i < MAXT; i++) {
+      var n = nums[i], s = document.createElement("button"); s.type = "button";
+      if (n) {
+        s.className = "tr-slot full" + (trFresh[side + n] ? " pop" : ""); s.innerHTML = miniCard(n) + '<span class="tr-x" aria-hidden="true">×</span>';
+        s.setAttribute("aria-label", "Remove " + BY_NUM[n].name);
+        s.onclick = (function (n) { return function () { (side === "give" ? trGive : trGet).splice((side === "give" ? trGive : trGet).indexOf(n), 1); sfx.tick(); paintTable(); paintGrid(); }; })(n);
+      } else {
+        s.className = "tr-slot"; s.innerHTML = '<span class="tr-plus" aria-hidden="true">+</span>';
+        s.setAttribute("aria-label", side === "give" ? "Add one of your cards" : "Add one of their cards");
+        s.onclick = function () { trSide = side === "give" ? "mine" : "theirs"; paintGrid(); try { trPickQ.focus({ preventScroll: true }); $("#trBrowse").scrollIntoView({ block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} };
+      }
+      box.appendChild(s);
+    }
+    trFresh = {};
+  }
+  var theirWish = [];
+  /* What lines up: cards they have that you want, and cards you have that they want. */
+  function paintMatch() {
+    var el = $("#trMatch"), mine = myInv();
+    if (!theirName || !theirInv) { el.hidden = true; return; }
+    var iWant = (S.wishlist || []).filter(function (n) { return theirInv[n]; }).length, theyWant = theirWish.filter(function (n) { return mine[n]; }).length;
+    el.hidden = !iWant && !theyWant;
+    el.textContent = [iWant ? theirName + " has " + iWant + " from your wishlist" : "", theyWant ? "you have " + theyWant + " they want" : ""].filter(Boolean).join(" · ") + ". They're marked below.";
+  }
+  $("#trThemBtn").onclick = function () { if (theirName) openProfile(theirName); };
+  function paintTable() {
+    var mine = myInv(); trGive = trGive.filter(function (n) { return mine[n]; });
+    slots($("#trGiveSlots"), trGive, "give"); slots($("#trGetSlots"), trGet, "get");
+    $("#trGiveN").textContent = trGive.length + " / " + MAXT; $("#trGetN").textContent = trGet.length + " / " + MAXT;
+    $("#avThem").outerHTML = avatar(theirName || "?", "them" + (theirName ? "" : " empty")).replace('class="av', 'id="avThem" class="av');
+    $("#trThemName").textContent = theirName || "Pick a player";
+    var g = worth(trGive), w = worth(trGet), total = g + w, bar = $("#trFairBar"), txt = $("#trFairTxt");
+    var lean = total ? (w - g) / total : 0; // -1: you give it all, +1: you get it all
+    bar.style.setProperty("--lean", lean.toFixed(3)); bar.parentNode.hidden = !total;
+    txt.textContent = !total ? "" : Math.abs(lean) < .2 ? "Looks even" : lean > 0 ? (lean > .6 ? "A big ask" : "You get more") : (lean < -.6 ? "Very generous" : "You give more");
+    var ready = theirName && trGive.length && trGet.length;
+    trSend.disabled = !ready; paintMatch();
+    $("#trSummary").textContent = !theirName ? "Start by picking who to trade with." : !trGive.length && !trGet.length ? "Tap cards below to put them on the table." :
+      !trGive.length ? "Add at least one of your cards." : !trGet.length ? "Add at least one of " + theirName + "'s cards." : "Ready to send to " + theirName + ".";
+  }
+  function myInv() { var m = {}; Object.keys(S.inv).forEach(function (k) { if (S.inv[k].length) m[k] = S.inv[k].length; }); return m; }
+  /* The card shelf under the table: your cards or theirs, searchable, by rarity. Tap to put one on the table. */
+  function paintGrid() {
+    var mineSide = trSide === "mine", inv = mineSide ? myInv() : theirInv, picked = mineSide ? trGive : trGet, q = trPickQ.value.trim().toLowerCase();
+    $("#trPickMine").setAttribute("aria-selected", String(mineSide)); $("#trPickTheirs").setAttribute("aria-selected", String(!mineSide));
+    $("#trPickTheirs").textContent = theirName ? theirName + "'s cards" : "Their cards";
+    var tf = $("#trTierF"); tf.innerHTML = "";
+    ["all"].concat(ORDER).forEach(function (t) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (trTier === t ? " on" : ""); b.setAttribute("aria-pressed", String(trTier === t));
+      b.textContent = t === "all" ? "All" : TIERS[t].label; if (t !== "all") b.style.color = TIERS[t].color;
+      b.onclick = function () { trTier = t; paintGrid(); }; tf.appendChild(b);
+    });
+    trGrid.innerHTML = "";
+    if (!inv) { trGrid.innerHTML = '<div class="tr-empty"><b>Whose cards?</b>Type a player\'s username above to see what they have.</div>'; return; }
+    var list = Object.keys(inv).map(Number).filter(function (n) { return BY_NUM[n] && inv[n] > 0 && (trTier === "all" || BY_NUM[n].tier === trTier) && (!q || matches(BY_NUM[n], q)); })
+      .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
+    if (!list.length) { trGrid.innerHTML = '<div class="tr-empty"><b>' + (q || trTier !== "all" ? "No cards match" : mineSide ? "Your binder is empty" : "No cards yet") + '</b>' + (q || trTier !== "all" ? "Try another search or rarity." : mineSide ? "Open some packs first." : "They haven't opened any packs.") + '</div>'; return; }
+    list.slice(0, 80).forEach(function (n) {
+      var on = picked.indexOf(n) >= 0, cell = document.createElement("div"), b = document.createElement("button");
+      cell.className = "tr-cell";
+      b.type = "button"; b.className = "tr-pick" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", BY_NUM[n].name + ", team " + n + ", " + TIERS[BY_NUM[n].tier].label + (inv[n] > 1 ? ", " + inv[n] + " copies" : "") + (mineSide && inv[n] === 1 ? ", your only copy" : ""));
+      b.innerHTML = miniCard(n, { count: inv[n] }) + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "") +
+        (mineSide && theirWish.indexOf(n) >= 0 ? '<span class="tr-want">They want</span>' : !mineSide && wished(n) ? '<span class="tr-want mine">♥ Your list</span>' : "");
+      b.onclick = function () {
+        var i = picked.indexOf(n);
+        if (i >= 0) { picked.splice(i, 1); sfx.tick(); }
+        else if (picked.length >= MAXT) return say("Up to " + MAXT + " cards on each side.", 1800);
+        else { picked.push(n); trFresh[(mineSide ? "give" : "get") + n] = 1; sfx.pick(); }
+        paintTable(); paintGrid();
+      };
+      var info = document.createElement("button"); info.type = "button"; info.className = "tr-info"; info.textContent = "i";
+      info.setAttribute("aria-label", "See " + BY_NUM[n].name + " up close");
+      info.onclick = function () { viewCard(n, { from: mineSide ? "You have " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." : esc(theirName) + " has " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." }); };
+      cell.appendChild(b); cell.appendChild(info); trGrid.appendChild(cell);
+    });
+    if (list.length > 80) { var more = document.createElement("p"); more.className = "tr-more"; more.textContent = "Showing 80 of " + list.length + ". Search to find the rest."; trGrid.appendChild(more); }
+  }
+  $("#trPickMine").onclick = function () { trSide = "mine"; paintGrid(); };
+  $("#trPickTheirs").onclick = function () { trSide = "theirs"; paintGrid(); if (!theirName) try { trWho.focus(); } catch (e) {} };
+  trPickQ.addEventListener("input", paintGrid);
+  function loadTheirs(force) {
+    var name = trWho.value.trim();
+    if (!name || (!force && name.toLowerCase() === theirName.toLowerCase())) return;
+    var n = ++theirsReq;
+    api.playerCollection(name, PACK_ID).then(function (col) {
+      if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
+      if (name.toLowerCase() !== theirName.toLowerCase()) { trGet = []; trSide = "theirs"; }
+      theirName = name; theirInv = {}; theirWish = [];
+      api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; paintGrid(); paintMatch(); } }, function () {});
+      col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
+      $("#trSugg").innerHTML = ""; paintTable(); paintGrid();
+    }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintTable(); paintGrid(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
+  }
+  /* Matching players appear as chips under the box as you type. */
+  trWho.addEventListener("input", function () {
+    clearTimeout(whoTimer);
+    var q = trWho.value.trim();
+    if (theirName && q.toLowerCase() !== theirName.toLowerCase()) { theirName = ""; theirInv = null; trGet = []; paintTable(); paintGrid(); }
+    whoTimer = setTimeout(function () {
+      var box = $("#trSugg");
+      if (q.length < 1) { box.innerHTML = ""; return; }
+      api.players(q).then(function (names) {
+        if (trWho.value.trim() !== q) return;
+        box.innerHTML = "";
+        names.forEach(function (nm) {
+          var b = document.createElement("button"); b.type = "button"; b.className = "tr-sug"; b.innerHTML = avatar(nm) + "<span>" + esc(nm) + "</span>";
+          b.onclick = function () { trWho.value = nm; box.innerHTML = ""; loadTheirs(); };
+          box.appendChild(b);
+        });
+        if (!names.length && q.length > 1) box.innerHTML = '<span class="tr-nobody">No players match "' + esc(q) + '"</span>';
+        if (names.some(function (nm) { return nm.toLowerCase() === q.toLowerCase(); })) loadTheirs();
+      }, function () {});
+    }, 200);
+  });
+  trWho.addEventListener("change", function () { loadTheirs(); });
+  trWho.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); var first = $("#trSugg .tr-sug"); if (first) first.click(); else loadTheirs(); } });
+  trSend.addEventListener("click", function () {
+    if (trSend.disabled) return; trSend.disabled = true;
+    var r = trSend.getBoundingClientRect();
+    api.offerTrade(theirName, PACK_ID, trGive, trGet).then(function (t) {
+      TR = t; trGive = []; trGet = []; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
+      say("Offer sent to " + theirName + ". You'll see it under Sent until they answer.", 3000);
+      loadTheirs(true); paintTrades(); paintTradeDot();
+    }, function (e) { offline(e); paintTable(); });
+  });
+  /* Open the trading post on the offers waiting for you, if there are any. */
+  function enterTrade() { setPane(TR.incoming.length ? "in" : trPane === "in" && !TR.incoming.length ? "new" : trPane); $("#avMe").outerHTML = avatar(ME, "me").replace('class="av', 'id="avMe" class="av'); }
+  /* Check for new offers now and then, so the tab dot shows up without a reload. */
+  setInterval(function () { if (!document.hidden) loadTrades(); }, 60000);
+
+  /* ---------- controller ---------- */
+  /* Any standard gamepad (Xbox, PlayStation, Switch Pro in a browser that maps it): A takes / opens / flips, B goes
+     back, X turns the pack over, Y reveals the rest, the d-pad or left stick moves, the sticks tilt what you're
+     holding, LB / RB switch tabs and Start claims free packs. In the binder the d-pad moves between cards and
+     buttons and A presses. */
+  var PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, BACK: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+  var padPrev = [], padRaf = 0, padRep = { dir: "", at: 0 }, padTilt = false, padSeen = false;
+  function pads() { try { return Array.prototype.filter.call(navigator.getGamepads ? navigator.getGamepads() : [], Boolean); } catch (e) { return []; } }
+  function padRumble(ms) {
+    var total = Array.isArray(ms) ? ms.reduce(function (a, b) { return a + b; }, 0) : ms;
+    pads().forEach(function (p) { try { if (p.vibrationActuator) p.vibrationActuator.playEffect("dual-rumble", { duration: Math.min(total, 600), strongMagnitude: .7, weakMagnitude: .5 }); } catch (e) {} });
+  }
+  var buzzPhone = buzz;
+  buzz = function (ms) { buzzPhone(ms); if (!S.muted && padSeen) padRumble(ms); };
+  /* Moves focus to the nearest visible control in a direction, for the binder and the card view. */
+  function padMove(dir, root) {
+    var all = Array.prototype.filter.call(root.querySelectorAll("button:not([disabled]), [role=button][tabindex], .slot.btn, a[href], input"), function (el) { return el.offsetParent && el.getClientRects().length; });
+    var cur = document.activeElement && root.contains(document.activeElement) ? document.activeElement : null;
+    if (!cur) { if (all[0]) padFocus(all[0]); return; }
+    var c = cur.getBoundingClientRect(), cx = c.left + c.width / 2, cy = c.top + c.height / 2, best = null, bestD = Infinity;
+    all.forEach(function (el) {
+      if (el === cur) return;
+      var r = el.getBoundingClientRect(), dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
+      var along = dir === "left" ? -dx : dir === "right" ? dx : dir === "up" ? -dy : dy, across = dir === "left" || dir === "right" ? Math.abs(dy) : Math.abs(dx);
+      if (along <= 4) return;
+      var d = along + across * 2.5; if (d < bestD) { bestD = d; best = el; }
+    });
+    if (best) padFocus(best);
+  }
+  function padFocus(el) { try { el.focus({ preventScroll: true }); el.scrollIntoView({ block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} }
+  function padPress(el) { if (el && el.click) el.click(); }
+  function padDir(dir) {
+    document.body.classList.add("pad");
+    if (!modal.hidden) return padMove(dir, modal);
+    if (!vBinder.hidden) return padMove(dir, vBinder);
+    if (!vTrade.hidden) return padMove(dir, vTrade);
+    if (state === "select" && (dir === "left" || dir === "right")) spinTo(Math.round(ringA / 36) * 36 + (dir === "left" ? -36 : 36), 220);
+    else if (state === "stack" && (dir === "left" || dir === "right")) { var el = topEl(); if (el && !el._hidden) fling(el, dir === "right" ? 1 : -1); }
+    else if (state === "summary" || state === "home") padMove(dir, vOpen);
+  }
+  function padButton(b) {
+    actx(); document.body.classList.add("pad");
+    if (b === PAD.LB || b === PAD.RB) {
+      if (!modal.hidden) return;
+      var tabs = ["open", "binder", "trade"], at = !vBinder.hidden ? 1 : !vTrade.hidden ? 2 : 0;
+      show(tabs[(at + (b === PAD.LB ? 2 : 1)) % 3]); return;
+    }
+    if (b === PAD.START) { if (!claimBtn.hidden) padPress(claimBtn); return; }
+    if (!modal.hidden) { if (b === PAD.A && modal.contains(document.activeElement)) padPress(document.activeElement); else if (b === PAD.A || b === PAD.B) closeModal(); return; }
+    var page = !vBinder.hidden ? vBinder : !vTrade.hidden ? vTrade : null;
+    if (page) {
+      if (b === PAD.A) { var f = document.activeElement; if (f && page.contains(f)) { if (f.matches("input")) f.focus(); else padPress(f); } else padMove("down", page); }
+      else if (b === PAD.B) show("open");
+      return;
+    }
+    if (state === "home") { if (b === PAD.A) { var f2 = document.activeElement; if (f2 && vOpen.contains(f2) && f2.matches("button")) padPress(f2); else openRing(); } }
+    else if (state === "select") { if (b === PAD.A) choose(ringFront < 0 ? Math.floor(SHELF_N / 2) : ringFront); else if (b === PAD.B) { cancelAnimationFrame(ringRaf); paintHome(); } }
+    else if (state === "inspect") { if (b === PAD.A) padPress($("#openBtn")); else if (b === PAD.X) padPress($("#turnBtn")); else if (b === PAD.B) back(); }
+    else if (state === "stack" || state === "flipping") { if (b === PAD.A) tapTop(); else if (b === PAD.Y) revealAll(); }
+    else if (state === "summary") { if (b === PAD.A) { var f3 = document.activeElement; if (f3 && vOpen.contains(f3) && f3 !== againBtn) padPress(f3); else padPress(againBtn); } else if (b === PAD.B) paintHome(); else if (b === PAD.X) show("binder"); }
+  }
+  /* The sticks tilt the pack in your hand, or the card you're looking at. */
+  function padSticks(p) {
+    var ax = p.axes || [], x = Math.abs(ax[2] || 0) > .2 ? ax[2] : 0, y = Math.abs(ax[3] || 0) > .2 ? ax[3] : 0;
+    if (state === "inspect" && modal.hidden && vBinder.hidden && !g) {
+      if (x || y) { rotY = Math.round(rotY / 180) * 180 + x * 55; rotX = -y * 16; setRot(true); padTilt = true; }
+      else if (padTilt) { padTilt = false; rotY = Math.round(rotY / 180) * 180; rotX = 0; setRot(false); }
+      return;
+    }
+    var slot = !modal.hidden ? modal.querySelector(".slot") : state === "stack" ? topEl() : null;
+    if (!slot) return;
+    var tilt = slot.querySelector(".tilt");
+    if (x || y) { tilt.classList.remove("rest"); tilt.style.setProperty("--ry", (x * 16) + "deg"); tilt.style.setProperty("--rx", (-y * 14) + "deg"); slot._padTilt = true; }
+    else if (slot._padTilt) { slot._padTilt = false; tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); }
+  }
+  function padLoop() {
+    padRaf = 0;
+    var list = pads(); if (!list.length) { padPrev = []; return; }
+    var now = performance.now(), dir = "";
+    list.forEach(function (p, n) {
+      if (p.mapping !== "standard") return; // button numbers below assume the standard layout
+      var pi = p.index, prev = padPrev[pi] || [], cur = p.buttons.map(function (b) { return b.pressed || b.value > .5; });
+      cur.forEach(function (down, i) { if (down && !prev[i] && i !== PAD.UP && i !== PAD.DOWN && i !== PAD.LEFT && i !== PAD.RIGHT) padButton(i); });
+      padPrev[pi] = cur;
+      var ax = p.axes || [];
+      if (cur[PAD.LEFT] || ax[0] < -.55) dir = "left"; else if (cur[PAD.RIGHT] || ax[0] > .55) dir = "right";
+      else if (cur[PAD.UP] || ax[1] < -.55) dir = "up"; else if (cur[PAD.DOWN] || ax[1] > .55) dir = "down";
+      if (n === 0) padSticks(p);
+    });
+    /* A held direction repeats: once, then again after a pause, then steadily. */
+    if (!dir) padRep.dir = "";
+    else if (dir !== padRep.dir) { padRep = { dir: dir, at: now + 380 }; padDir(dir); }
+    else if (now >= padRep.at) { padRep.at = now + 150; padDir(dir); }
+    padRaf = requestAnimationFrame(padLoop);
+  }
+  addEventListener("gamepadconnected", function () {
+    document.body.classList.add("pad");
+    if (!padSeen) say("Controller connected · A select · B back · X turn over · Y reveal all · LB/RB tabs", 4200);
+    padSeen = true; if (!padRaf) padRaf = requestAnimationFrame(padLoop);
+  });
+  addEventListener("gamepaddisconnected", function () { if (!pads().length) document.body.classList.remove("pad"); });
+  /* Mouse or touch after a controller puts the focus rings back the way they were. */
+  addEventListener("pointerdown", function () { document.body.classList.remove("pad"); }, true);
+  if (pads().length) { document.body.classList.add("pad"); padSeen = true; padRaf = requestAnimationFrame(padLoop); }
+
   /* ---------- boot ---------- */
   function boot() {
     var hash = (location.hash || "").replace("#", "");
@@ -924,9 +1633,9 @@ export function start(RECIPE) {
       return api.collection(PACK_ID);
     }).then(function (col) {
       applyCollection(col); paintToggles(); paintTabDot();
-      if (S.pending) { say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
+      if (S.pending) { hidePending(); say("Picking up your last pack", 2400); buildStack(Math.min(S.pending.revealed || 0, 4)); }
       else paintHome();
-      paintStatus(); show(hash === "binder" ? "binder" : "open");
+      paintStatus(); show(hash === "binder" || hash === "trade" ? hash : "open"); loadTrades();
       document.body.classList.add("ready");
     }, function (e) {
       setHud(e && e.status === 0 ? "Can't reach the server" : "Something went wrong", "Reload the page to try again");

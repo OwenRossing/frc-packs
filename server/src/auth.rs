@@ -44,10 +44,15 @@ pub fn token_from(headers: &HeaderMap) -> Option<String> {
     })
 }
 
-/// Who is asking, for counting failed sign-ins. Behind Cloudflare that's the visitor's IP; run directly (local
-/// development) everyone counts as one visitor.
+/// Who is asking, for counting failed sign-ins: the visitor's IP as Cloudflare or AWS CloudFront reports it. Run
+/// directly (local development) everyone counts as one visitor.
 pub fn visitor(headers: &HeaderMap) -> String {
-    headers.get("cf-connecting-ip").and_then(|v| v.to_str().ok()).unwrap_or("direct").to_string()
+    let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    get("cf-connecting-ip")
+        // CloudFront sends "ip:port"; the port changes per connection, so drop it.
+        .or_else(|| get("cloudfront-viewer-address").and_then(|v| v.rsplit_once(':').map(|(ip, _)| ip)))
+        .unwrap_or("direct")
+        .to_string()
 }
 
 /// The account behind this browser's session cookie, if any. `username` is None for a guest account made before
@@ -63,7 +68,7 @@ pub async fn session(c: &mut PgConnection, headers: &HeaderMap) -> sqlx::Result<
     let Some(token) = token_from(headers) else { return Ok(None) };
     let row: Option<(Uuid, Option<String>, bool, bool)> = sqlx::query_as(
         "select u.id, u.username, u.is_admin, u.disabled from sessions s join users u on u.id = s.user_id
-         where s.token_hash = $1",
+         where s.token_hash = $1 and s.created_at > now() - interval '400 days'",
     )
     .bind(hash(&token))
     .fetch_optional(c)

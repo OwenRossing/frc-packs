@@ -39,6 +39,17 @@ impl Tier {
     pub fn parse(s: &str) -> Option<Tier> {
         Tier::ORDER.into_iter().find(|t| t.as_str() == s)
     }
+
+    /// Parts for scrapping one extra copy. A boosted pack costs about five packs' worth of scrapped duplicates.
+    pub fn scrap_parts(self) -> i32 {
+        match self {
+            Tier::Common => 5,
+            Tier::Uncommon => 12,
+            Tier::Rare => 40,
+            Tier::Legendary => 150,
+            Tier::Mythic => 600,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +66,29 @@ pub struct Odds {
     pub hard: u32,
     /// Legendary or better at least every `leg_every` packs.
     pub leg_every: u32,
+    /// A boosted pack (crafted from parts). Recipes can set their own; otherwise `Boost::default()`.
+    #[serde(default)]
+    pub boosted: Boost,
+}
+
+/// Odds for a boosted pack: better slots, a better last card, and a multiplied Mythic chance. The pity meters still
+/// count and still guarantee as usual.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Boost {
+    pub slots: HashMap<Tier, f64>,
+    pub last: HashMap<Tier, f64>,
+    pub mythic_mult: f64,
+}
+
+impl Default for Boost {
+    fn default() -> Boost {
+        Boost {
+            slots: HashMap::from([(Tier::Common, 0.40), (Tier::Uncommon, 0.35), (Tier::Rare, 0.20), (Tier::Legendary, 0.05)]),
+            last: HashMap::from([(Tier::Rare, 0.60), (Tier::Legendary, 0.40)]),
+            mythic_mult: 4.0,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,7 +138,7 @@ impl Pack {
             }
         }
         let o = &recipe.odds;
-        for (name, w) in [("slots", &o.slots), ("last", &o.last)] {
+        for (name, w) in [("slots", &o.slots), ("last", &o.last), ("boosted slots", &o.boosted.slots), ("boosted last", &o.boosted.last)] {
             let sum: f64 = w.values().sum();
             if (sum - 1.0).abs() > 1e-9 {
                 bail!("pack {}: {name} odds add up to {sum}, not 1", recipe.id);

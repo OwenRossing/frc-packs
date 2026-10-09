@@ -1,0 +1,23 @@
+{
+  "name": "FRC Packs",
+  "short_name": "FRC Packs",
+  "description": "Open packs of FRC robot cards, trade with your team and collect every team from the Championship.",
+  "id": "/",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#06161d",
+  "theme_color": "#06161d",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Open packs", "url": "/#open", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Binder", "url": "/#binder", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Trades", "url": "/#trade", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

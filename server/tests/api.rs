@@ -717,3 +717,357 @@ async fn create_admin_once_and_reset_by_name() {
     db.close().await;
     sqlx::query(&format!("drop database {scratch}")).execute(&main).await.unwrap();
 }
+
+#[tokio::test]
+async fn admin_sees_and_checks_the_free_pack_rules() {
+    let (app, db) = need_db!(setup(true));
+    let (player_cookie, _) = player(&app, &db).await;
+    assert_eq!(call(&app, "GET", "/api/admin/settings", Some(&player_cookie), None).await.status, StatusCode::FORBIDDEN);
+    let admin = make_admin(&app, &db).await;
+    let got = call(&app, "GET", "/api/admin/settings", Some(&admin), None).await;
+    assert_eq!(got.status, StatusCode::OK);
+    for k in ["claimMinutes", "claimPacks", "bank", "startPacks", "boostCost"] {
+        assert!(got.body[k].is_i64(), "{k} in {}", got.body);
+    }
+    // Saving the same rules back changes nothing for the other tests sharing this database.
+    let same = call(&app, "POST", "/api/admin/settings", Some(&admin), Some(got.body.clone())).await;
+    assert_eq!((same.status, &same.body), (StatusCode::OK, &got.body));
+    for bad in [json!({ "claimMinutes": 0 }), json!({ "claimPacks": 21 }), json!({ "bank": 0 }), json!({ "startPacks": 51 })] {
+        let mut body = got.body.clone();
+        body.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        let r = call(&app, "POST", "/api/admin/settings", Some(&admin), Some(body)).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    let st = call(&app, "GET", "/api/state", Some(&admin), None).await.body;
+    assert_eq!(st["claimMs"].as_i64().unwrap(), got.body["claimMinutes"].as_i64().unwrap() * 60_000);
+    assert_eq!(st["claimPacks"], got.body["claimPacks"]);
+}
+
+#[tokio::test]
+async fn scrap_extras_for_parts_and_craft_a_boosted_pack() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let name = st["account"]["username"].as_str().unwrap().to_string();
+    let id: uuid::Uuid = sqlx::query_scalar("select id from users where username = $1").bind(&name).fetch_one(&db).await.unwrap();
+    // Three copies of a Common and two of a Rare, with serials no pack will mint.
+    let common: i32 = team_of("common", 101);
+    let rare: i32 = team_of("rare", 88);
+    let base = 1_000_000 + (rand_serial() % 1_000_000);
+    for (team, tier, n) in [(common, "common", 3), (rare, "rare", 2)] {
+        for k in 0..n {
+            sqlx::query("insert into cards (user_id, pack_id, team, tier, serial) values ($1, 'cmp26', $2, $3, $4)")
+                .bind(id)
+                .bind(team)
+                .bind(tier)
+                .bind(base + (team % 10_000) * 10 + k)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+    }
+    let first_serial = base + (common % 10_000) * 10;
+    // Scrap needs a real team in the pack.
+    let r = call(&app, "POST", "/api/scrap", Some(&c), Some(json!({ "pack": "cmp26", "num": 99_999, "count": 5 }))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::NOT_FOUND, Some("unknown_team")));
+    // Scrap all extra Commons and Rares: 2 Commons (5 each) and 1 Rare (40).
+    let r = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common", "rare"] }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["gained"].as_i64(), r.body["scrapped"].as_i64()), (Some(50), Some(3)));
+    assert_eq!(r.body["state"]["parts"], 50);
+    let kept = r.body["collection"]["cards"].as_array().unwrap().iter().find(|x| x["num"] == common).unwrap().clone();
+    assert_eq!(kept["serials"], json!([first_serial]), "the first copy is kept");
+    let again = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common", "rare"] }))).await;
+    assert_eq!(again.body["scrapped"], 0, "nothing left to scrap");
+
+    let cost: i32 = sqlx::query_scalar("select boost_cost from settings").fetch_one(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/craft", Some(&c), Some(json!({}))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_enough_parts")));
+    sqlx::query("update users set parts = $2 where id = $1").bind(id).bind(cost).execute(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/craft", Some(&c), Some(json!({}))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["parts"], 0);
+    let p = r.body["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!((p["sealed"].as_i64(), p["boosted"].as_i64()), (Some(3), Some(1)));
+    let h = call(&app, "POST", "/api/hand", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(h.body["boosted"], true, "boosted packs open first");
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(o.status, StatusCode::OK);
+    let p = o.body["state"]["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!(p["boosted"], 0);
+    let b: bool = sqlx::query_scalar("select boosted from openings where user_id = $1").bind(id).fetch_one(&db).await.unwrap();
+    assert!(b, "the opening is recorded as boosted");
+    let h = call(&app, "POST", "/api/hand", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(h.body["boosted"], false);
+}
+
+fn rand_serial() -> i32 {
+    (uuid::Uuid::new_v4().as_u128() % 1_000_000) as i32
+}
+
+/// The first team of a tier in the 2026 Championship pack.
+fn team_of(tier: &str, nth: usize) -> i32 {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data/packs/cmp26.json");
+    let recipe: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    recipe["teams"].as_array().unwrap().iter().filter(|t| t["tier"] == tier).nth(nth).unwrap()["num"].as_i64().unwrap() as i32
+}
+
+async fn give_card(db: &PgPool, user: uuid::Uuid, team: i32, tier: &str) -> i32 {
+    let serial = 2_000_000 + rand_serial();
+    sqlx::query("insert into cards (user_id, pack_id, team, tier, serial) values ($1, 'cmp26', $2, $3, $4)")
+        .bind(user)
+        .bind(team)
+        .bind(tier)
+        .bind(serial)
+        .execute(db)
+        .await
+        .unwrap();
+    serial
+}
+
+#[tokio::test]
+async fn trading_swaps_the_exact_copies() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    // Teams nobody else in the test database is likely to hold many of: take them from the middle of each tier.
+    let (x, y) = (team_of("common", 77), team_of("rare", 55));
+    let x_first = give_card(&db, a, x, "common").await;
+    let x_newest = give_card(&db, a, x, "common").await;
+    let y_serial = give_card(&db, b, y, "rare").await;
+
+    let found = call(&app, "GET", &format!("/api/players?q={}", &b_name[..6]), Some(&ca), None).await;
+    assert!(found.body.as_array().unwrap().iter().any(|n| n == b_name.as_str()), "{}", found.body);
+    let theirs = call(&app, "GET", &format!("/api/players/{b_name}/collection/cmp26"), Some(&ca), None).await;
+    assert!(theirs.body["cards"].as_array().unwrap().iter().any(|c| c["num"] == y));
+
+    let bad = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [x] }))).await;
+    assert_eq!((bad.status, bad.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_owned")), "they don't have x");
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [y] }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["outgoing"][0]["youGive"][0]["serial"], x_newest, "the newest copy is offered");
+
+    // A promised copy can't be scrapped out from under the offer.
+    let s = call(&app, "POST", "/api/scrap/extras", Some(&ca), Some(json!({ "pack": "cmp26", "tiers": ["common"] }))).await;
+    assert_eq!(s.body["scrapped"], 0);
+
+    let inbox = call(&app, "GET", "/api/trades", Some(&cb), None).await.body;
+    let t = &inbox["incoming"][0];
+    assert_eq!((t["youGive"][0]["num"].as_i64(), t["youGet"][0]["num"].as_i64()), (Some(i64::from(y)), Some(i64::from(x))));
+    let id = t["id"].as_i64().unwrap();
+    let not_mine = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&ca), Some(json!({}))).await;
+    assert_eq!(not_mine.status, StatusCode::FORBIDDEN, "only the other player can accept");
+    let ok = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    let owner = |serial: i32| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, uuid::Uuid>("select user_id from cards where pack_id = 'cmp26' and serial = $1")
+                .bind(serial)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(owner(x_newest).await, b, "B has A's newest copy, serial and all");
+    assert_eq!(owner(x_first).await, a, "A keeps the first copy");
+    assert_eq!(owner(y_serial).await, a);
+    let again = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(again.status, StatusCode::NOT_FOUND);
+
+    // Decline and cancel.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [y], "want": [x] }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    let d = call(&app, "POST", &format!("/api/trades/{id}/decline"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(d.body["recent"][0]["status"], "declined");
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [y], "want": [x] }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/trades/{id}/cancel"), Some(&cb), Some(json!({}))).await.status, StatusCode::FORBIDDEN);
+    let c = call(&app, "POST", &format!("/api/trades/{id}/cancel"), Some(&ca), Some(json!({}))).await;
+    assert_eq!((c.body["outgoing"].as_array().unwrap().len(), c.body["recent"][0]["status"].as_str()), (0, Some("cancelled")));
+}
+
+/// Trading can't duplicate a card: twenty simultaneous accepts of one offer swap it once, two offers asking for the
+/// same card can't both go through, and scrapping at the same time never touches a card in an offer.
+#[tokio::test]
+async fn trades_never_duplicate_cards() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (cc, _) = player(&app, &db).await;
+    let (a, b, c) = (user_id(&db, &ca).await, user_id(&db, &cb).await, user_id(&db, &cc).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let (x, y, z) = (team_of("common", 120), team_of("uncommon", 120), team_of("common", 121));
+    give_card(&db, a, x, "common").await;
+    let y_serial = give_card(&db, b, y, "uncommon").await;
+    give_card(&db, b, y, "uncommon").await; // B has two copies of y, so scrapping has something to try
+    give_card(&db, c, z, "common").await;
+    let total = |db: PgPool| async move {
+        sqlx::query_scalar::<_, i64>("select count(*) from cards where pack_id = 'cmp26' and team = any($1)")
+            .bind(vec![x, y, z])
+            .fetch_one(&db)
+            .await
+            .unwrap()
+    };
+    let before = total(db.clone()).await;
+
+    // A and C both ask B for the same (newest) copy of y.
+    let ra = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [x], "want": [y] }))).await;
+    let rc = call(&app, "POST", "/api/trades", Some(&cc), Some(json!({ "to": b_name, "pack": "cmp26", "give": [z], "want": [y] }))).await;
+    let (ta, tc) = (ra.body["outgoing"][0]["id"].as_i64().unwrap(), rc.body["outgoing"][0]["id"].as_i64().unwrap());
+    assert_eq!(ra.body["outgoing"][0]["youGet"][0]["serial"], rc.body["outgoing"][0]["youGet"][0]["serial"], "both want the same copy");
+
+    // B accepts both, twenty times each, all at once, while also scrapping.
+    let mut jobs = Vec::new();
+    for i in 0..40 {
+        let (app, cb) = (app.clone(), cb.clone());
+        let id = if i % 2 == 0 { ta } else { tc };
+        jobs.push(tokio::spawn(async move { call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await.status }));
+    }
+    for _ in 0..5 {
+        let (app, cb) = (app.clone(), cb.clone());
+        jobs.push(tokio::spawn(async move {
+            call(&app, "POST", "/api/scrap/extras", Some(&cb), Some(json!({ "pack": "cmp26", "tiers": ["uncommon"] }))).await.status
+        }));
+    }
+    let mut ok = 0;
+    for j in jobs {
+        let st = j.await.unwrap();
+        assert!(st != StatusCode::INTERNAL_SERVER_ERROR, "no request may fail with a server error (deadlock)");
+        if st == StatusCode::OK {
+            ok += 1;
+        }
+    }
+    assert!(ok >= 1);
+    let accepted: i64 = sqlx::query_scalar("select count(*) from trades where id = any($1) and status = 'accepted'")
+        .bind(vec![ta, tc])
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert!(accepted <= 1, "only one of two offers for the same card can go through");
+    let owners: Vec<uuid::Uuid> = sqlx::query_scalar("select user_id from cards where pack_id = 'cmp26' and team = $1 and serial = $2")
+        .bind(y)
+        .bind(y_serial)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert!(owners.len() <= 1, "a serial exists at most once");
+    let after = total(db.clone()).await;
+    let scrapped: i64 = sqlx::query_scalar("select coalesce(sum(parts), 0)::bigint from users where id = $1").bind(b).fetch_one(&db).await.unwrap();
+    // Cards only ever move or get scrapped; nothing is created by trading.
+    assert!(after <= before, "trading created cards: {before} -> {after}");
+    assert_eq!(before - after, scrapped / 12, "every card that left was scrapped for parts, none vanished");
+}
+
+#[tokio::test]
+async fn daily_missions_and_streak() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let id = user_id(&db, &c).await;
+    let m = |st: &Value, id: &str| st["missions"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    assert_eq!(m(&st, "open")["progress"], 0);
+    assert_eq!((st["streak"]["days"].as_i64(), st["streak"]["today"].as_bool()), (Some(0), Some(false)));
+    let early = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!((early.status, early.body["error"].as_str()), (StatusCode::CONFLICT, Some("mission_not_ready")));
+    let mut last = Value::Null;
+    for _ in 0..2 {
+        last = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
+    }
+    let st = &last["state"];
+    assert_eq!(m(st, "open")["progress"], 2);
+    assert_eq!((st["streak"]["days"].as_i64(), st["streak"]["today"].as_bool()), (Some(1), Some(true)), "first pack starts the streak");
+    let parts = st["parts"].as_i64().unwrap();
+    let got = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(got.status, StatusCode::OK);
+    assert_eq!(got.body["parts"].as_i64().unwrap(), parts + m(&got.body, "open")["reward"].as_i64().unwrap());
+    assert_eq!(m(&got.body, "open")["claimed"], true);
+    let again = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(again.status, StatusCode::CONFLICT, "a mission pays once a day");
+    assert_eq!(call(&app, "POST", "/api/missions/nope/claim", Some(&c), Some(json!({}))).await.status, StatusCode::NOT_FOUND);
+
+    // Day 7 of a streak: a boosted pack.
+    sqlx::query("update users set streak = 6, streak_day = (now() at time zone 'America/Chicago')::date - 1 where id = $1")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    call(&app, "POST", "/api/dev/pack", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
+    assert_eq!(o["streakReward"], true);
+    assert_eq!(o["state"]["streak"]["days"], 7);
+    let p = o["state"]["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap().clone();
+    assert_eq!(p["boosted"], 1, "the streak reward is a boosted pack");
+    // A missed day halves the streak instead of wiping it.
+    sqlx::query("update users set streak = 10, streak_day = (now() at time zone 'America/Chicago')::date - 3 where id = $1")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
+    assert_eq!(o["state"]["streak"]["days"], 5);
+}
+
+#[tokio::test]
+async fn profiles_showcase_and_wishlist() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, sa) = player(&app, &db).await;
+    let (cb, _) = player(&app, &db).await;
+    let a_name = sa["account"]["username"].as_str().unwrap().to_string();
+    let a = user_id(&db, &ca).await;
+    let (owned, other) = (team_of("rare", 30), team_of("common", 30));
+    let serial = give_card(&db, a, owned, "rare").await;
+    // Wishlist: add, list, remove; unknown teams refused.
+    let w = call(&app, "POST", "/api/wishlist", Some(&ca), Some(json!({ "pack": "cmp26", "team": other, "on": true }))).await;
+    assert_eq!(w.body, json!([other]));
+    assert_eq!(call(&app, "POST", "/api/wishlist", Some(&ca), Some(json!({ "pack": "cmp26", "team": 99_999, "on": true }))).await.status, StatusCode::NOT_FOUND);
+    let st = call(&app, "GET", "/api/state", Some(&ca), None).await.body;
+    assert_eq!(st["wishlist"], json!([other]));
+    // Showcase: only cards you own, at most 3.
+    assert_eq!(call(&app, "POST", "/api/showcase", Some(&ca), Some(json!({ "pack": "cmp26", "teams": [other] }))).await.status, StatusCode::CONFLICT);
+    assert_eq!(call(&app, "POST", "/api/showcase", Some(&ca), Some(json!({ "pack": "cmp26", "teams": [1, 2, 3, 4] }))).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app, "POST", "/api/showcase", Some(&ca), Some(json!({ "pack": "cmp26", "teams": [owned] }))).await.status, StatusCode::OK);
+    // Another player sees it all.
+    let p = call(&app, "GET", &format!("/api/players/{a_name}/profile/cmp26"), Some(&cb), None).await;
+    assert_eq!(p.status, StatusCode::OK, "{}", p.body);
+    assert_eq!(p.body["me"], false);
+    assert_eq!(p.body["showcase"][0]["num"], owned);
+    assert_eq!(p.body["showcase"][0]["serial"], serial);
+    assert_eq!(p.body["wishlist"], json!([other]));
+    assert!(p.body["rarest"].as_array().unwrap().iter().any(|c| c["num"] == owned));
+    let off = call(&app, "POST", "/api/wishlist", Some(&ca), Some(json!({ "pack": "cmp26", "team": other, "on": false }))).await;
+    assert_eq!(off.body, json!([]));
+    assert_eq!(call(&app, "GET", "/api/players/nobody_here_x/profile/cmp26", Some(&cb), None).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn usernames_reports_and_renames() {
+    let (app, db) = need_db!(setup(true));
+    let code = invite(&db, 1).await;
+    let r = call(&app, "POST", "/api/signup", None, Some(json!({ "code": code, "username": "sh1t_bot", "password": "hunter22!" }))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("username_not_allowed")));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let b = user_id(&db, &cb).await;
+    let bad = call(&app, "POST", "/api/report", Some(&ca), Some(json!({ "username": b_name, "reason": "spam" }))).await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "unknown reason");
+    let ok = call(&app, "POST", "/api/report", Some(&ca), Some(json!({ "username": b_name, "reason": "username", "details": "rude" }))).await;
+    assert_eq!(ok.status, StatusCode::NO_CONTENT);
+    assert_eq!(call(&app, "POST", "/api/admin/reports/1/resolve", Some(&ca), Some(json!({}))).await.status, StatusCode::FORBIDDEN);
+    let admin = make_admin(&app, &db).await;
+    let list = call(&app, "GET", "/api/admin/reports", Some(&admin), None).await.body;
+    let rep = list.as_array().unwrap().iter().find(|r| r["target"] == b_name.as_str()).unwrap().clone();
+    assert_eq!((rep["reason"].as_str(), rep["details"].as_str()), (Some("username"), Some("rude")));
+    let renamed = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let nope = call(&app, "POST", &format!("/api/admin/users/{b}/rename"), Some(&admin), Some(json!({ "username": "b1tch_x" }))).await;
+    assert_eq!(nope.body["error"], "username_not_allowed");
+    let r = call(&app, "POST", &format!("/api/admin/users/{b}/rename"), Some(&admin), Some(json!({ "username": renamed }))).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let st = call(&app, "GET", "/api/state", Some(&cb), None).await.body;
+    assert_eq!(st["account"]["username"], renamed.as_str(), "renamed and still signed in");
+    let id = rep["id"].as_i64().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/admin/reports/{id}/resolve"), Some(&admin), Some(json!({}))).await.status, StatusCode::NO_CONTENT);
+    let list = call(&app, "GET", "/api/admin/reports", Some(&admin), None).await.body;
+    assert!(list.as_array().unwrap().iter().all(|r| r["id"] != id), "resolved reports leave the list");
+}

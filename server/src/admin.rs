@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::Shared;
 use crate::accounts;
+use crate::api::{self, Rules};
 use crate::auth::Admin;
 use crate::error::{ApiError, ApiResult};
 
@@ -23,6 +24,102 @@ pub fn routes() -> Router<Shared> {
         .route("/users/{id}/packs", post(give_packs))
         .route("/users/{id}/disabled", post(set_disabled))
         .route("/users/{id}/delete", post(delete_user))
+        .route("/settings", get(settings).post(save_settings))
+        .route("/reports", get(reports))
+        .route("/reports/{id}/resolve", post(resolve_report))
+        .route("/users/{id}/rename", post(rename_user))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportOut {
+    id: i64,
+    target_id: Uuid,
+    target: String,
+    reporter: String,
+    reason: String,
+    details: String,
+    created_at: i64,
+}
+
+/// Open reports, newest first.
+async fn reports(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<ReportOut>>> {
+    let rows: Vec<(i64, Uuid, Option<String>, Option<String>, String, String, DateTime<Utc>)> = sqlx::query_as(
+        "select r.id, r.target, t.username, f.username, r.reason, r.details, r.created_at
+         from reports r join users t on t.id = r.target join users f on f.id = r.reporter
+         where r.resolved_at is null order by r.created_at desc limit 200",
+    )
+    .fetch_all(&s.db)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(id, target_id, target, reporter, reason, details, at)| ReportOut {
+                id,
+                target_id,
+                target: target.unwrap_or_else(|| "guest".into()),
+                reporter: reporter.unwrap_or_else(|| "guest".into()),
+                reason,
+                details,
+                created_at: ms(at),
+            })
+            .collect(),
+    ))
+}
+
+async fn resolve_report(State(s): State<Shared>, _admin: Admin, Path(id): Path<i64>) -> ApiResult<StatusCode> {
+    sqlx::query("update reports set resolved_at = now() where id = $1 and resolved_at is null").bind(id).execute(&s.db).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct RenameReq {
+    username: String,
+}
+
+/// Gives an account a new username (for one that's offensive). Their cards, trades and password stay.
+async fn rename_user(State(s): State<Shared>, admin: Admin, Path(id): Path<Uuid>, Json(req): Json<RenameReq>) -> ApiResult<StatusCode> {
+    other_user(&s, &admin, id).await?;
+    let name = req.username.trim();
+    if !accounts::valid_username(name) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_username"));
+    }
+    if !accounts::decent_username(name) {
+        return Err(err(StatusCode::BAD_REQUEST, "username_not_allowed"));
+    }
+    match sqlx::query("update users set username = $2 where id = $1").bind(id).bind(name).execute(&s.db).await {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if accounts::is_unique_violation(&e) => Err(err(StatusCode::CONFLICT, "username_taken")),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The free-pack rules: how often, how many, how many missed timers wait, and how many packs new accounts get.
+async fn settings(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Rules>> {
+    Ok(Json(api::rules(&s.db).await?))
+}
+
+/// Changes the free-pack rules for everyone from the next claim on. A shorter timer takes effect at once: nobody's
+/// next free pack is further away than one new timer.
+async fn save_settings(State(s): State<Shared>, _admin: Admin, Json(r): Json<Rules>) -> ApiResult<Json<Rules>> {
+    if !r.valid() {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
+    }
+    let mut tx = s.db.begin().await?;
+    sqlx::query("update settings set claim_minutes = $1, claim_packs = $2, bank = $3, start_packs = $4, boost_cost = $5, donate_url = $6")
+        .bind(r.claim_minutes)
+        .bind(r.claim_packs)
+        .bind(r.bank)
+        .bind(r.start_packs)
+        .bind(r.boost_cost)
+        .bind(&r.donate_url)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("update users set next_claim_at = now() + $1 * interval '1 minute' where next_claim_at > now() + $1 * interval '1 minute'")
+        .bind(f64::from(r.claim_minutes))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(r))
 }
 
 fn err(status: StatusCode, code: &'static str) -> ApiError {
@@ -248,6 +345,11 @@ async fn set_disabled(
     sqlx::query("update users set disabled = $2 where id = $1").bind(id).bind(req.disabled).execute(&mut *tx).await?;
     if req.disabled {
         sqlx::query("delete from sessions where user_id = $1").bind(id).execute(&mut *tx).await?;
+        // Their open trade offers, both ways, are called off.
+        sqlx::query("update trades set status = 'cancelled', decided_at = now() where status = 'open' and (from_user = $1 or to_user = $1)")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
@@ -295,7 +397,8 @@ pub async fn create_admin(
     let password = accounts::new_password();
     let hash = accounts::hash(password.clone()).await;
     let mut c = db.acquire().await?;
-    match accounts::create(&mut c, username, &hash, None, true, start_pack, crate::api::START_PACKS).await {
+    let start = crate::api::rules(&mut *c).await?.start_packs;
+    match accounts::create(&mut c, username, &hash, None, true, start_pack, start).await {
         Ok(_) => Ok((username.to_string(), Some(password))),
         Err(e) if accounts::is_unique_violation(&e) => {
             anyhow::bail!("an account named {username} already exists; pick another name: create-admin <name>")
