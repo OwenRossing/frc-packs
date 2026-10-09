@@ -131,6 +131,24 @@ export function start(RECIPE) {
     },
     tease: function (tier) { if (tier === "rare") { blip(1318, .12, "sine", .03); buzz(12); } else { blip(1318, .14, "sine", .04); blip(1760, .14, "sine", .03, .09); buzz([15, 40, 15]); } },
     promote: function () { [523, 659, 784, 1046, 1318].forEach(function (f, i) { blip(f, .18, "triangle", .06, i * .05); }); buzz([20, 20, 20, 20, 60]); },
+    /* Two heartbeats while the room goes dark before a Mythic flips. */
+    heartbeat: function () {
+      if (S.muted) return; var a = actx(); if (!a) return;
+      [0, .26, .78, 1.04].forEach(function (d, i) {
+        var t = a.currentTime + d, o = a.createOscillator(), g = a.createGain();
+        o.type = "sine"; o.frequency.setValueAtTime(i % 2 ? 58 : 66, t); o.frequency.exponentialRampToValueAtTime(38, t + .18);
+        g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(i % 2 ? .22 : .3, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .22);
+        o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + .25);
+      });
+      buzz([45, 160, 35, 340, 45, 160, 35]);
+    },
+    /* The Mythic itself: a bright rising arpeggio over a low swell, then sparkles. */
+    mythic: function () {
+      chord([523, 659, 784, 988, 1046, 1318, 1568, 1976], .06, "triangle", .055);
+      blip(131, 1.8, "sine", .1); blip(196, 1.6, "sine", .06, .05);
+      [2637, 3136, 2349, 3520, 2794].forEach(function (f, i) { blip(f, .09, "sine", .025, .55 + i * .11); });
+      buzz([60, 40, 60, 40, 220]);
+    },
     riser: function () { if (S.muted) return; var a = actx(); if (!a) return; var t = a.currentTime, o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(880, t + .45); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t + .4); g.gain.exponentialRampToValueAtTime(.0001, t + .5); o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + .55); buzz([10, 30, 10, 30, 10, 30]); },
     mine: function () { chord([659, 784, 988, 1318], .07, "triangle", .08); buzz([40, 40, 80]); },
     whoosh: function () { noise(.18, .18, 900); },
@@ -278,7 +296,7 @@ export function start(RECIPE) {
       '<div class="hdr"><span class="tn"><small>TEAM</small>' + t.num + '</span><span class="hp"><small>EPA</small>' + (t.epa == null ? "–" : Math.round(t.epa)) + '</span><span class="nm">' + esc(t.name) + '</span></div>' +
       (full ? "" : art) +
       '<div class="sub-l"><span>' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span>CMP 2026</span></div>' +
-      (full && t.photo ? '<div class="fphoto">' + photoHTML(t.num) + '</div>' : '') +
+      (full && t.photo ? '<div class="fwrap"><div class="fphoto">' + photoHTML(t.num) + '</div>' + (c.tier === "mythic" ? '<span class="crest">★ Mythic ★</span>' : '') + '</div>' : '') +
       '<div class="moves">' +
         '<div class="mv"><i></i><span>Champs record</span><b>' + esc(t.wl) + '</b></div>' +
         '<div class="mv"><i></i><span>Champs EPA rank</span><b>#' + t.rank + '</b></div>' +
@@ -798,9 +816,17 @@ export function start(RECIPE) {
   function showRibbon(el) { if (el._ribbon) el._ribbon.hidden = false; }
   function reveal(el) {
     if (el._c.tier !== "mythic" || RM) return doReveal(el);
-    /* A Mythic gets a beat of build-up before the flip. */
-    state = "flipping"; if (el._promo) promoteCard(el); sfx.riser();
-    setTimeout(function () { if (state === "flipping") doReveal(el); }, 450);
+    /* A Mythic gets a moment of its own: the room goes dark, the card shakes and leaks rainbow light, two heartbeats,
+       then it flips. A tap skips ahead. */
+    state = "flipping"; if (el._promo) promoteCard(el);
+    document.body.classList.add("mythic-dark"); el.classList.add("charging"); sfx.heartbeat();
+    setHud("…", "");
+    el._skip = function () {
+      if (el._charged) return; el._charged = true; el._skip = null; el.classList.remove("charging");
+      if (state === "flipping") doReveal(el);
+    };
+    setTimeout(function () { if (el._skip) sfx.riser(); }, 1000);
+    setTimeout(function () { if (el._skip) el._skip(); }, 1500);
   }
   function doReveal(el) {
     var c = el._c, T = TIERS[c.tier], t = BY_NUM[c.num];
@@ -812,24 +838,39 @@ export function start(RECIPE) {
       var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
       if (c.tier === "rare") { burst(x, y, T.parts, T.color, T.pow); shake(false); }
       else if (c.tier === "legendary") { burst(x, y, T.parts, T.color, T.pow); burst(x, y, 60, null, 9, true); shake(true); flash(); takeover("rgba(190,140,255,.16)"); say("LEGENDARY · " + t.name + " (" + t.num + ")", 3000); }
-      else if (c.tier === "mythic") {
-        takeover("rgba(120,255,240,.16)"); flash(); shake(true); burst(x, y, 120, null, 14, true);
-        setTimeout(function () { burst(x - 60, y - 40, 90, null, 11, true); burst(x + 60, y - 40, 90, null, 11, true); }, 350);
-        setTimeout(function () { burst(x, y - 80, 140, null, 12, true); }, 800);
-        say("MYTHIC PULL · " + t.name + " (" + t.num + ") · No. " + c.serial, 5200);
-      }
+      else if (c.tier === "mythic") mythicMoment(el, c, t, x, y);
       setHud(T.label + (c.isNew ? " · new" : ""), NEXT);
       if (isMine(c)) setTimeout(function () { celebrateMine(el); }, c.tier === "mythic" || c.tier === "legendary" ? 1600 : 200);
     }, 380);
     setTimeout(function () { if (state === "flipping") state = "stack"; }, RM ? 400 : 850);
   }
+  /* The flip of a Mythic: white flash, rainbow shockwaves, MYTHIC stamped in gold over the card, star bursts, and a
+     rainbow aura that stays until you move on. The serial number says how many were ever pulled before it. */
+  function ordinal(n) { var s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+  function mythicMoment(el, c, t, x, y) {
+    document.body.classList.remove("mythic-dark"); document.body.classList.add("mythic-aura");
+    takeover("rgba(255,225,120,.2)"); flash(); shake(true); sfx.mythic();
+    [0, 180, 420].forEach(function (d, i) {
+      setTimeout(function () { var r = document.createElement("i"); r.className = "mring" + (i === 1 ? " gold" : ""); r.style.left = x + "px"; r.style.top = y + "px"; document.body.appendChild(r); setTimeout(function () { r.remove(); }, 1300); }, d);
+    });
+    var title = document.createElement("div"); title.className = "mtitle"; title.setAttribute("aria-hidden", "true"); title.style.setProperty("--ty", (y - el.getBoundingClientRect().height * .12) + "px");
+    title.innerHTML = "MYTHIC".split("").map(function (ch, i) { return '<span style="--i:' + i + '">' + ch + '</span>'; }).join("");
+    document.body.appendChild(title); setTimeout(function () { title.remove(); }, 2900);
+    burst(x, y, 140, null, 15, true);
+    setTimeout(function () { burst(x - 70, y - 50, 90, "#ffd34d", 11); burst(x + 70, y - 50, 90, "#ffd34d", 11); }, 300);
+    setTimeout(function () { burst(x, y - 90, 160, null, 13, true); }, 750);
+    setTimeout(function () { burst(x, y, 80, "#fff6c2", 9); }, 1250);
+    var n = +c.serial;
+    say("MYTHIC · " + t.name + " (" + t.num + ") · " + (n === 1 ? "the first one ever pulled" : n > 1 ? "only the " + ordinal(n) + " ever pulled" : "No. " + c.serial), 6000);
+  }
+  function endMythic() { document.body.classList.remove("mythic-dark", "mythic-aura"); }
   function takeover(ray) { document.documentElement.style.setProperty("--ray", ray); document.body.classList.add("takeover"); }
   function fling(el, dir) {
     if (state !== "stack" || el !== topEl()) return;
     state = "flinging"; sfx.whoosh();
     el.classList.remove("drag"); el.classList.add("gone");
     el.style.transform = "translate(" + (dir * 130) + "vw, -10vh) rotate(" + (dir * 30) + "deg)";
-    document.body.classList.remove("takeover");
+    document.body.classList.remove("takeover"); endMythic();
     stash(deck[idx]); save();
     idx++; S.pending.revealed = idx; api.progress(S.pending.id, idx).catch(function () {}); paintCounter();
     setTimeout(function () {
@@ -837,7 +878,12 @@ export function start(RECIPE) {
       if (idx >= deck.length) summary(); else { state = "stack"; armTop(); }
     }, RM ? 60 : 380);
   }
-  function tapTop() { var el = topEl(); if (!el || state !== "stack") return; if (el._hidden) reveal(el); else fling(el, 1); }
+  function tapTop() {
+    var el = topEl(); if (!el) return;
+    if (state === "flipping" && el._skip) return el._skip(); // tap through a Mythic's build-up
+    if (state !== "stack") return;
+    if (el._hidden) reveal(el); else fling(el, 1);
+  }
   var sg = null;
   stackEl.tabIndex = 0; stackEl.setAttribute("role", "button"); stackEl.setAttribute("aria-label", "Card stack. Enter flips or deals the next card.");
   stackEl.addEventListener("pointerdown", function (e) {
@@ -878,7 +924,7 @@ export function start(RECIPE) {
   function summary(skipped) {
     var sets = (S.pending && S.pending.sets) || [], fromR = !stackView.hidden && stackEl.getBoundingClientRect();
     deck.forEach(stash); save();
-    state = "summary"; if (S.pending) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover");
+    state = "summary"; if (S.pending) api.progress(S.pending.id, 5).catch(function () {}); S.pending = null; document.body.classList.remove("takeover"); endMythic();
     summaryEl.innerHTML = "";
     deck.forEach(function (c, i) {
       var el = cardEl(c, { faceUp: true, button: true, ribbon: true }); el.style.setProperty("--n", i); showRibbon(el);
@@ -1498,7 +1544,7 @@ export function start(RECIPE) {
     armed = 0; resetBtn.textContent = "Reset collection";
     api.dev.reset().then(function (st) {
       applyState(st); S.inv = {}; S.sets = {}; S.unseen = {}; S.pending = null; save(); paintToggles(); paintTabDot(); paintTeamPick();
-      document.body.classList.remove("takeover"); paintHome(); if (!vBinder.hidden) paintBinder();
+      document.body.classList.remove("takeover"); endMythic(); paintHome(); if (!vBinder.hidden) paintBinder();
     }, offline);
   };
   paintToggles();

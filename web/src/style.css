@@ -269,6 +269,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .phw .ph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 50%; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none;
   transform: translate(calc((var(--mx, 50) - 50) * -.05%), calc((var(--my, 50) - 50) * -.05%)) scale(1.02); transition: transform .12s ease-out; }
 /* Legendary and Mythic: the photo in a glowing frame under the header, over the rays. */
+.fwrap { position: relative; z-index: 1; flex: none; }
 .fphoto { position: relative; z-index: 1; flex: none; aspect-ratio: 4 / 3; margin: calc(var(--cw) * .01) calc(var(--cw) * .06) 0; border-radius: calc(var(--cw) * .03); overflow: hidden;
   box-shadow: 0 0 0 calc(var(--cw) * .012) var(--gem), 0 0 calc(var(--cw) * .08) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
 /* The header: TEAM 254 on the left set like EPA 338 on the right, the name on its own line under them. */
@@ -795,3 +796,55 @@ body.playing .daily { display: none; }
 .inner:not(.full) .art { width: 94%; align-self: center; }
 .tn { font-size: calc(var(--cw) * .118); }
 .fphoto { margin-inline: calc(var(--cw) * .075); }
+
+/* ---------- Mythic: looks like nothing else, and arrives like nothing else ---------- */
+/* Gold foil team number and name that shimmer, a crest on the photo frame, and stars drifting up the card. */
+.card[data-tier="mythic"] .tn, .card[data-tier="mythic"] .nm {
+  background: linear-gradient(100deg, #fff3b0 0%, #ffd34d 22%, #fffdf0 38%, #ffb238 56%, #fff3b0 74%, #ffd34d 100%); background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent !important; -webkit-text-fill-color: transparent;
+  text-shadow: none !important; filter: drop-shadow(0 2px 2px rgba(0,0,0,.65)); animation: goldshine 3.6s linear infinite; }
+.card[data-tier="mythic"] .tn small { opacity: 1; }
+@keyframes goldshine { to { background-position: -250% 0; } }
+.crest { position: absolute; left: 50%; top: 0; z-index: 3; transform: translate(-50%, -55%); padding: calc(var(--cw) * .008) calc(var(--cw) * .04);
+  border-radius: 99px; background: linear-gradient(180deg, #fff6c2, #ffd34d 45%, #d18a00); color: #3a2400; white-space: nowrap;
+  font-family: var(--display); font-size: calc(var(--cw) * .046); letter-spacing: .14em; text-transform: uppercase;
+  box-shadow: 0 0 0 calc(var(--cw) * .006) #7a4b00, 0 0 calc(var(--cw) * .06) rgba(255,211,77,.85), 0 2px 4px rgba(0,0,0,.5); }
+.card[data-tier="mythic"] .inner::after { content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; border-radius: inherit; mix-blend-mode: screen; opacity: .85;
+  background-image: radial-gradient(circle, rgba(255,248,205,.95) 0 1.3px, transparent 2.2px), radial-gradient(circle, rgba(150,255,235,.9) 0 1px, transparent 1.8px);
+  background-size: 37px 53px, 23px 41px; animation: starsup 8s linear infinite;
+  -webkit-mask-image: linear-gradient(to top, transparent, #000 25%, #000 75%, transparent); mask-image: linear-gradient(to top, transparent, #000 25%, #000 75%, transparent); }
+@keyframes starsup { to { background-position: 0 -530px, 0 -410px; } }
+/* Everywhere a Mythic sits (binder, trades), it glows. */
+.slot:has(.card[data-tier="mythic"]) .shade { box-shadow: 0 0 calc(var(--cw) * .12) rgba(255,211,77,.35), 0 0 calc(var(--cw) * .25) rgba(60,255,220,.25); }
+
+/* The build-up: the room goes dark and the face-down card shakes harder and harder, leaking rainbow light. */
+body.mythic-dark .dim { opacity: 1; background: rgba(0,0,0,.9); transition: opacity .45s, background .45s; }
+body.mythic-dark .hud, body.mythic-dark .counter, body.mythic-dark .stack .slot:not(.charging), body.mythic-dark header, body.mythic-dark #status, body.mythic-dark #daily, body.mythic-dark #skipBtn { opacity: .12; transition: opacity .4s; }
+.slot.charging { z-index: 5; }
+.slot.charging .float { animation: chargeup 1.5s cubic-bezier(.4, 0, .2, 1) forwards; }
+.slot.charging .tilt { animation: tremble .1s linear infinite; }
+.slot.charging::before { content: ""; position: absolute; inset: -12% -18%; z-index: -1; border-radius: 40px; pointer-events: none; filter: blur(26px);
+  background: conic-gradient(from var(--spin, 0deg), #ff3d9a, #ffe14a, #38ffd2, #4d7bff, #c04dff, #ff3d9a); animation: spinframe 1.1s linear infinite, leak 1s cubic-bezier(.2, .7, .3, 1) forwards; }
+@keyframes chargeup { to { transform: scale(1.1); } }
+@keyframes tremble { 0% { transform: translate(0, 0) rotate(0); } 25% { transform: translate(-2px, 1px) rotate(-.7deg); } 50% { transform: translate(2px, -1px) rotate(.7deg); } 75% { transform: translate(-1px, -2px) rotate(-.3deg); } 100% { transform: translate(0, 0) rotate(0); } }
+@keyframes leak { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1.12); } }
+
+/* The flip: shockwaves, MYTHIC stamped in gold, and a rainbow aura that stays until you move on. */
+.mring { position: fixed; z-index: 70; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%; pointer-events: none;
+  border: 4px solid rgba(255,255,255,.95); box-shadow: 0 0 24px 6px rgba(60,255,220,.85), inset 0 0 18px rgba(255,61,154,.7); animation: mring 1.2s cubic-bezier(.1, .7, .3, 1) forwards; }
+.mring.gold { border-color: #ffe14a; box-shadow: 0 0 30px 10px rgba(255,211,77,.8), inset 0 0 18px rgba(255,255,255,.7); }
+@keyframes mring { from { transform: scale(.2); opacity: 1; } to { transform: scale(16); opacity: 0; } }
+.mtitle { position: fixed; left: 0; right: 0; top: var(--ty, 40vh); z-index: 75; transform-origin: 50% 50%; margin-top: -.5em; display: flex; justify-content: center; gap: .02em; pointer-events: none;
+  font-family: var(--display); font-size: clamp(52px, 15vw, 128px); line-height: 1; letter-spacing: .06em;
+  filter: drop-shadow(0 5px 0 #7a4b00) drop-shadow(0 0 26px rgba(255,211,77,.85)); animation: mtitle 2.9s ease-out forwards; }
+.mtitle span { display: inline-block; background: linear-gradient(180deg, #fffbe0 8%, #ffe14a 45%, #f0a000 70%, #ffd34d 92%); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
+  animation: stamp .55s cubic-bezier(.2, 1.4, .4, 1) both; animation-delay: calc(var(--i) * 70ms); }
+@keyframes stamp { from { transform: scale(2.8) rotate(-10deg); opacity: 0; } 60% { opacity: 1; } to { transform: none; opacity: 1; } }
+@keyframes mtitle { 0%, 78% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-24px) scale(1.04); } }
+body.mythic-aura .rays { opacity: 1; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0 7deg, rgba(255,61,154,.16) 7deg 9deg, rgba(255,225,74,.18) 9deg 11deg, rgba(56,255,210,.16) 11deg 13deg, rgba(77,123,255,.14) 13deg 15deg); animation-duration: 16s; }
+body.mythic-aura .bg { filter: saturate(1.6) hue-rotate(20deg); transition: filter 1s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card[data-tier="mythic"] .tn, .card[data-tier="mythic"] .nm, .card[data-tier="mythic"] .inner::after, .slot.charging .float, .slot.charging .tilt, .slot.charging::before, .mtitle, .mtitle span, .mring { animation: none !important; }
+  .mring { display: none; }
+}
