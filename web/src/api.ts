@@ -86,8 +86,25 @@ export interface State {
   devTools: boolean;
   missions: Mission[];
   streak: Streak;
+  wishlist: number[];
+  showcase: number[];
   packs: PackState[];
   pending: Opening | null;
+}
+
+export interface Profile {
+  username: string;
+  me: boolean;
+  joined: number;
+  teams: number;
+  total: number;
+  cards: number;
+  sets: number;
+  trades: number;
+  streak: number;
+  showcase: CardRef[];
+  rarest: CardRef[];
+  wishlist: number[];
 }
 
 export interface Mission {
@@ -250,6 +267,12 @@ export const api = {
   pushKey: () => call<{ key: string | null }>("GET", "/api/push/key"),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => call<void>("POST", "/api/push/subscribe", sub),
   pushUnsubscribe: (endpoint: string) => call<void>("POST", "/api/push/unsubscribe", { endpoint }),
+  /** A player's profile: showcase, stats, rarest cards, wishlist. */
+  profile: (name: string, pack: string) => call<Profile>("GET", `/api/players/${encodeURIComponent(name)}/profile/${encodeURIComponent(pack)}`),
+  /** Put a team on your wishlist or take it off; returns the whole list. */
+  setWish: (pack: string, team: number, on: boolean) => call<number[]>("POST", "/api/wishlist", { pack, team, on }),
+  /** Pin up to 3 teams you own to your profile. */
+  setShowcase: (pack: string, teams: number[]) => call<number[]>("POST", "/api/showcase", { pack, teams }),
   /** Collect a finished daily mission's parts. */
   claimMission: (id: string) => call<State>("POST", `/api/missions/${encodeURIComponent(id)}/claim`),
   /** Spend parts on a boosted pack. */
@@ -305,6 +328,7 @@ export function explain(e: unknown): string {
     bad_trade: "Pick 1 to 5 different cards on each side.",
     not_your_trade: "That trade isn't yours to answer.",
     mission_not_ready: "That mission isn't finished yet.",
+    wishlist_full: "Your wishlist is full (50). Take something off first.",
   };
   return words[e.code] ?? "Something went wrong. Try again.";
 }

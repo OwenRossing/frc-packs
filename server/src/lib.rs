@@ -7,6 +7,7 @@ pub mod auth;
 pub mod error;
 pub mod missions;
 pub mod packs;
+pub mod profiles;
 pub mod push;
 pub mod roll;
 pub mod trades;
@@ -54,7 +55,7 @@ pub fn app(db: PgPool, cfg: Config) -> anyhow::Result<Router> {
     });
     let mut router = Router::new()
         .nest("/api/admin", admin::routes())
-        .nest("/api", api::routes().merge(trades::routes()).merge(push::routes()).merge(missions::routes()))
+        .nest("/api", api::routes().merge(trades::routes()).merge(push::routes()).merge(missions::routes()).merge(profiles::routes()))
         .nest_service("/photos", ServeDir::new(cfg.data_dir.join("photos")))
         .nest_service("/packs", ServeDir::new(cfg.data_dir.join("packs")));
     if let Some(web) = cfg.web_dir {

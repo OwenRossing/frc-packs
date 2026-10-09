@@ -1007,3 +1007,35 @@ async fn daily_missions_and_streak() {
     let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
     assert_eq!(o["state"]["streak"]["days"], 5);
 }
+
+#[tokio::test]
+async fn profiles_showcase_and_wishlist() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, sa) = player(&app, &db).await;
+    let (cb, _) = player(&app, &db).await;
+    let a_name = sa["account"]["username"].as_str().unwrap().to_string();
+    let a = user_id(&db, &ca).await;
+    let (owned, other) = (team_of("rare", 30), team_of("common", 30));
+    let serial = give_card(&db, a, owned, "rare").await;
+    // Wishlist: add, list, remove; unknown teams refused.
+    let w = call(&app, "POST", "/api/wishlist", Some(&ca), Some(json!({ "pack": "cmp26", "team": other, "on": true }))).await;
+    assert_eq!(w.body, json!([other]));
+    assert_eq!(call(&app, "POST", "/api/wishlist", Some(&ca), Some(json!({ "pack": "cmp26", "team": 99_999, "on": true }))).await.status, StatusCode::NOT_FOUND);
+    let st = call(&app, "GET", "/api/state", Some(&ca), None).await.body;
+    assert_eq!(st["wishlist"], json!([other]));
+    // Showcase: only cards you own, at most 3.
+    assert_eq!(call(&app, "POST", "/api/showcase", Some(&ca), Some(json!({ "pack": "cmp26", "teams": [other] }))).await.status, StatusCode::CONFLICT);
+    assert_eq!(call(&app, "POST", "/api/showcase", Some(&ca), Some(json!({ "pack": "cmp26", "teams": [1, 2, 3, 4] }))).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(call(&app, "POST", "/api/showcase", Some(&ca), Some(json!({ "pack": "cmp26", "teams": [owned] }))).await.status, StatusCode::OK);
+    // Another player sees it all.
+    let p = call(&app, "GET", &format!("/api/players/{a_name}/profile/cmp26"), Some(&cb), None).await;
+    assert_eq!(p.status, StatusCode::OK, "{}", p.body);
+    assert_eq!(p.body["me"], false);
+    assert_eq!(p.body["showcase"][0]["num"], owned);
+    assert_eq!(p.body["showcase"][0]["serial"], serial);
+    assert_eq!(p.body["wishlist"], json!([other]));
+    assert!(p.body["rarest"].as_array().unwrap().iter().any(|c| c["num"] == owned));
+    let off = call(&app, "POST", "/api/wishlist", Some(&ca), Some(json!({ "pack": "cmp26", "team": other, "on": false }))).await;
+    assert_eq!(off.body, json!([]));
+    assert_eq!(call(&app, "GET", "/api/players/nobody_here_x/profile/cmp26", Some(&cb), None).await.status, StatusCode::NOT_FOUND);
+}

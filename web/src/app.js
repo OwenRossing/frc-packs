@@ -67,6 +67,7 @@ export function start(RECIPE) {
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
     S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
+    if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
     S.demo = st.demo; S.devTools = st.devTools;
   }
   function applyCollection(col) {
@@ -919,7 +920,11 @@ export function start(RECIPE) {
         /* A card you don't own is blurred: you can see its rarity and who it is, not the card itself. */
         var gh = cardEl({ num: t.num, tier: t.tier }, { faceUp: true }); gh.classList.add("ghost");
         var tag = document.createElement("div"); tag.className = "ghost-tag"; tag.innerHTML = "<b>" + t.num + "</b>" + esc(t.name) + "<small>Not yet</small>";
-        gh.appendChild(tag); gh.setAttribute("aria-label", t.name + ", team " + t.num + ", " + TIERS[t.tier].label + ", not owned yet");
+        gh.appendChild(tag); gh.setAttribute("aria-label", t.name + ", team " + t.num + ", " + TIERS[t.tier].label + ", not owned yet" + (wished(t.num) ? ", on your wishlist" : ""));
+        gh.setAttribute("role", "button"); gh.tabIndex = 0;
+        if (wished(t.num)) { var wl = document.createElement("span"); wl.className = "tr-want mine"; wl.textContent = "♥ Wishlist"; gh.appendChild(wl); }
+        gh.addEventListener("click", function () { viewCard(t.num, {}); });
+        gh.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); viewCard(t.num, {}); } });
         gridEl.appendChild(gh); return;
       }
       var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
@@ -1043,6 +1048,7 @@ export function start(RECIPE) {
       };
       row.appendChild(cp);
     }
+    row.appendChild(pinButton(t.num));
     modalIn.appendChild(row);
     var hc = heldCopies(), free = serials.filter(function (x) { return !hc[t.num + ":" + x]; }).length;
     if (serials.length > 1 && free < 2) {
@@ -1083,9 +1089,72 @@ export function start(RECIPE) {
     modalIn.appendChild(facts);
     var row = document.createElement("div"); row.className = "cta-row";
     var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+    row.appendChild(mine ? pinButton(num) : wishButton(num));
     modalIn.appendChild(row);
     lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
   }
+  /* ---------- wishlist, showcase and profiles ---------- */
+  function wished(n) { return (S.wishlist || []).indexOf(n) >= 0; }
+  function wishButton(num) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta ghost";
+    var paint = function () { b.textContent = wished(num) ? "♥ On your wishlist" : "♡ Add to wishlist"; b.setAttribute("aria-pressed", String(wished(num))); };
+    paint();
+    b.onclick = function () {
+      b.disabled = true;
+      api.setWish(PACK_ID, num, !wished(num)).then(function (list) {
+        S.wishlist = list; b.disabled = false; paint(); sfx.tick();
+        if (!vBinder.hidden) paintBinder(); if (!vTrade.hidden) paintGrid();
+      }, function (e) { b.disabled = false; offline(e); });
+    };
+    return b;
+  }
+  function pinButton(num) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta ghost";
+    var pinned = function () { return (S.showcase || []).indexOf(num) >= 0; };
+    var paint = function () { b.textContent = pinned() ? "★ On your profile" : "☆ Pin to profile"; b.setAttribute("aria-pressed", String(pinned())); };
+    paint();
+    b.onclick = function () {
+      var list = (S.showcase || []).filter(function (n) { return n !== num; });
+      if (!pinned()) { if (list.length >= 3) return say("Your profile shows 3 cards. Unpin one first (open it and tap On your profile).", 3200); list.push(num); }
+      b.disabled = true;
+      api.setShowcase(PACK_ID, list).then(function (l) { S.showcase = l; b.disabled = false; paint(); sfx.tick(); }, function (e) { b.disabled = false; offline(e); });
+    };
+    return b;
+  }
+  /* A player's profile: who they are, how far their collection is, their showcase, rarest pulls and wishlist. */
+  function openProfile(name) {
+    if (!name) return;
+    api.profile(name, PACK_ID).then(function (p) {
+      var pct = p.total ? Math.round(p.teams / p.total * 100) : 0, joined = new Date(p.joined).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+      var cards = function (list, empty, max) {
+        var html = list.slice(0, max).filter(function (c) { return BY_NUM[c.num || c]; }).map(function (c) {
+          var n = c.num || c; return '<button type="button" class="tr-view" data-num="' + n + '"' + (c.serial ? ' data-serial="' + c.serial + '"' : '') + '>' + miniCard(n, c.serial ? { serial: c.serial } : {}) + '</button>';
+        }).join("");
+        return html || empty;
+      };
+      var slots = ""; for (var i = p.showcase.length; i < 3; i++) slots += '<div class="pf-empty">' + (p.me ? "Pin a card from your binder" : "Empty") + '</div>';
+      modalIn.innerHTML = '<div class="profile">' +
+        '<div class="pf-head">' + avatar(p.username) + '<div><h2>' + esc(p.username) + '</h2><p>Joined ' + joined + (p.streak ? ' · ' + p.streak + '-day streak' : '') + '</p></div></div>' +
+        '<div class="pf-stats"><div><b>' + pct + '%</b><small>collected</small></div><div><b>' + p.teams + '</b><small>teams</small></div><div><b>' + p.sets + '</b><small>sets</small></div><div><b>' + p.trades + '</b><small>trades</small></div></div>' +
+        '<section class="pf-sec"><h3>Showcase</h3><div class="pf-row">' + cards(p.showcase, "", 3) + slots + '</div></section>' +
+        '<section class="pf-sec"><h3>Rarest pulls</h3><div class="pf-row">' + cards(p.rarest, '<p class="hint">No cards yet.</p>', 3) + '</div></section>' +
+        '<section class="pf-sec"><h3>Wishlist' + (p.wishlist.length ? " · " + p.wishlist.length : "") + '</h3>' + (p.wishlist.length ? '<div class="pf-row wide">' + cards(p.wishlist, "", 12) + '</div>' : '<p class="hint">' + (p.me ? "Tap a card you don't have in the binder to add it." : "Nothing yet.") + '</p>') + '</section>' +
+        '</div>';
+      var row = document.createElement("div"); row.className = "cta-row";
+      var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
+      if (!p.me) {
+        var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta ghost"; tr.textContent = "Trade with " + p.username;
+        tr.onclick = function () { closeModal(); show("trade"); setPane("new"); trWho.value = p.username; loadTheirs(true); };
+        row.appendChild(tr);
+      }
+      modalIn.appendChild(row);
+      Array.prototype.forEach.call(modalIn.querySelectorAll(".tr-view"), function (b) {
+        b.onclick = function () { var back = p.username; viewCard(+b.dataset.num, { serial: b.dataset.serial, from: esc(back) + "'s card." }); };
+      });
+      lastFocus = lastFocus && !modal.hidden ? lastFocus : document.activeElement; modal.hidden = false; document.body.classList.add("modal-open"); close.focus();
+    }, offline);
+  }
+  $("#myProfile").onclick = function () { openProfile(ME); };
   function closeModal() { modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = ""; if (lastFocus && lastFocus.focus) lastFocus.focus(); }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
   addEventListener("keydown", function (e) {
@@ -1207,9 +1276,10 @@ export function start(RECIPE) {
         return BY_NUM[c.num] ? '<button type="button" class="tr-view" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
       }).join("") + '</div></div>';
     };
-    el.innerHTML = '<header>' + avatar(t.with) + '<p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
+    el.innerHTML = '<header><button type="button" class="who-btn" data-who="' + esc(t.with) + '" aria-label="See ' + esc(t.with) + '\'s profile">' + avatar(t.with) + '</button><p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
       '<div class="tr-o-body">' + side("You give", t.youGive, "you") + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet, t.with) + '</div>' +
       '<p class="tr-tip">Tap a card to see it up close.</p>';
+    el.querySelector(".who-btn").onclick = function () { openProfile(t.with); };
     Array.prototype.forEach.call(el.querySelectorAll(".tr-view"), function (b) {
       b.onclick = function () { viewCard(+b.dataset.num, { serial: b.dataset.serial, from: b.dataset.whose === "you" ? "You'd give this copy." : esc(b.dataset.whose) + " would give this copy." }); };
     });
@@ -1267,6 +1337,16 @@ export function start(RECIPE) {
     }
     trFresh = {};
   }
+  var theirWish = [];
+  /* What lines up: cards they have that you want, and cards you have that they want. */
+  function paintMatch() {
+    var el = $("#trMatch"), mine = myInv();
+    if (!theirName || !theirInv) { el.hidden = true; return; }
+    var iWant = (S.wishlist || []).filter(function (n) { return theirInv[n]; }).length, theyWant = theirWish.filter(function (n) { return mine[n]; }).length;
+    el.hidden = !iWant && !theyWant;
+    el.textContent = [iWant ? theirName + " has " + iWant + " from your wishlist" : "", theyWant ? "you have " + theyWant + " they want" : ""].filter(Boolean).join(" · ") + ". They're marked below.";
+  }
+  $("#trThemBtn").onclick = function () { if (theirName) openProfile(theirName); };
   function paintTable() {
     var mine = myInv(); trGive = trGive.filter(function (n) { return mine[n]; });
     slots($("#trGiveSlots"), trGive, "give"); slots($("#trGetSlots"), trGet, "get");
@@ -1278,7 +1358,7 @@ export function start(RECIPE) {
     bar.style.setProperty("--lean", lean.toFixed(3)); bar.parentNode.hidden = !total;
     txt.textContent = !total ? "" : Math.abs(lean) < .2 ? "Looks even" : lean > 0 ? (lean > .6 ? "A big ask" : "You get more") : (lean < -.6 ? "Very generous" : "You give more");
     var ready = theirName && trGive.length && trGet.length;
-    trSend.disabled = !ready;
+    trSend.disabled = !ready; paintMatch();
     $("#trSummary").textContent = !theirName ? "Start by picking who to trade with." : !trGive.length && !trGet.length ? "Tap cards below to put them on the table." :
       !trGive.length ? "Add at least one of your cards." : !trGet.length ? "Add at least one of " + theirName + "'s cards." : "Ready to send to " + theirName + ".";
   }
@@ -1304,7 +1384,8 @@ export function start(RECIPE) {
       cell.className = "tr-cell";
       b.type = "button"; b.className = "tr-pick" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on));
       b.setAttribute("aria-label", BY_NUM[n].name + ", team " + n + ", " + TIERS[BY_NUM[n].tier].label + (inv[n] > 1 ? ", " + inv[n] + " copies" : "") + (mineSide && inv[n] === 1 ? ", your only copy" : ""));
-      b.innerHTML = miniCard(n, { count: inv[n] }) + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "");
+      b.innerHTML = miniCard(n, { count: inv[n] }) + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "") +
+        (mineSide && theirWish.indexOf(n) >= 0 ? '<span class="tr-want">They want</span>' : !mineSide && wished(n) ? '<span class="tr-want mine">♥ Your list</span>' : "");
       b.onclick = function () {
         var i = picked.indexOf(n);
         if (i >= 0) { picked.splice(i, 1); sfx.tick(); }
@@ -1329,7 +1410,8 @@ export function start(RECIPE) {
     api.playerCollection(name, PACK_ID).then(function (col) {
       if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
       if (name.toLowerCase() !== theirName.toLowerCase()) { trGet = []; trSide = "theirs"; }
-      theirName = name; theirInv = {};
+      theirName = name; theirInv = {}; theirWish = [];
+      api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; paintGrid(); paintMatch(); } }, function () {});
       col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
       $("#trSugg").innerHTML = ""; paintTable(); paintGrid();
     }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintTable(); paintGrid(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });

@@ -81,6 +81,7 @@
       <div class="msg" id="pwMsg" role="status" hidden></div>
     </form>
     <div class="line" id="installLine" hidden><span>Install the app<small id="installTxt"></small></span><button type="button" class="chip" id="installBtn" hidden>Install</button></div>
+    <div class="line"><span>My profile<small>What other players see: your showcase, stats and wishlist.</small></span><button type="button" class="chip" id="myProfile">View</button></div>
     <div class="line"><span>Notifications<small id="pushTxt">Free pack ready, trade offers and accepted trades.</small></span><button type="button" class="chip" id="pushBtn" aria-pressed="false">Off</button></div>
     <div class="line"><span>Google account<small>Sign in with Google instead of a password. Coming soon.</small></span><button type="button" class="chip" id="linkGoogle" disabled>Link</button></div>
     <div class="line" id="adminLine" hidden><span>Admin<small>Make invite codes and manage accounts.</small></span><a class="chip" href="/admin">Open panel</a></div>
@@ -203,6 +204,7 @@
           <div class="tr-whoin"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input class="input" id="trWho" placeholder="Search players by username" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="20"></div>
           <div class="tr-sugg" id="trSugg" aria-live="polite"></div>
         </div>
+        <p class="tr-match" id="trMatch" hidden></p>
         <div class="tr-table">
           <div class="tr-side mine">
             <div class="tr-side-h"><span id="avMe" class="av me"></span><div><b>You give</b><small id="trGiveN">0 / 5</small></div></div>
@@ -212,7 +214,7 @@
             <span class="tr-swap"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>
           </div>
           <div class="tr-side theirs">
-            <div class="tr-side-h"><span id="avThem" class="av them empty">?</span><div><b id="trThemName">Pick a player</b><small id="trGetN">0 / 5</small></div></div>
+            <div class="tr-side-h"><button type="button" class="who-btn" id="trThemBtn" aria-label="See their profile"><span id="avThem" class="av them empty">?</span></button><div><b id="trThemName">Pick a player</b><small id="trGetN">0 / 5</small></div></div>
             <div class="tr-slots" id="trGetSlots"></div>
           </div>
           <div class="tr-fair" hidden><div class="tr-fairbar" id="trFairBar"><i></i></div><small id="trFairTxt"></small></div>

@@ -121,6 +121,9 @@ pub struct StateOut {
     /// Today's missions and the pack-opening streak.
     missions: Vec<crate::missions::MissionOut>,
     streak: crate::missions::StreakOut,
+    /// Teams on your wishlist, and the teams pinned to your profile (the free pack's).
+    wishlist: Vec<i32>,
+    showcase: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -277,6 +280,8 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
     };
     let r = rules(&mut *c).await?;
     let (missions, streak) = crate::missions::load(&mut *c, user).await?;
+    let wishlist = crate::profiles::wishlist(&mut *c, user, s.catalog.claimable().id()).await?;
+    let showcase: Vec<i32> = sqlx::query_scalar("select showcase from users where id = $1").bind(user).fetch_one(&mut *c).await?;
     // If the admin shortened the timer, nobody waits longer than one new timer.
     let next = next.min(Utc::now() + Duration::milliseconds(r.claim_ms()));
     Ok(StateOut {
@@ -295,6 +300,8 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         pending,
         missions,
         streak,
+        wishlist,
+        showcase,
     })
 }
 

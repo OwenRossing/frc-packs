@@ -360,7 +360,7 @@ button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--t
 .grid { display: grid; grid-template-columns: repeat(auto-fill, var(--cw)); justify-content: center; gap: 18px 12px; margin-top: 16px; --cw: min(calc((100vw - 56px) / 3), 132px); padding-block: 8px; }
 .grid .slot.btn { transition: transform .15s; }
 .grid .slot.btn:hover { transform: translateY(-4px); }
-.slot.ghost { pointer-events: none; }
+.slot.ghost { cursor: pointer; }
 .slot.ghost .face { filter: grayscale(.85) brightness(.42) blur(calc(var(--cw) * .03)); }
 .ghost-tag { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: 2px; padding: 8%; text-align: center; color: var(--foam); font-size: max(10px, calc(var(--cw) * .085)); font-weight: 700; line-height: 1.15; text-shadow: 0 1px 4px rgba(0,0,0,.9); }
 .ghost-tag b { font-family: var(--display); font-weight: 400; font-size: max(16px, calc(var(--cw) * .2)); color: #fff; }
@@ -493,6 +493,30 @@ body.playing .daily { display: none; }
 .streak-week i { flex: 1; height: 6px; border-radius: 3px; background: #14323b; }
 .streak-week i.on { background: linear-gradient(90deg, #ff9a3c, #ffd34d); }
 .streak-week i.gift { background: none; border: 1px dashed #ffd34d; }
+
+/* ---------- profiles ---------- */
+.profile { width: 100%; display: grid; gap: 12px; padding: 12px; border-radius: 20px; background: #071a22; border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.pf-head { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 16px; border: 1px solid #1f5560;
+  background: radial-gradient(120% 140% at 0% 0%, rgba(39,211,195,.2), transparent 55%), radial-gradient(120% 140% at 100% 100%, rgba(180,120,255,.18), transparent 55%), var(--panel); }
+.pf-head .av { width: 56px; height: 56px; font-size: 20px; }
+.pf-head h2 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 26px; color: var(--foam); overflow-wrap: anywhere; }
+.pf-head p { margin: 2px 0 0; font-size: 12px; color: var(--ink-dim); }
+.pf-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.pf-stats div { padding: 8px 6px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); text-align: center; }
+.pf-stats b { display: block; font-family: var(--display); font-weight: 400; font-size: 20px; color: var(--foam); }
+.pf-stats small { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); }
+.pf-sec { display: grid; gap: 6px; }
+.pf-sec h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
+.pf-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pf-row.wide { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.pf-empty { aspect-ratio: 5 / 7; border-radius: 9px; border: 2px dashed #2b6470; display: grid; place-items: center; padding: 6px; text-align: center; font-size: 10px; color: var(--ink-dim); }
+.pf-sec .hint { margin: 0; font-size: 12px; color: var(--ink-dim); }
+.who-btn { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: inherit; }
+.who-btn:hover .av { box-shadow: inset 0 0 0 2px rgba(255,255,255,.18), 0 0 0 2px var(--tide); }
+.tr-want { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); z-index: 2; padding: 1px 7px; border-radius: 99px; background: #ff3d9a; color: #fff; font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+.tr-want.mine { background: #ffd34d; color: #2a1c00; }
+.tr-match { margin: 0; font-size: 13px; color: #ffd27a; }
+@media (max-width: 480px) { .pf-row.wide { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pf-stats b { font-size: 17px; } }
 
 /* ---------- trading post ---------- */
 #viewTrade { margin-top: 12px; }
