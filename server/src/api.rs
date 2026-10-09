@@ -978,8 +978,10 @@ async fn scrap_copies(
     limit: i64,
 ) -> ApiResult<(i32, i64, i64)> {
     // Teams by their tier in the recipe (the stored tier on an old card could differ if the pack was re-tiered).
+    // Legendary and Mythic copies are never scrapped.
     let teams: Vec<i32> = tiers
         .iter()
+        .filter(|t| !matches!(t, Tier::Legendary | Tier::Mythic))
         .flat_map(|t| pack.pools.get(t).into_iter().flatten().copied())
         .filter(|n| teams.is_none_or(|only| only.contains(n)))
         .collect();

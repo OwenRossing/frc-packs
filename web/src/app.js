@@ -1084,6 +1084,9 @@ export function start(RECIPE) {
      Remembered on this device. */
   var scrapPick = { common: true, uncommon: true, rare: true, legendary: false, mythic: false }, scrapArmed = 0;
   try { var sp = JSON.parse(localStorage.getItem("frcpacks.scrap") || "null"); if (sp && typeof sp === "object") ORDER.forEach(function (t) { if (typeof sp[t] === "boolean") scrapPick[t] = sp[t]; }); } catch (e) {}
+  /* Legendary and Mythic copies are never scrapped. */
+  scrapPick.legendary = scrapPick.mythic = false;
+  var NOSCRAP = { legendary: 1, mythic: 1 };
   var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
   /* Copies the server won't scrap yet: cards from the pack being revealed, and cards in open trade offers. Keyed
      "team:serial". */
@@ -1111,7 +1114,7 @@ export function start(RECIPE) {
     $("#partsTxt").textContent = S.parts >= cost ? Math.floor(S.parts / cost) + " boosted pack" + (S.parts >= cost * 2 ? "s" : "") + " ready to craft" : (cost - S.parts) + " more for a boosted pack";
     craftBtn.disabled = S.parts < cost; craftBtn.textContent = "Craft boosted pack · " + cost;
     var row = $("#scrapTiers"); row.innerHTML = "";
-    ORDER.slice().reverse().forEach(function (t) {
+    ORDER.slice().reverse().filter(function (t) { return !NOSCRAP[t]; }).forEach(function (t) {
       var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (scrapPick[t] ? " on" : "");
       b.setAttribute("aria-pressed", String(!!scrapPick[t])); b.style.setProperty("--tc", TIERS[t].color);
       b.innerHTML = '<b style="color:' + TIERS[t].color + '">' + TIERS[t].label + '</b> <em>' + ex[t] + '</em>';
@@ -1121,7 +1124,7 @@ export function start(RECIPE) {
       if (scrapPick[t]) { n += ex[t]; gain += ex[t] * (S.scrapParts[t] || 0); }
     });
     /* Extras in rarities that aren't picked: say so, so they don't look forgotten. */
-    var skipped = ORDER.filter(function (t) { return !scrapPick[t] && ex[t]; });
+    var skipped = ORDER.filter(function (t) { return !scrapPick[t] && !NOSCRAP[t] && ex[t]; });
     var other = $("#scrapOther"), more = skipped.reduce(function (a, t) { return a + ex[t]; }, 0);
     other.hidden = !more;
     other.textContent = more + (more === 1 ? " more extra copy" : " more extra copies") + " in " + skipped.map(function (t) { return TIERS[t].label; }).join(" and ") + ". Tap " + (skipped.length === 1 ? "it" : "them") + " above to include " + (more === 1 ? "it" : "them") + ".";
@@ -1283,12 +1286,12 @@ export function start(RECIPE) {
       modalIn.appendChild(offer);
     }
     var hc = heldCopies(), free = serials.filter(function (x) { return !hc[t.num + ":" + x]; }).length;
-    if (serials.length > 1 && free < 2) {
+    if (serials.length > 1 && free < 2 && !NOSCRAP[t.tier]) {
       var wait = document.createElement("p"); wait.className = "ws-note ws-held";
       wait.textContent = "Your extra copies are in the pack you're opening or a trade offer, so they can't be scrapped yet.";
       modalIn.appendChild(wait);
     }
-    if (free > 1) {
+    if (free > 1 && !NOSCRAP[t.tier]) {
       var each = S.scrapParts[t.tier] || 0, more = free - 1, srow = document.createElement("div"); srow.className = "cta-row";
       var one = document.createElement("button"); one.type = "button"; one.className = "chip"; one.textContent = "Scrap 1 extra · +" + each + " parts";
       one.onclick = function () { scrapOne(t, 1, one); }; srow.appendChild(one);
