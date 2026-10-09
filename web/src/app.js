@@ -57,6 +57,8 @@ export function start(RECIPE) {
   } catch (e) {}
   function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
+  /* The donation link is off for now: set DONATIONS to true (and the link in the admin panel) to show it. */
+  var DONATIONS = false;
   var ME = ""; // this account's username
   var stamp = 0; // bumped by everything that changes the account, so a sync started earlier can't undo it
   function applyState(st, fromSync) {
@@ -69,7 +71,7 @@ export function start(RECIPE) {
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
     if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
     /* The donation link only shows when the admin set one (always https, checked by the server). */
-    var don = st.donateUrl && /^https:\/\//.test(st.donateUrl) ? st.donateUrl : "";
+    var don = DONATIONS && st.donateUrl && /^https:\/\//.test(st.donateUrl) ? st.donateUrl : "";
     $("#donateLink").hidden = $("#donateLine").hidden = !don; if (don) { $("#donateLink").href = $("#donateBtn").href = don; }
     S.demo = st.demo; S.devTools = st.devTools;
   }
@@ -1183,7 +1185,7 @@ export function start(RECIPE) {
         '</div>';
       var row = document.createElement("div"); row.className = "cta-row";
       var close = document.createElement("button"); close.type = "button"; close.className = "cta"; close.textContent = "Close"; close.onclick = closeModal; row.appendChild(close);
-      if (!p.me) {
+      if (!p.me && REPORTS) {
         var rep = document.createElement("button"); rep.type = "button"; rep.className = "textbtn pf-report"; rep.textContent = "Report " + p.username;
         rep.onclick = function () { reportForm(p.username); };
         modalIn.querySelector(".profile").appendChild(rep);
@@ -1199,7 +1201,9 @@ export function start(RECIPE) {
     }, offline);
   }
   $("#myProfile").onclick = function () { openProfile(ME); };
-  /* Reporting a player goes to the admin, who can rename or turn off the account. */
+  /* Reporting a player goes to the admin, who can rename or turn off the account. Off for now: set REPORTS to true to
+     show the Report link on profiles (the server and the admin panel's Reports list are ready). */
+  var REPORTS = false;
   function reportForm(name) {
     var reasons = [["username", "Offensive username"], ["cheating", "Cheating or abuse"], ["harassment", "Harassment"], ["other", "Something else"]];
     modalIn.innerHTML = '<form class="profile report" novalidate><div class="pf-sec"><h3>Report ' + esc(name) + '</h3>' +
