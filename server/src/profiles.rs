@@ -51,6 +51,9 @@ struct ProfileOut {
     sets: i64,
     trades: i64,
     streak: i32,
+    /// Sealed standard packs and parts they have, so a trade partner knows what they can ask for.
+    packs: i32,
+    parts: i32,
     showcase: Vec<Card>,
     /// Their three rarest cards (best tier, then lowest serial).
     rarest: Vec<Card>,
@@ -72,8 +75,8 @@ async fn best_copy(c: &mut PgConnection, user: Uuid, pack: &str, team: i32) -> A
 async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(String, String)>) -> ApiResult<Json<ProfileOut>> {
     let pack = api::pack(&s, &pack)?;
     let mut c = s.db.acquire().await?;
-    let row: Option<(Uuid, String, DateTime<Utc>, Vec<i32>, i32)> = sqlx::query_as(
-        "select id, username, created_at, showcase,
+    let row: Option<(Uuid, String, DateTime<Utc>, Vec<i32>, i32, i32)> = sqlx::query_as(
+        "select id, username, created_at, showcase, parts,
                 case when streak_day >= (now() at time zone $2)::date - 1 then streak else 0 end
          from users where lower(username) = lower($1) and not disabled",
     )
@@ -81,7 +84,7 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
     .bind(crate::missions::tz())
     .fetch_optional(&mut *c)
     .await?;
-    let Some((id, username, joined, pinned, streak)) = row else {
+    let Some((id, username, joined, pinned, parts, streak)) = row else {
         return Err(err(StatusCode::NOT_FOUND, "unknown_player"));
     };
     let (teams, cards): (i64, i64) =
@@ -100,6 +103,11 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
             .bind(id)
             .fetch_one(&mut *c)
             .await?;
+    let packs: i32 = sqlx::query_scalar("select coalesce((select sealed - boosted from user_packs where user_id = $1 and pack_id = $2), 0)")
+        .bind(id)
+        .bind(pack.id())
+        .fetch_one(&mut *c)
+        .await?;
     let mut showcase = Vec::new();
     for team in pinned.iter().take(SHOWCASE) {
         if let Some(card) = best_copy(&mut c, id, pack.id(), *team).await? {
@@ -136,6 +144,8 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
         sets,
         trades,
         streak,
+        packs,
+        parts,
         showcase,
         rarest: owned,
         wishlist,

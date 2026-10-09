@@ -436,33 +436,44 @@ export function start(RECIPE) {
     coachEl.style.setProperty("--ax", Math.max(18, Math.min(w - 18, r.left + r.width / 2 - x)) + "px");
   }
   addEventListener("resize", placeCoach); addEventListener("scroll", placeCoach, true);
+  /* Pack inventory: standard and boosted packs are separate stacks; S.openKind is the one being opened (true =
+     boosted). */
+  S.openKind = false;
+  function kindCount(k) { return k ? S.boosted : Math.max(0, S.packs - S.boosted); }
   function packsLeftHud(title, more) {
     if (S.packs > 0) setHud(title, more);
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your free pack above" : "Next free pack in " + fmt(left)); }
   }
   function paintSelectHud() {
-    if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · tap one");
-    else packsLeftHud(S.boosted ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
-    ringwrap.classList.toggle("out", S.packs < 1);
-    ringwrap.classList.toggle("boosted", S.boosted > 0 && S.packs > 0); // boosted packs open first
-    var tile = collectionEl.querySelector(".ptype"); if (tile) paintTile(tile, PACKS[0]);
+    if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · " + (S.boosted ? "pick a stack" : "tap to open"));
+    else packsLeftHud(S.openKind ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    ringwrap.classList.toggle("out", kindCount(S.openKind) < 1);
+    ringwrap.classList.toggle("boosted", S.openKind);
+    var want = (S.boosted > 0) + 1;
+    if (state === "home" && collectionEl.children.length !== want) return paintHome();
+    Array.prototype.forEach.call(collectionEl.querySelectorAll(".ptype"), function (tile) { paintTile(tile, PACKS[0]); });
+    var inv = $("#packInv");
+    if (inv) inv.innerHTML = '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') +
+      '<span><b>' + S.parts + '</b> parts</span><span><b>' + Math.max(0, S.boostCost - S.parts) + '</b> to next boosted</span>';
   }
   /* ---------- home: your pack collection ---------- */
   function paintTile(b, pk) {
-    var n = S.packs; // every pack you own is a 2026 Championship pack for now
+    var boosted = b._boosted, n = kindCount(boosted);
     b.classList.toggle("empty", n < 1); b.querySelector(".cnt").textContent = "×" + n;
-    var bst = b.querySelector(".bst"); bst.hidden = !S.boosted; bst.textContent = S.boosted + " boosted";
-    b.querySelector(".pt-sub").textContent = n ? "Tap to open" : "None left";
-    b.setAttribute("aria-label", pk.name + " pack, " + n + " to open");
+    b.querySelector(".pt-sub").textContent = n ? (boosted ? "Better odds" : "Tap to open") : "None left";
+    b.setAttribute("aria-label", (boosted ? "Boosted " : "") + pk.name + " pack, " + n + " to open");
   }
   function paintHome() {
     state = "home"; showOnly("home");
-    collectionEl.innerHTML = ""; collectionEl.classList.toggle("one", PACKS.length === 1);
-    PACKS.forEach(function (pk) {
-      var b = document.createElement("button"); b.type = "button"; b.className = "ptype"; b.setAttribute("role", "listitem");
-      b.innerHTML = '<span class="cnt"></span><span class="bst" hidden></span>' + packHTML(false) + '<span class="pt-name">' + esc(pk.name) + '</span><span class="pt-sub"></span>';
+    collectionEl.innerHTML = "";
+    var kinds = S.boosted > 0 ? [true, false] : [false];
+    collectionEl.classList.toggle("one", kinds.length === 1);
+    kinds.forEach(function (boosted) {
+      var pk = PACKS[0];
+      var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted ? " boosted" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted;
+      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
       paintTile(b, pk);
-      b.addEventListener("click", function () { openRing(b); });
+      b.addEventListener("click", function () { S.openKind = boosted; openRing(b); });
       b.addEventListener("pointermove", function (e) {
         var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
         b.style.setProperty("--gx", ((px - .5) * 2).toFixed(3)); b.style.setProperty("--gy", ((py - .5) * 2).toFixed(3));
@@ -474,7 +485,7 @@ export function start(RECIPE) {
   }
   function openRing(tile) {
     if (state !== "home") return; actx();
-    if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    if (kindCount(S.openKind) < 1) { shake(false); say(S.packs ? "None of those left. Pick the other stack." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     sfx.pick(); paintSelect(true);
   }
   /* ---------- the wheel of 10 packs ---------- */
@@ -558,9 +569,9 @@ export function start(RECIPE) {
   var rotY = 0, rotX = 0, g = null;
   function choose(i) {
     if (state !== "select") return; actx();
-    if (S.packs < 1) { shake(false); say(claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
+    if (kindCount(S.openKind) < 1) { shake(false); say(S.packs ? "None of those left." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your free pack first", 2400); return; }
     chosen = i; state = "inspect"; sfx.pick();
-    inspectEl.className = "inspect" + (S.boosted > 0 ? " boosted" : ""); rotY = 0; rotX = 0;
+    inspectEl.className = "inspect" + (S.openKind ? " boosted" : ""); rotY = 0; rotX = 0;
     /* The pack's contents are fixed as soon as you pick it up (and stay fixed if you put it back), so the glow while you swipe tells the truth. */
     promoted = false; nextBest = "common"; openReq = null; inspectEl.style.setProperty("--tp", 0);
     holdPack();
@@ -589,7 +600,7 @@ export function start(RECIPE) {
   function holdPack() {
     var n = ++holdN;
     inspectEl.style.setProperty("--tell", TIERS.common.color);
-    api.hand(PACK_ID).then(function (r) {
+    api.hand(PACK_ID, S.openKind).then(function (r) {
       if (n !== holdN || state !== "inspect") return;
       nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
       inspectEl.classList.toggle("boosted", !!r.boosted);
@@ -644,7 +655,7 @@ export function start(RECIPE) {
 
   /* Opens the pack on the server, once, even if the swipe and the button both ask. */
   function startOpen() {
-    if (!openReq) { openReq = api.open(PACK_ID); openReq.catch(function () {}); }
+    if (!openReq) { openReq = api.open(PACK_ID, S.openKind); openReq.catch(function () {}); }
     return openReq;
   }
   function cut() {
@@ -893,8 +904,9 @@ export function start(RECIPE) {
   /* With packs left, go straight to a fresh pack in hand; "Pick another" there goes back to the wheel. */
   againBtn.addEventListener("click", function () {
     if (state !== "summary") return;
-    if (S.packs > 0 && S.wheel !== false) { sfx.pick(); paintSelect(true); }
-    else if (S.packs > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
+    if (!kindCount(S.openKind)) S.openKind = !S.openKind; // that stack ran out: carry on with the other one
+    if (kindCount(S.openKind) > 0 && S.wheel !== false) { sfx.pick(); paintSelect(true); }
+    else if (kindCount(S.openKind) > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
   });
   function revealAll() {
     if (state !== "stack" && state !== "flipping") return;
@@ -1049,7 +1061,7 @@ export function start(RECIPE) {
     api.craft().then(function (st) {
       applyState(st); paintStatus(); paintWorkshop(); sfx.promote();
       var r = craftBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, "#ffd34d", 7);
-      say("Boosted pack crafted. Boosted packs open before your other packs.", 2800);
+      say("Boosted pack crafted. It waits in its own gold stack on the Open tab.", 2800);
       if (state === "home" || state === "select") paintSelectHud();
     }, function (e) { offline(e); paintWorkshop(); });
   });
@@ -1325,6 +1337,26 @@ export function start(RECIPE) {
   }
   /* Parts a card would scrap for: a rough sense of what each side of a trade is worth. */
   function worth(nums) { return nums.reduce(function (a, n) { return a + (S.scrapParts[BY_NUM[n].tier] || 0); }, 0); }
+  /* Packs and parts on the table. A sealed pack counts as 50 parts when weighing a trade. */
+  var PACK_WORTH = 50, trGoods = { givePacks: 0, wantPacks: 0, giveParts: 0, wantParts: 0 }, theirGoods = null;
+  function goodsChips(packs, parts) {
+    return (packs ? '<span class="tr-chip pack"><i aria-hidden="true"></i>' + packs + (packs === 1 ? " pack" : " packs") + '</span>' : "") +
+      (parts ? '<span class="tr-chip parts"><i aria-hidden="true"></i>' + parts + ' parts</span>' : "");
+  }
+  function goodsControls(box, side) {
+    var mine = side === "give", packsKey = mine ? "givePacks" : "wantPacks", partsKey = mine ? "giveParts" : "wantParts";
+    var maxPacks = mine ? kindCount(false) : theirGoods ? theirGoods.packs : 0, maxParts = mine ? S.parts : theirGoods ? theirGoods.parts : 0;
+    trGoods[packsKey] = Math.min(trGoods[packsKey], maxPacks, 20); trGoods[partsKey] = Math.min(trGoods[partsKey], maxParts, 100000);
+    if (!mine && !theirGoods) { box.innerHTML = ""; return; }
+    box.innerHTML = '<div class="goods"><span class="gl"><i class="gi pack"></i>Packs</span><span class="step"><button type="button" data-d="-1" aria-label="One fewer pack">−</button><b>' + trGoods[packsKey] + '</b><button type="button" data-d="1" aria-label="One more pack">+</button></span><small>of ' + maxPacks + '</small></div>' +
+      '<div class="goods"><span class="gl"><i class="gi parts"></i>Parts</span><input class="input" type="number" inputmode="numeric" min="0" max="' + maxParts + '" step="10" value="' + (trGoods[partsKey] || "") + '" placeholder="0" aria-label="Parts"><small>of ' + maxParts + '</small></div>';
+    Array.prototype.forEach.call(box.querySelectorAll(".step button"), function (b) {
+      b.onclick = function () { trGoods[packsKey] = Math.max(0, Math.min(maxPacks, 20, trGoods[packsKey] + +b.dataset.d)); sfx.tick(); paintTable(); };
+      b.disabled = (+b.dataset.d < 0 && !trGoods[packsKey]) || (+b.dataset.d > 0 && trGoods[packsKey] >= Math.min(maxPacks, 20));
+    });
+    var inp = box.querySelector("input");
+    inp.onchange = function () { trGoods[partsKey] = Math.max(0, Math.min(maxParts, 100000, Math.floor(+inp.value || 0))); paintTable(); };
+  }
   function setPane(p) {
     trPane = p;
     [["new", "#trTabNew", "#trPaneNew"], ["in", "#trTabIn", "#trPaneIn"], ["out", "#trTabOut", "#trPaneOut"], ["past", "#trTabPast", "#trPanePast"]].forEach(function (x) {
@@ -1340,7 +1372,7 @@ export function start(RECIPE) {
     var side = function (label, cards, whose) {
       return '<div class="tr-o-side"><small>' + label + '</small><div class="tr-o-cards">' + cards.map(function (c) {
         return BY_NUM[c.num] ? '<button type="button" class="tr-view" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
-      }).join("") + '</div></div>';
+      }).join("") + '</div>' + (whose === "you" ? goodsChips(t.youGivePacks, t.youGiveParts) : goodsChips(t.youGetPacks, t.youGetParts)) + '</div>';
     };
     el.innerHTML = '<header><button type="button" class="who-btn" data-who="' + esc(t.with) + '" aria-label="See ' + esc(t.with) + '\'s profile">' + avatar(t.with) + '</button><p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
       '<div class="tr-o-body">' + side("You give", t.youGive, "you") + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet, t.with) + '</div>' +
@@ -1363,7 +1395,8 @@ export function start(RECIPE) {
           t.youGet.forEach(function (c) { S.unseen[c.num] = 1; }); save();
           sfx.promote(); burst(at.left + at.width / 2, at.top + at.height / 2, 70, null, 9, true);
           paintStatus(); paintTabDot(); paintTradeDot(); paintTrades();
-          say("Trade done with " + t.with + "! " + t.youGet.length + (t.youGet.length === 1 ? " card is" : " cards are") + " in your binder" +
+          say("Trade done with " + t.with + "!" + (t.youGet.length ? " " + t.youGet.length + (t.youGet.length === 1 ? " card is" : " cards are") + " in your binder" : "") +
+            (t.youGetPacks ? " +" + t.youGetPacks + (t.youGetPacks === 1 ? " pack" : " packs") : "") + (t.youGetParts ? " +" + t.youGetParts + " parts" : "") +
             (r.sets.length ? " · " + r.sets.join(", ") + " set complete! +" + r.sets.length + (r.sets.length === 1 ? " pack" : " packs") : ""), 3800);
         });
       });
@@ -1382,8 +1415,60 @@ export function start(RECIPE) {
     }
     fill("#trIncoming", TR.incoming, "in", ["No offers right now", "When someone wants to trade with you, it shows up here."]);
     fill("#trOutgoing", TR.outgoing, "out", ["Nothing sent", "Offers you send wait here until they answer."]);
-    fill("#trRecent", TR.recent, "past", ["No trades yet", "Finished, declined and cancelled trades show up here."]);
+    paintHistory();
     paintTable(); paintGrid();
+  }
+  /* Trade history: totals at the top, a filter, and trades grouped by day, newest first. */
+  var thFilter = "all";
+  var TH_STATUS = { accepted: ["Completed", "✓"], declined: ["Declined", "✕"], cancelled: ["Cancelled", "↺"], failed: ["Called off", "!"] };
+  function dayLabel(ms) {
+    var d = new Date(ms), today = new Date(); today.setHours(0, 0, 0, 0);
+    var diff = Math.round((today - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+    return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : diff < 7 ? d.toLocaleDateString(undefined, { weekday: "long" }) : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  }
+  function paintHistory() {
+    var all = TR.recent, done = all.filter(function (t) { return t.status === "accepted"; });
+    var sum = function (k) { return done.reduce(function (a, t) { return a + (t[k] || (Array.isArray(t[k]) ? 0 : 0)); }, 0); };
+    var got = done.reduce(function (a, t) { return a + t.youGet.length; }, 0), gave = done.reduce(function (a, t) { return a + t.youGive.length; }, 0);
+    var packs = sum("youGetPacks") - sum("youGivePacks"), parts = sum("youGetParts") - sum("youGiveParts");
+    var partners = {}; done.forEach(function (t) { partners[t.with] = 1; });
+    var sign = function (n) { return (n > 0 ? "+" : "") + n; };
+    $("#thStats").innerHTML = '<div><b>' + done.length + '</b><small>trades done</small></div><div><b>' + got + '<em>/' + gave + '</em></b><small>cards in / out</small></div>' +
+      '<div><b>' + sign(packs) + '</b><small>packs</small></div><div><b>' + sign(parts) + '</b><small>parts</small></div><div><b>' + Object.keys(partners).length + '</b><small>partners</small></div>';
+    var counts = { all: all.length }; all.forEach(function (t) { counts[t.status] = (counts[t.status] || 0) + 1; });
+    var f = $("#thFilter"); f.innerHTML = "";
+    ["all", "accepted", "declined", "cancelled", "failed"].forEach(function (k) {
+      if (k !== "all" && !counts[k]) return;
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (thFilter === k ? " on" : ""); b.setAttribute("aria-pressed", String(thFilter === k));
+      b.innerHTML = (k === "all" ? "All" : TH_STATUS[k][0]) + ' <em>' + (counts[k] || 0) + '</em>';
+      b.onclick = function () { thFilter = k; paintHistory(); }; f.appendChild(b);
+    });
+    if (thFilter !== "all" && !counts[thFilter]) thFilter = "all";
+    var list = $("#trRecent"); list.innerHTML = "";
+    var shown = all.filter(function (t) { return thFilter === "all" || t.status === thFilter; });
+    if (!shown.length) { list.innerHTML = '<div class="tr-empty"><b>No trades yet</b>Finished, declined and cancelled trades show up here.</div>'; return; }
+    var last = "";
+    shown.forEach(function (t) {
+      var when = t.decidedAt || t.createdAt, day = dayLabel(when);
+      if (day !== last) { var h = document.createElement("h4"); h.className = "th-day"; h.textContent = day; list.appendChild(h); last = day; }
+      var st = TH_STATUS[t.status] || [t.status, "·"], el = document.createElement("article"); el.className = "th-item " + t.status;
+      var row = function (label, cards, packs, parts, whose) {
+        if (!cards.length && !packs && !parts) return "";
+        return '<div class="th-row"><small>' + label + '</small><div class="th-cards">' + cards.map(function (c) {
+          return BY_NUM[c.num] ? '<button type="button" class="tr-view th-card" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
+        }).join("") + goodsChips(packs, parts) + '</div></div>';
+      };
+      var verb = t.status === "accepted" ? ["Got", "Gave"] : ["Would have got", "Would have given"];
+      el.innerHTML = '<header><span class="th-icon" aria-hidden="true">' + st[1] + '</span><button type="button" class="who-btn" aria-label="See ' + esc(t.with) + '\'s profile">' + avatar(t.with) + '<b>' + esc(t.with) + '</b></button>' +
+        '<span class="pill ' + t.status + '">' + st[0] + '</span><time>' + new Date(when).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) + '</time></header>' +
+        row(verb[0], t.youGet, t.youGetPacks, t.youGetParts, t.with) + row(verb[1], t.youGive, t.youGivePacks, t.youGiveParts, "you") +
+        (t.status === "failed" ? '<p class="th-note">Someone no longer had a card, pack or parts in it, so it was called off.</p>' : '');
+      el.querySelector(".who-btn").onclick = function () { openProfile(t.with); };
+      Array.prototype.forEach.call(el.querySelectorAll(".tr-view"), function (b) {
+        b.onclick = function () { viewCard(+b.dataset.num, { serial: b.dataset.serial, from: b.dataset.whose === "you" ? "Your copy in this trade." : esc(b.dataset.whose) + "'s copy in this trade." }); };
+      });
+      list.appendChild(el);
+    });
   }
   /* The table: your side, their side, and how even it looks. */
   function slots(box, nums, side) {
@@ -1419,14 +1504,17 @@ export function start(RECIPE) {
     $("#trGiveN").textContent = trGive.length + " / " + MAXT; $("#trGetN").textContent = trGet.length + " / " + MAXT;
     $("#avThem").outerHTML = avatar(theirName || "?", "them" + (theirName ? "" : " empty")).replace('class="av', 'id="avThem" class="av');
     $("#trThemName").textContent = theirName || "Pick a player";
-    var g = worth(trGive), w = worth(trGet), total = g + w, bar = $("#trFairBar"), txt = $("#trFairTxt");
+    goodsControls($("#trGiveGoods"), "give"); goodsControls($("#trGetGoods"), "get");
+    var g = worth(trGive) + trGoods.givePacks * PACK_WORTH + trGoods.giveParts, w = worth(trGet) + trGoods.wantPacks * PACK_WORTH + trGoods.wantParts;
+    var total = g + w, bar = $("#trFairBar"), txt = $("#trFairTxt");
     var lean = total ? (w - g) / total : 0; // -1: you give it all, +1: you get it all
     bar.style.setProperty("--lean", lean.toFixed(3)); bar.parentNode.hidden = !total;
     txt.textContent = !total ? "" : Math.abs(lean) < .2 ? "Looks even" : lean > 0 ? (lean > .6 ? "A big ask" : "You get more") : (lean < -.6 ? "Very generous" : "You give more");
-    var ready = theirName && trGive.length && trGet.length;
+    var giving = trGive.length || trGoods.givePacks || trGoods.giveParts, getting = trGet.length || trGoods.wantPacks || trGoods.wantParts;
+    var ready = theirName && giving && getting;
     trSend.disabled = !ready; paintMatch();
-    $("#trSummary").textContent = !theirName ? "Start by picking who to trade with." : !trGive.length && !trGet.length ? "Tap cards below to put them on the table." :
-      !trGive.length ? "Add at least one of your cards." : !trGet.length ? "Add at least one of " + theirName + "'s cards." : "Ready to send to " + theirName + ".";
+    $("#trSummary").textContent = !theirName ? "Start by picking who to trade with." : !giving && !getting ? "Put cards, packs or parts on the table." :
+      !giving ? "Add something you're giving." : !getting ? "Add something you want from " + theirName + "." : "Ready to send to " + theirName + ".";
   }
   function myInv() { var m = {}; Object.keys(S.inv).forEach(function (k) { if (S.inv[k].length) m[k] = S.inv[k].length; }); return m; }
   /* The card shelf under the table: your cards or theirs, searchable, by rarity. Tap to put one on the table. */
@@ -1477,7 +1565,8 @@ export function start(RECIPE) {
       if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
       if (name.toLowerCase() !== theirName.toLowerCase()) { trGet = []; trSide = "theirs"; }
       theirName = name; theirInv = {}; theirWish = [];
-      api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; paintGrid(); paintMatch(); } }, function () {});
+      theirGoods = null; trGoods.wantPacks = trGoods.wantParts = 0;
+      api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; theirGoods = { packs: p.packs, parts: p.parts }; paintTable(); paintGrid(); paintMatch(); } }, function () {});
       col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
       $("#trSugg").innerHTML = ""; paintTable(); paintGrid();
     }, function (e) { if (n !== theirsReq) return; theirInv = null; theirName = ""; trGet = []; paintTable(); paintGrid(); if (e && e.code === "unknown_player") $("#trSummary").textContent = "There's no player named " + name + "."; else offline(e); });
@@ -1508,8 +1597,8 @@ export function start(RECIPE) {
   trSend.addEventListener("click", function () {
     if (trSend.disabled) return; trSend.disabled = true;
     var r = trSend.getBoundingClientRect();
-    api.offerTrade(theirName, PACK_ID, trGive, trGet).then(function (t) {
-      TR = t; trGive = []; trGet = []; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
+    api.offerTrade(theirName, PACK_ID, trGive, trGet, trGoods).then(function (t) {
+      TR = t; trGive = []; trGet = []; trGoods = { givePacks: 0, wantPacks: 0, giveParts: 0, wantParts: 0 }; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
       say("Offer sent to " + theirName + ". You'll see it under Sent until they answer.", 3000);
       loadTheirs(true); paintTrades(); paintTradeDot();
     }, function (e) { offline(e); paintTable(); });

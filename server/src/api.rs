@@ -186,6 +186,21 @@ struct UserPack {
 #[derive(Deserialize)]
 struct PackReq {
     pack: String,
+    /// Which kind to pick up or open: true for a boosted pack, false for a standard one. Left out, boosted packs go
+    /// first.
+    #[serde(default)]
+    boosted: Option<bool>,
+}
+
+/// The kind of pack to pick up or open (true = boosted), if the player has one of that kind.
+fn pack_kind(up: &UserPack, asked: Option<bool>) -> ApiResult<bool> {
+    let standard = up.sealed - up.boosted;
+    match asked {
+        Some(true) if up.boosted > 0 => Ok(true),
+        Some(false) if standard > 0 => Ok(false),
+        None if up.sealed > 0 => Ok(up.boosted > 0),
+        _ => Err(err(StatusCode::CONFLICT, "no_packs")),
+    }
 }
 
 // ---------- helpers ----------
@@ -578,20 +593,18 @@ async fn hand(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     let pack = pack(&s, &req.pack)?;
     let mut tx = s.db.begin().await?;
     let up = lock_user_pack(&mut tx, user.id, pack.id()).await?;
-    if up.sealed < 1 {
-        return Err(err(StatusCode::CONFLICT, "no_packs"));
-    }
+    let kind = pack_kind(&up, req.boosted)?;
     let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
-        sqlx::query_as("select cards, boosted from hands where user_id = $1 and pack_id = $2")
+        sqlx::query_as("select cards, boosted from hands where user_id = $1 and pack_id = $2 and boosted = $3")
             .bind(user.id)
             .bind(pack.id())
+            .bind(kind)
             .fetch_optional(&mut *tx)
             .await?;
     let (cards, boosted) = match held {
         Some((c, b)) => (c.0, b),
         None => {
-            // Boosted packs open first.
-            let boosted = up.boosted > 0;
+            let boosted = kind;
             let cards = roll_for(&mut tx, user.id, pack, &up, boosted).await?;
             sqlx::query("insert into hands (user_id, pack_id, cards, boosted) values ($1, $2, $3, $4)")
                 .bind(user.id)
@@ -658,22 +671,18 @@ async fn open(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     let pack = pack(&s, &req.pack)?;
     let mut tx = s.db.begin().await?;
     let up = lock_user_pack(&mut tx, user.id, pack.id()).await?;
-    if up.sealed < 1 {
-        return Err(err(StatusCode::CONFLICT, "no_packs"));
-    }
+    let kind = pack_kind(&up, req.boosted)?;
     let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
-        sqlx::query_as("delete from hands where user_id = $1 and pack_id = $2 returning cards, boosted")
+        sqlx::query_as("delete from hands where user_id = $1 and pack_id = $2 and boosted = $3 returning cards, boosted")
             .bind(user.id)
             .bind(pack.id())
+            .bind(kind)
             .fetch_optional(&mut *tx)
             .await?;
     let valid = |c: &[Rolled]| c.len() == 5 && c.iter().all(|x| pack.team_tier.get(&x.num) == Some(&x.tier));
     let (mut cards, boosted) = match held {
-        Some((c, b)) if valid(&c.0) && (!b || up.boosted > 0) => (c.0, b),
-        _ => {
-            let b = up.boosted > 0;
-            (roll_for(&mut tx, user.id, pack, &up, b).await?, b)
-        }
+        Some((c, b)) if valid(&c.0) => (c.0, b),
+        _ => (roll_for(&mut tx, user.id, pack, &up, kind).await?, kind),
     };
     roll::sort_best_last(&mut cards);
     // Only one pack can be mid-reveal at a time; an older unfinished one counts as seen.

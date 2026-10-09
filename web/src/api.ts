@@ -56,7 +56,7 @@ export interface Opening {
 export interface PackState {
   id: string;
   sealed: number;
-  /** How many of the sealed packs are boosted (they open first). */
+  /** How many of the sealed packs are boosted (they have their own stack). */
   boosted: number;
   opened: number;
   pity: { m: number; l: number };
@@ -113,6 +113,9 @@ export interface Profile {
   sets: number;
   trades: number;
   streak: number;
+  /** Sealed standard packs and parts they have (what you can ask for in a trade). */
+  packs: number;
+  parts: number;
   showcase: CardRef[];
   rarest: CardRef[];
   wishlist: number[];
@@ -209,6 +212,10 @@ export interface Trade {
   pack: string;
   youGive: CardRef[];
   youGet: CardRef[];
+  youGivePacks: number;
+  youGetPacks: number;
+  youGiveParts: number;
+  youGetParts: number;
   status: "open" | "accepted" | "declined" | "cancelled" | "failed";
   createdAt: number;
   decidedAt: number | null;
@@ -256,8 +263,9 @@ export const api = {
   state: () => call<State>("GET", "/api/state"),
   claim: () => call<State>("POST", "/api/claim"),
   /** Pick up a pack: its cards are decided now; only the best rarity comes back, for the glow. */
-  hand: (pack: string) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack }),
-  open: (pack: string) => call<{ opening: Opening; state: State; streakReward: boolean }>("POST", "/api/open", { pack }),
+  /** `boosted` picks the kind: true for a boosted pack, false for a standard one; left out, boosted goes first. */
+  hand: (pack: string, boosted?: boolean) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack, boosted }),
+  open: (pack: string, boosted?: boolean) => call<{ opening: Opening; state: State; streakReward: boolean }>("POST", "/api/open", { pack, boosted }),
   progress: (id: number, revealed: number) => call<void>("POST", `/api/openings/${id}/progress`, { revealed }),
   collection: (pack: string) => call<Collection>("GET", `/api/collection/${encodeURIComponent(pack)}`),
   /** Scrap extra copies of one team (the first copy is always kept). */
@@ -270,8 +278,8 @@ export const api = {
     call<Collection>("GET", `/api/players/${encodeURIComponent(name)}/collection/${encodeURIComponent(pack)}`),
   trades: () => call<Trades>("GET", "/api/trades"),
   /** Offer one copy each of `give` (your teams) for one copy each of `want` (theirs). */
-  offerTrade: (to: string, pack: string, give: number[], want: number[]) =>
-    call<Trades>("POST", "/api/trades", { to, pack, give, want }),
+  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveParts: number; wantParts: number }) =>
+    call<Trades>("POST", "/api/trades", { to, pack, give, want, ...extra }),
   acceptTrade: (id: number) =>
     call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),
   declineTrade: (id: number) => call<Trades>("POST", `/api/trades/${id}/decline`),
@@ -345,6 +353,8 @@ export function explain(e: unknown): string {
     too_many_offers: "You have 20 offers waiting. Cancel some first.",
     bad_trade: "Pick 1 to 5 different cards on each side.",
     not_your_trade: "That trade isn't yours to answer.",
+    not_enough_to_trade: "You don't have that many packs or parts to trade (boosted packs can't be traded).",
+    they_lack: "They don't have that many packs or parts.",
     mission_not_ready: "That mission isn't finished yet.",
     wishlist_full: "Your wishlist is full (50). Take something off first.",
     username_not_allowed: "That username isn't allowed. Pick something else.",

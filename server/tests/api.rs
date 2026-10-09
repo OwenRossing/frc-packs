@@ -1071,3 +1071,48 @@ async fn usernames_reports_and_renames() {
     let list = call(&app, "GET", "/api/admin/reports", Some(&admin), None).await.body;
     assert!(list.as_array().unwrap().iter().all(|r| r["id"] != id), "resolved reports leave the list");
 }
+
+#[tokio::test]
+async fn choose_pack_kind_and_trade_packs_and_parts() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let packs = |st: &Value| { let p = st["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap().clone(); (p["sealed"].as_i64().unwrap(), p["boosted"].as_i64().unwrap()) };
+    // A: 2 standard + 1 boosted. Asking for a standard pack opens a standard one even with a boosted waiting.
+    sqlx::query("update user_packs set sealed = 3, boosted = 1 where user_id = $1 and pack_id = 'cmp26'").bind(a).execute(&db).await.unwrap();
+    sqlx::query("update users set parts = 500 where id = $1").bind(a).execute(&db).await.unwrap();
+    let h = call(&app, "POST", "/api/hand", Some(&ca), Some(json!({ "pack": "cmp26", "boosted": false }))).await;
+    assert_eq!(h.body["boosted"], false);
+    let hb = call(&app, "POST", "/api/hand", Some(&ca), Some(json!({ "pack": "cmp26", "boosted": true }))).await;
+    assert_eq!(hb.body["boosted"], true, "each kind has its own pack in hand");
+    let o = call(&app, "POST", "/api/open", Some(&ca), Some(json!({ "pack": "cmp26", "boosted": false }))).await;
+    assert_eq!(packs(&o.body["state"]), (2, 1), "a standard pack was opened; the boosted one waits");
+    // Can't trade away more standard packs than you have (the boosted one doesn't count).
+    let too_many = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 2, "wantParts": 0, "want": [] }))).await;
+    assert_eq!(too_many.status, StatusCode::BAD_REQUEST, "both sides need something");
+    let too_many = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 2, "givePrts": 0, "wantPacks": 1 }))).await;
+    assert_eq!((too_many.status, too_many.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_enough_to_trade")));
+    // B has 2 standard packs (starting packs). A offers 1 pack + 200 parts for 2 of B's packs.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "givePacks": 1, "giveParts": 200, "wantPacks": 2 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let t = &r.body["outgoing"][0];
+    assert_eq!((t["youGivePacks"].as_i64(), t["youGiveParts"].as_i64(), t["youGetPacks"].as_i64()), (Some(1), Some(200), Some(2)));
+    let id = t["id"].as_i64().unwrap();
+    let ok = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    assert_eq!(packs(&ok.body["state"]).0, 1, "B gave 2 and got 1");
+    assert_eq!(ok.body["state"]["parts"], 200);
+    let st = call(&app, "GET", "/api/state", Some(&ca), None).await.body;
+    assert_eq!(packs(&st), (3, 1), "A: 2 - 1 + 2 = 3 sealed, still 1 boosted");
+    assert_eq!(st["parts"], 300);
+    // If the giver no longer has the parts when it's accepted, the trade fails and nothing moves.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "giveParts": 300, "wantPacks": 1 }))).await;
+    let id = r.body["outgoing"][0]["id"].as_i64().unwrap();
+    sqlx::query("update users set parts = 0 where id = $1").bind(a).execute(&db).await.unwrap();
+    let stale = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(stale.body["error"], "trade_stale");
+    let parts_b: i32 = sqlx::query_scalar("select parts from users where id = $1").bind(b).fetch_one(&db).await.unwrap();
+    assert_eq!(parts_b, 200);
+}
