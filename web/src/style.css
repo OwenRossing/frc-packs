@@ -930,3 +930,6 @@ body.signed-out .tabbar { display: none; }
 .ringback #ringBack { font-size: 0; width: 40px; height: 40px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); position: relative; }
 .ringback #ringBack::after { content: "9"; font: 400 28px/36px var(--display); color: var(--ink); position: absolute; inset: 0; text-align: center; }
 .stage:has(#inspectView:not([hidden])) .hud .sub { display: none; }
+.tr-on-n { position: absolute; left: 4px; top: 4px; background: var(--tide); color: #04201d; font: 700 10px/1 var(--body); padding: 3px 6px; border-radius: 99px; z-index: 2; }
+.pf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.pf-all { width: 100%; }

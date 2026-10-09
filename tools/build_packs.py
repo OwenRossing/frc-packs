@@ -65,6 +65,9 @@ ODDS = {
     "mythicBase": 1 / 400, "demoMythic": 0.2, "soft": 150, "hard": 200,
     # Legendary or better at least every 20 packs.
     "legEvery": 20,
+    # Boosted packs (crafted from parts): better slots, a better last card, and 4x the Mythic chance.
+    "boosted": {"slots": {"common": 0.40, "uncommon": 0.35, "rare": 0.20, "legendary": 0.05},
+                "last": {"rare": 0.60, "legendary": 0.40}, "mythicMult": 4.0},
 }
 
 PACKS = [

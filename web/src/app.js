@@ -322,13 +322,14 @@ export function start(RECIPE) {
      future packs add an entry here with their own team list and inventory. */
   var PACKS = [{ id: PACK_ID, name: RECIPE.name, where: RECIPE.where, teams: TEAMS }], curPack = PACKS[0];
   function packHTML(back) {
+    var bo = S.openKind && !S.testMode && ODDS.boosted, OD = bo ? ODDS.boosted : ODDS, mult = bo ? ODDS.boosted.mythicMult : 1;
     var front = '<div class="pk-face pk-front"><div class="pk-top"></div><div class="pk-body"><div class="pk-cover">' +
       '<div class="pk-set">2026 Championship</div><div class="pk-logo">FRC<br>PACKS</div>' +
       '<div class="pk-hero"><div class="burst"></div>' + TROPHY + '</div>' +
       '<div class="pk-feat">Houston · 8 divisions</div></div></div></div>';
     var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Championship</h3>' +
-      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better (Legendary ' + pct(ODDS.last.legendary) + ').</div>' +
-      '<div class="odds"><span>Common</span><b>' + pct(ODDS.slots.common) + '</b><span>Uncommon</span><b>' + pct(ODDS.slots.uncommon) + '</b><span>Rare</span><b>' + pct(ODDS.slots.rare) + '</b><span>Legendary</span><b>' + pct(ODDS.slots.legendary) + '</b><span>Mythic</span><b>1 in ' + Math.round(1 / (S.demo ? ODDS.demoMythic : ODDS.mythicBase)) + (S.demo ? "*" : "") + '</b></div>' +
+      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better (Legendary ' + pct(OD.last.legendary) + ').</div>' +
+      '<div class="odds"><span>Common</span><b>' + pct(OD.slots.common) + '</b><span>Uncommon</span><b>' + pct(OD.slots.uncommon) + '</b><span>Rare</span><b>' + pct(OD.slots.rare) + '</b><span>Legendary</span><b>' + pct(OD.slots.legendary) + '</b><span>Mythic</span><b>1 in ' + Math.round(1 / ((S.demo ? ODDS.demoMythic : ODDS.mythicBase) * mult)) + (S.demo ? "*" : "") + '</b></div>' +
       '<small>Per card in slots 1 to 4, Mythic per pack. The Mythic meter guarantees one by pack ' + HARD + ', and Legendary or better comes at least every ' + LEG_EVERY + ' packs.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
     var edges = [-3, -2, -1, 0, 1, 2, 3].map(function (z) { return '<i class="pk-edge" style="--z:' + z + '"></i>'; }).join("");
     return '<div class="pk" style="--h:' + PACK_HUE + '">' + edges + front + b + '</div>';
@@ -1394,9 +1395,28 @@ export function start(RECIPE) {
         var rep = document.createElement("button"); rep.type = "button"; rep.className = "textbtn pf-report"; rep.textContent = "Report " + p.username;
         rep.onclick = function () { reportForm(p.username); };
         modalIn.querySelector(".profile").appendChild(rep);
-        var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta ghost"; tr.textContent = "Trade with " + p.username;
+      }
+      if (!p.me) {
+        var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta"; tr.textContent = "Trade";
         tr.onclick = function () { closeAll(function () { tradeFor(p.username); }); };
         row.appendChild(tr);
+        /* Their whole collection, loaded when asked for. */
+        var all = document.createElement("section"); all.className = "pf-sec";
+        all.innerHTML = '<button type="button" class="cta ghost pf-all">See all cards</button><div class="pf-grid"></div>';
+        modalIn.querySelector(".profile").appendChild(all);
+        all.querySelector(".pf-all").onclick = function () {
+          var btn = this; btn.disabled = true;
+          api.playerCollection(p.username, PACK_ID).then(function (col) {
+            var list = col.cards.filter(function (c) { return BY_NUM[c.num]; }).sort(function (a, b) { var A = BY_NUM[a.num], B = BY_NUM[b.num]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
+            btn.textContent = list.length + " cards";
+            var g = all.querySelector(".pf-grid");
+            g.innerHTML = list.map(function (c) { return '<button type="button" class="tr-view" data-num="' + c.num + '">' + miniCard(c.num, { count: c.serials.length }) + '</button>'; }).join("");
+            Array.prototype.forEach.call(g.querySelectorAll(".tr-view"), function (x) {
+              var n = +x.dataset.num;
+              x.onclick = function () { viewCard(n, { from: esc(p.username) + "'s card.", action: { label: "Ask " + p.username + " for it", run: function () { tradeFor(p.username, n); } } }); };
+            });
+          }, function (e) { btn.disabled = false; offline(e); });
+        };
       }
       modalIn.appendChild(row);
       Array.prototype.forEach.call(modalIn.querySelectorAll(".tr-view"), function (b) {
@@ -1790,7 +1810,7 @@ export function start(RECIPE) {
   }
   $("#trThemBtn").onclick = function () { if (theirName) openProfile(theirName); };
   function paintTable() {
-    var mine = myInv(); trGive = trGive.filter(function (n) { return mine[n]; });
+    var mine = myInv(), seen = {}; trGive = trGive.filter(function (n) { seen[n] = (seen[n] || 0) + 1; return seen[n] <= (mine[n] || 0); });
     slots($("#trGiveSlots"), trGive, "give"); slots($("#trGetSlots"), trGet, "get");
     $("#trGiveN").textContent = trGive.length + " / " + MAXT; $("#trGetN").textContent = trGet.length + " / " + MAXT;
     $("#avThem").outerHTML = avatar(theirName || "?", "them" + (theirName ? "" : " empty")).replace('class="av', 'id="avThem" class="av');
@@ -1826,21 +1846,22 @@ export function start(RECIPE) {
       .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
     if (!list.length) { trGrid.innerHTML = '<div class="tr-empty"><b>' + (q || trTier !== "all" ? "No cards match" : mineSide ? "Your binder is empty" : "No cards yet") + '</b>' + (q || trTier !== "all" ? "Try another search or rarity." : mineSide ? "Open some packs first." : "They haven't opened any packs.") + '</div>'; return; }
     list.slice(0, 80).forEach(function (n) {
-      var on = picked.indexOf(n) >= 0, cell = document.createElement("div"), b = document.createElement("button");
+      var cnt = picked.filter(function (x) { return x === n; }).length, on = cnt > 0, cell = document.createElement("div"), b = document.createElement("button");
       cell.className = "tr-cell";
       b.type = "button"; b.className = "tr-pick" + (on ? " on" : ""); b.setAttribute("aria-pressed", String(on));
       b.setAttribute("aria-label", BY_NUM[n].name + ", team " + n + ", " + TIERS[BY_NUM[n].tier].label + (inv[n] > 1 ? ", " + inv[n] + " copies" : "") + (mineSide && inv[n] === 1 ? ", your only copy" : ""));
-      b.innerHTML = miniCard(n, { count: inv[n] }) + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "") +
+      b.innerHTML = miniCard(n, { count: inv[n] }) + (cnt ? '<span class="tr-on-n">' + (inv[n] > 1 ? cnt + " of " + inv[n] : "On table") + '</span>' : "") + (mineSide && inv[n] === 1 ? '<span class="tr-only">Only copy</span>' : "") +
         (mineSide && theirWish.indexOf(n) >= 0 ? '<span class="tr-want">They want</span>' : !mineSide && wished(n) ? '<span class="tr-want mine">♥ Your list</span>' : "");
+      /* Each tap puts one more copy on the table; once every copy is there, the next tap takes them all back. */
       b.onclick = function () {
-        var i = picked.indexOf(n);
-        if (i >= 0) { picked.splice(i, 1); sfx.tick(); }
+        var have = picked.filter(function (x) { return x === n; }).length;
+        if (have >= inv[n]) { for (var k = picked.length - 1; k >= 0; k--) if (picked[k] === n) picked.splice(k, 1); sfx.tick(); }
         else if (picked.length >= MAXT) return say("Up to " + MAXT + " cards on each side.", 1800);
         else { picked.push(n); trFresh[(mineSide ? "give" : "get") + n] = 1; sfx.pick(); }
         paintTable(); paintGrid();
       };
       // Or drag it onto the table.
-      draggable(b, { targets: function () { return [$(".tr-side." + (mineSide ? "mine" : "theirs"))]; }, drop: function (t) { if (t && picked.indexOf(n) < 0) b.onclick(); } });
+      draggable(b, { targets: function () { return [$(".tr-side." + (mineSide ? "mine" : "theirs"))]; }, drop: function (t) { if (t && picked.filter(function (x) { return x === n; }).length < inv[n]) b.onclick(); } });
       var info = document.createElement("button"); info.type = "button"; info.className = "tr-info"; info.textContent = "i";
       info.setAttribute("aria-label", "See " + BY_NUM[n].name + " up close");
       info.onclick = function () { viewCard(n, { action: { label: on ? "Take it off the table" : "Put it on the table", run: function () { b.onclick(); } }, from: mineSide ? "You have " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." : esc(theirName) + " has " + (inv[n] === 1 ? "1 copy" : inv[n] + " copies") + "." }); };

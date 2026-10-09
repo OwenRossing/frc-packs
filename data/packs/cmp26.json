@@ -20,7 +20,20 @@
   "demoMythic": 0.2,
   "soft": 150,
   "hard": 200,
-  "legEvery": 20
+  "legEvery": 20,
+  "boosted": {
+   "slots": {
+    "common": 0.4,
+    "uncommon": 0.35,
+    "rare": 0.2,
+    "legendary": 0.05
+   },
+   "last": {
+    "rare": 0.6,
+    "legendary": 0.4
+   },
+   "mythicMult": 4.0
+  }
  },
  "teams": [
   {

@@ -87,10 +87,10 @@ async fn player_collection(
 struct OfferReq {
     to: String,
     pack: String,
-    /// Teams you give (one copy each).
+    /// Teams you give, one copy per entry (list a team twice for two copies).
     #[serde(default)]
     give: Vec<i32>,
-    /// Teams you want from them (one copy each).
+    /// Teams you want from them, one copy per entry.
     #[serde(default)]
     want: Vec<i32>,
     /// Sealed standard packs and parts each way.
@@ -175,7 +175,7 @@ async fn move_goods(c: &mut PgConnection, from: Uuid, to: Uuid, pack: &str, pack
     Ok(())
 }
 
-/// Picks one tradeable copy of each team: the newest one, so a player keeps their earliest (lowest) serial longest.
+/// Picks one tradeable copy for each team listed (a team listed twice gets two different copies): the newest one, so a player keeps their earliest (lowest) serial longest.
 /// Cards still being revealed or already promised in another open offer from the same player are left out.
 async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i32], promised_by: Option<Uuid>) -> ApiResult<Vec<i64>> {
     let mut ids = Vec::with_capacity(teams.len());
@@ -185,12 +185,14 @@ async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i3
              where c.user_id = $1 and c.pack_id = $2 and c.team = $3 and (o.id is null or o.revealed >= 5)
                and ($4::uuid is null or not exists (
                  select 1 from trades t where t.status = 'open' and t.from_user = $4 and c.id = any(t.give)))
+               and not (c.id = any($5))
              order by c.id desc limit 1",
         )
         .bind(owner)
         .bind(pack.id())
         .bind(num)
         .bind(promised_by)
+        .bind(&ids)
         .fetch_optional(&mut *c)
         .await?;
         ids.push(id.ok_or(err(StatusCode::CONFLICT, "not_owned"))?);
@@ -198,16 +200,12 @@ async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i3
     Ok(ids)
 }
 
-fn distinct(v: &[i32]) -> bool {
-    v.iter().enumerate().all(|(i, x)| !v[..i].contains(x))
-}
-
 async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req): Json<OfferReq>) -> ApiResult<Response> {
     let pack = api::pack(&s, &req.pack)?;
     let goods = 0..=MAX_PACKS;
     let parts = 0..=MAX_PARTS;
     let side_ok = |cards: &[i32], packs: i32, pts: i32| {
-        cards.len() <= MAX_CARDS && distinct(cards) && goods.contains(&packs) && parts.contains(&pts) && (!cards.is_empty() || packs > 0 || pts > 0)
+        cards.len() <= MAX_CARDS && goods.contains(&packs) && parts.contains(&pts) && (!cards.is_empty() || packs > 0 || pts > 0)
     };
     if !side_ok(&req.give, req.give_packs, req.give_parts) || !side_ok(&req.want, req.want_packs, req.want_parts) {
         return Err(err(StatusCode::BAD_REQUEST, "bad_trade"));
