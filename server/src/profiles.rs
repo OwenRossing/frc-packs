@@ -53,6 +53,8 @@ struct ProfileOut {
     streak: i32,
     /// Sealed standard packs and parts they have, so a trade partner knows what they can ask for.
     packs: i32,
+    /// Sealed boosted packs they have.
+    boosted: i32,
     parts: i32,
     showcase: Vec<Card>,
     /// Their three rarest cards (best tier, then lowest serial).
@@ -108,6 +110,11 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
         .bind(pack.id())
         .fetch_one(&mut *c)
         .await?;
+    let boosted: i32 = sqlx::query_scalar("select coalesce((select boosted from user_packs where user_id = $1 and pack_id = $2), 0)")
+        .bind(id)
+        .bind(pack.id())
+        .fetch_one(&mut *c)
+        .await?;
     let mut showcase = Vec::new();
     for team in pinned.iter().take(SHOWCASE) {
         if let Some(card) = best_copy(&mut c, id, pack.id(), *team).await? {
@@ -145,6 +152,7 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
         trades,
         streak,
         packs,
+        boosted,
         parts,
         showcase,
         rarest: owned,

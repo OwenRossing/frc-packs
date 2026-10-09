@@ -1457,3 +1457,34 @@ async fn first_name_is_required_and_social_lists_players() {
     assert_eq!(me["firstName"], "Test");
     assert!(r.body["recent"].is_array());
 }
+
+#[tokio::test]
+async fn boosted_packs_trade_like_cards() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    let packs = |st: &Value| {
+        let p = st["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap().clone();
+        (p["sealed"].as_i64().unwrap(), p["boosted"].as_i64().unwrap())
+    };
+    age(&db, &[a, b]).await;
+    // A: 5 packs, 2 of them boosted. B: 2 standard packs.
+    sqlx::query("update user_packs set sealed = 5, boosted = 2 where user_id = $1 and pack_id = 'cmp26'").bind(a).execute(&db).await.unwrap();
+    sqlx::query("update user_packs set sealed = 2, boosted = 0 where user_id = $1 and pack_id = 'cmp26'").bind(b).execute(&db).await.unwrap();
+    // A has only 2 boosted packs to give.
+    let over = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "giveBoosted": 3, "wantPacks": 1 }))).await;
+    assert_eq!((over.status, over.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_enough_to_trade")));
+    // A gives 1 boosted + 1 standard pack for B's 2 standard packs.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "giveBoosted": 1, "givePacks": 1, "wantPacks": 2 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let t = &r.body["outgoing"][0];
+    assert_eq!((t["youGiveBoosted"].as_i64(), t["youGivePacks"].as_i64(), t["youGetPacks"].as_i64()), (Some(1), Some(1), Some(2)));
+    let id = t["id"].as_i64().unwrap();
+    let ok = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    assert_eq!(packs(&ok.body["state"]), (2, 1), "B: 2 - 2 + 2 = 2 sealed, now 1 boosted");
+    let st = call(&app, "GET", "/api/state", Some(&ca), None).await.body;
+    assert_eq!(packs(&st), (5, 1), "A: 5 - 2 + 2 = 5 sealed, 1 boosted left");
+}

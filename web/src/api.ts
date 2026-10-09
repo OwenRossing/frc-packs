@@ -117,6 +117,8 @@ export interface Profile {
   streak: number;
   /** Sealed standard packs and parts they have (what you can ask for in a trade). */
   packs: number;
+  /** Sealed boosted packs they have. */
+  boosted: number;
   parts: number;
   showcase: CardRef[];
   rarest: CardRef[];
@@ -216,6 +218,8 @@ export interface Trade {
   youGet: CardRef[];
   youGivePacks: number;
   youGetPacks: number;
+  youGiveBoosted: number;
+  youGetBoosted: number;
   youGiveParts: number;
   youGetParts: number;
   status: "open" | "accepted" | "declined" | "cancelled" | "failed";
@@ -347,7 +351,7 @@ export const api = {
     call<Collection>("GET", `/api/players/${encodeURIComponent(name)}/collection/${encodeURIComponent(pack)}`),
   trades: () => call<Trades>("GET", "/api/trades"),
   /** Offer one copy each of `give` (your teams) for one copy each of `want` (theirs). */
-  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveParts: number; wantParts: number }) =>
+  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveBoosted: number; wantBoosted: number; giveParts: number; wantParts: number }) =>
     act<Trades>("/api/trades", { to, pack, give, want, ...extra }),
   acceptTrade: (id: number) =>
     call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),

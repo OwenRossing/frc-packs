@@ -102,9 +102,14 @@ struct OfferReq {
     give_parts: i32,
     #[serde(default)]
     want_parts: i32,
+    /// Sealed boosted packs each way.
+    #[serde(default)]
+    give_boosted: i32,
+    #[serde(default)]
+    want_boosted: i32,
 }
 
-pub const MAX_PACKS: i32 = 20;
+pub const MAX_PACKS: i32 = 50;
 pub const MAX_PARTS: i32 = 100_000;
 
 /// Against farming free packs on extra accounts and passing them to a main one: an account has to be a day old before
@@ -142,7 +147,7 @@ async fn over_daily(c: &mut PgConnection, user: Uuid, packs: i32, parts: i32) ->
 }
 
 /// Whether a player has these standard (not boosted) sealed packs and parts. `lock` takes their rows for update.
-async fn has_goods(c: &mut PgConnection, user: Uuid, pack: &str, packs: i32, parts: i32, lock: bool) -> ApiResult<bool> {
+async fn has_goods(c: &mut PgConnection, user: Uuid, pack: &str, packs: i32, boosted: i32, parts: i32, lock: bool) -> ApiResult<bool> {
     let lock = if lock { " for no key update" } else { "" };
     let have_parts: i32 = sqlx::query_scalar(&format!("select parts from users where id = $1{lock}")).bind(user).fetch_one(&mut *c).await?;
     let have_packs: i32 =
@@ -151,24 +156,38 @@ async fn has_goods(c: &mut PgConnection, user: Uuid, pack: &str, packs: i32, par
             .bind(pack)
             .fetch_one(&mut *c)
             .await?;
-    Ok(have_parts >= parts && have_packs >= packs)
+    let have_boosted: i32 =
+        sqlx::query_scalar(&format!("select coalesce((select boosted from user_packs where user_id = $1 and pack_id = $2{lock}), 0)"))
+            .bind(user)
+            .bind(pack)
+            .fetch_one(&mut *c)
+            .await?;
+    Ok(have_parts >= parts && have_packs >= packs && have_boosted >= boosted)
 }
 
 /// Moves standard sealed packs and parts from one player to another.
-async fn move_goods(c: &mut PgConnection, from: Uuid, to: Uuid, pack: &str, packs: i32, parts: i32) -> ApiResult<()> {
+async fn move_goods(c: &mut PgConnection, from: Uuid, to: Uuid, pack: &str, packs: i32, boosted: i32, parts: i32) -> ApiResult<()> {
     if parts > 0 {
         sqlx::query("update users set parts = parts - $2 where id = $1").bind(from).bind(parts).execute(&mut *c).await?;
         sqlx::query("update users set parts = parts + $2 where id = $1").bind(to).bind(parts).execute(&mut *c).await?;
     }
-    if packs > 0 {
-        sqlx::query("update user_packs set sealed = sealed - $3 where user_id = $1 and pack_id = $2").bind(from).bind(pack).bind(packs).execute(&mut *c).await?;
+    if packs + boosted > 0 {
+        sqlx::query("update user_packs set sealed = sealed - $3 - $4, boosted = boosted - $4 where user_id = $1 and pack_id = $2")
+            .bind(from)
+            .bind(pack)
+            .bind(packs)
+            .bind(boosted)
+            .execute(&mut *c)
+            .await?;
         sqlx::query(
-            "insert into user_packs (user_id, pack_id, sealed) values ($1, $2, $3)
-             on conflict (user_id, pack_id) do update set sealed = user_packs.sealed + excluded.sealed",
+            "insert into user_packs (user_id, pack_id, sealed, boosted) values ($1, $2, $3 + $4, $4)
+             on conflict (user_id, pack_id) do update
+               set sealed = user_packs.sealed + excluded.sealed, boosted = user_packs.boosted + excluded.boosted",
         )
         .bind(to)
         .bind(pack)
         .bind(packs)
+        .bind(boosted)
         .execute(&mut *c)
         .await?;
     }
@@ -204,10 +223,16 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     let pack = api::pack(&s, &req.pack)?;
     let goods = 0..=MAX_PACKS;
     let parts = 0..=MAX_PARTS;
-    let side_ok = |cards: &[i32], packs: i32, pts: i32| {
-        cards.len() <= MAX_CARDS && goods.contains(&packs) && parts.contains(&pts) && (!cards.is_empty() || packs > 0 || pts > 0)
+    let side_ok = |cards: &[i32], packs: i32, boosted: i32, pts: i32| {
+        cards.len() <= MAX_CARDS
+            && goods.contains(&packs)
+            && goods.contains(&boosted)
+            && parts.contains(&pts)
+            && (!cards.is_empty() || packs > 0 || boosted > 0 || pts > 0)
     };
-    if !side_ok(&req.give, req.give_packs, req.give_parts) || !side_ok(&req.want, req.want_packs, req.want_parts) {
+    if !side_ok(&req.give, req.give_packs, req.give_boosted, req.give_parts)
+        || !side_ok(&req.want, req.want_packs, req.want_boosted, req.want_parts)
+    {
         return Err(err(StatusCode::BAD_REQUEST, "bad_trade"));
     }
     let mut tx = s.db.begin().await?;
@@ -228,30 +253,30 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     }
     let give = pick_copies(&mut tx, user.id, pack, &req.give, Some(user.id)).await?;
     let want = pick_copies(&mut tx, to, pack, &req.want, None).await?;
-    if !has_goods(&mut tx, user.id, pack.id(), req.give_packs, req.give_parts, false).await? {
+    if !has_goods(&mut tx, user.id, pack.id(), req.give_packs, req.give_boosted, req.give_parts, false).await? {
         return Err(err(StatusCode::CONFLICT, "not_enough_to_trade"));
     }
-    if !has_goods(&mut tx, to, pack.id(), req.want_packs, req.want_parts, false).await? {
+    if !has_goods(&mut tx, to, pack.id(), req.want_packs, req.want_boosted, req.want_parts, false).await? {
         return Err(err(StatusCode::CONFLICT, "they_lack"));
     }
-    if (req.give_packs > 0 || req.give_parts > 0) && too_new(&mut tx, user.id).await? {
+    if (req.give_packs > 0 || req.give_boosted > 0 || req.give_parts > 0) && too_new(&mut tx, user.id).await? {
         return Err(err(StatusCode::CONFLICT, "too_new"));
     }
-    if (req.want_packs > 0 || req.want_parts > 0) && too_new(&mut tx, to).await? {
+    if (req.want_packs > 0 || req.want_boosted > 0 || req.want_parts > 0) && too_new(&mut tx, to).await? {
         return Err(err(StatusCode::CONFLICT, "they_too_new"));
     }
-    if over_daily(&mut tx, user.id, req.want_packs, req.want_parts).await? {
+    if over_daily(&mut tx, user.id, req.want_packs + req.want_boosted, req.want_parts).await? {
         return Err(err(StatusCode::CONFLICT, "trade_limit"));
     }
-    if over_daily(&mut tx, to, req.give_packs, req.give_parts).await? {
+    if over_daily(&mut tx, to, req.give_packs + req.give_boosted, req.give_parts).await? {
         return Err(err(StatusCode::CONFLICT, "their_trade_limit"));
     }
     let give_cards = cards_by_id(&mut tx, &give).await?;
     let want_cards = cards_by_id(&mut tx, &want).await?;
     sqlx::query(
         "insert into trades (from_user, to_user, pack_id, give, want, give_packs, want_packs, give_parts, want_parts,
-                             give_cards, want_cards)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                             give_cards, want_cards, give_boosted, want_boosted)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(user.id)
     .bind(to)
@@ -264,6 +289,8 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     .bind(req.want_parts)
     .bind(sqlx::types::Json(&give_cards))
     .bind(sqlx::types::Json(&want_cards))
+    .bind(req.give_boosted)
+    .bind(req.want_boosted)
     .execute(&mut *tx)
     .await?;
     let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
@@ -287,7 +314,7 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     };
     push::notify(&s.db, to, push::Note {
         title: format!("{me} wants to trade"),
-        body: format!("They offer {} for {} of yours.", stuff(give.len(), req.give_packs, req.give_parts), stuff(want.len(), req.want_packs, req.want_parts)),
+        body: format!("They offer {} for {} of yours.", stuff(give.len(), req.give_packs + req.give_boosted, req.give_parts), stuff(want.len(), req.want_packs + req.want_boosted, req.want_parts)),
         url: "/#trade".into(),
         tag: format!("trade-{me}"),
     });
@@ -316,6 +343,8 @@ struct TradeOut {
     you_get: Vec<CardRef>,
     you_give_packs: i32,
     you_get_packs: i32,
+    you_give_boosted: i32,
+    you_get_boosted: i32,
     you_give_parts: i32,
     you_get_parts: i32,
     status: String,
@@ -332,7 +361,7 @@ struct TradesOut {
 }
 
 type Snap = Option<sqlx::types::Json<Vec<CardRef>>>;
-type TradeRow = (i64, Uuid, String, String, Vec<i64>, Vec<i64>, String, DateTime<Utc>, Option<DateTime<Utc>>, i32, i32, i32, i32, Snap, Snap);
+type TradeRow = (i64, Uuid, String, String, Vec<i64>, Vec<i64>, String, DateTime<Utc>, Option<DateTime<Utc>>, i32, i32, i32, i32, Snap, Snap, Vec<i32>);
 
 async fn cards_by_id(c: &mut PgConnection, ids: &[i64]) -> ApiResult<Vec<CardRef>> {
     let rows: Vec<(i64, i32, String, i32)> =
@@ -353,12 +382,12 @@ async fn list_for(s: &Shared, me: Uuid) -> ApiResult<Json<TradesOut>> {
 async fn list_in(c: &mut PgConnection, me: Uuid) -> ApiResult<TradesOut> {
     let rows: Vec<TradeRow> = sqlx::query_as(
         "(select t.id, t.from_user, coalesce(o.username, 'guest'), t.pack_id, t.give, t.want, t.status, t.created_at, t.decided_at,
-                 t.give_packs, t.want_packs, t.give_parts, t.want_parts, t.give_cards, t.want_cards
+                 t.give_packs, t.want_packs, t.give_parts, t.want_parts, t.give_cards, t.want_cards, array[t.give_boosted, t.want_boosted]
           from trades t join users o on o.id = case when t.from_user = $1 then t.to_user else t.from_user end
           where (t.from_user = $1 or t.to_user = $1) and t.status = 'open' order by t.id desc limit 50)
          union all
          (select t.id, t.from_user, coalesce(o.username, 'guest'), t.pack_id, t.give, t.want, t.status, t.created_at, t.decided_at,
-                 t.give_packs, t.want_packs, t.give_parts, t.want_parts, t.give_cards, t.want_cards
+                 t.give_packs, t.want_packs, t.give_parts, t.want_parts, t.give_cards, t.want_cards, array[t.give_boosted, t.want_boosted]
           from trades t join users o on o.id = case when t.from_user = $1 then t.to_user else t.from_user end
           where (t.from_user = $1 or t.to_user = $1) and t.status <> 'open' order by t.decided_at desc nulls last limit 100)",
     )
@@ -366,13 +395,15 @@ async fn list_in(c: &mut PgConnection, me: Uuid) -> ApiResult<TradesOut> {
     .fetch_all(&mut *c)
     .await?;
     let mut out = TradesOut { incoming: vec![], outgoing: vec![], recent: vec![] };
-    for (id, from, with, pack, give, want, status, created, decided, gpk, wpk, gpt, wpt, gsnap, wsnap) in rows {
+    for (id, from, with, pack, give, want, status, created, decided, gpk, wpk, gpt, wpt, gsnap, wsnap, boost) in rows {
         let mine = from == me;
         let (gives, gets) = if mine { (give, want) } else { (want, give) };
         let (gives_then, gets_then) = if mine { (gsnap, wsnap) } else { (wsnap, gsnap) };
         // A finished trade shows the cards as they were offered, even if one was scrapped since.
         let decided_cards = |snap: Snap| if status == "open" { None } else { snap.map(|j| j.0) };
         let (give_packs, get_packs, give_parts, get_parts) = if mine { (gpk, wpk, gpt, wpt) } else { (wpk, gpk, wpt, gpt) };
+        let (gb, wb) = (boost.first().copied().unwrap_or(0), boost.get(1).copied().unwrap_or(0));
+        let (give_boosted, get_boosted) = if mine { (gb, wb) } else { (wb, gb) };
         let t = TradeOut {
             id,
             mine,
@@ -382,6 +413,8 @@ async fn list_in(c: &mut PgConnection, me: Uuid) -> ApiResult<TradesOut> {
             you_get: match decided_cards(gets_then) { Some(v) => v, None => cards_by_id(&mut *c, &gets).await? },
             you_give_packs: give_packs,
             you_get_packs: get_packs,
+            you_give_boosted: give_boosted,
+            you_get_boosted: get_boosted,
             you_give_parts: give_parts,
             you_get_parts: get_parts,
             status: status.clone(),
@@ -402,11 +435,11 @@ async fn list(State(s): State<Shared>, user: User) -> ApiResult<Json<TradesOut>>
 }
 
 /// Locks an open trade and checks the caller's side of it.
-type OpenTrade = (Uuid, Uuid, String, Vec<i64>, Vec<i64>, i32, i32, i32, i32);
+type OpenTrade = (Uuid, Uuid, String, Vec<i64>, Vec<i64>, i32, i32, i32, i32, i32, i32);
 
 async fn open_trade(c: &mut PgConnection, id: i64) -> ApiResult<OpenTrade> {
     let row: Option<OpenTrade> = sqlx::query_as(
-        "select from_user, to_user, pack_id, give, want, give_packs, want_packs, give_parts, want_parts
+        "select from_user, to_user, pack_id, give, want, give_packs, want_packs, give_parts, want_parts, give_boosted, want_boosted
          from trades where id = $1 and status = 'open' for update",
     )
     .bind(id)
@@ -442,11 +475,11 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
     let (first, second) = if from < to { (from, to) } else { (to, from) };
     api::lock_user(&mut tx, first).await?;
     api::lock_user(&mut tx, second).await?;
-    let (from, to, pack_id, give, want, give_packs, want_packs, give_parts, want_parts) = open_trade(&mut tx, id).await?;
-    if over_daily(&mut tx, to, give_packs, give_parts).await? {
+    let (from, to, pack_id, give, want, give_packs, want_packs, give_parts, want_parts, give_boosted, want_boosted) = open_trade(&mut tx, id).await?;
+    if over_daily(&mut tx, to, give_packs + give_boosted, give_parts).await? {
         return Err(err(StatusCode::CONFLICT, "trade_limit"));
     }
-    if over_daily(&mut tx, from, want_packs, want_parts).await? {
+    if over_daily(&mut tx, from, want_packs + want_boosted, want_parts).await? {
         return Err(err(StatusCode::CONFLICT, "their_trade_limit"));
     }
     let from_off: bool = sqlx::query_scalar("select disabled from users where id = $1").bind(from).fetch_one(&mut *tx).await?;
@@ -469,8 +502,9 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
     // Packs and parts: check each still has what they're giving (their rows are locked above).
     let mut goods_ok = true;
     for who in [first, second] {
-        let (packs, parts) = if who == from { (give_packs, give_parts) } else { (want_packs, want_parts) };
-        goods_ok &= has_goods(&mut tx, who, &pack_id, packs, parts, true).await?;
+        let (packs, boosted, parts) =
+            if who == from { (give_packs, give_boosted, give_parts) } else { (want_packs, want_boosted, want_parts) };
+        goods_ok &= has_goods(&mut tx, who, &pack_id, packs, boosted, parts, true).await?;
     }
     if !ok(&give, from) || !ok(&want, to) || !goods_ok {
         close(&mut tx, id, "failed").await?;
@@ -487,8 +521,8 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
         .bind(from)
         .execute(&mut *tx)
         .await?;
-    move_goods(&mut tx, from, to, &pack_id, give_packs, give_parts).await?;
-    move_goods(&mut tx, to, from, &pack_id, want_packs, want_parts).await?;
+    move_goods(&mut tx, from, to, &pack_id, give_packs, give_boosted, give_parts).await?;
+    move_goods(&mut tx, to, from, &pack_id, want_packs, want_boosted, want_parts).await?;
     close(&mut tx, id, "accepted").await?;
     // Other open offers that promised any of these cards can't happen any more. One someone is accepting right now is
     // skipped rather than waited on (waiting could deadlock with it); it fails its own card check instead.
