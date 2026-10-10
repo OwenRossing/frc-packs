@@ -845,8 +845,9 @@ body.mythic-dark .hud, body.mythic-dark .counter, body.mythic-dark .stack .slot:
   animation: stamp .55s cubic-bezier(.2, 1.4, .4, 1) both; animation-delay: calc(var(--i) * 70ms); }
 @keyframes stamp { from { transform: scale(2.8) rotate(-10deg); opacity: 0; } 60% { opacity: 1; } to { transform: none; opacity: 1; } }
 @keyframes mtitle { 0%, 78% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-24px) scale(1.04); } }
-body.mythic-aura .rays { opacity: 1; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0 7deg, rgba(255,61,154,.16) 7deg 9deg, rgba(255,225,74,.18) 9deg 11deg, rgba(56,255,210,.16) 11deg 13deg, rgba(77,123,255,.14) 13deg 15deg); animation-duration: 16s; }
-body.mythic-aura .bg { filter: saturate(1.6) hue-rotate(20deg); transition: filter 1s; }
+body.mythic-aura .rays:not(.rbow) { opacity: 0; }
+body.mythic-aura .rays.rbow { opacity: 1; }
+/* (the whole background used to be re-filtered every frame here, which made the Mythic moment stutter) */
 
 @media (prefers-reduced-motion: reduce) {
   .card[data-tier="mythic"] .tn, .card[data-tier="mythic"] .nm, .card[data-tier="mythic"] .inner::after, .slot.charging .float, .slot.charging .tilt, .slot.charging::before, .mtitle, .mtitle span, .mring { animation: none !important; }
@@ -1253,3 +1254,10 @@ body.perf .card[data-tier="mythic"] .front::before, body.perf .card[data-tier="m
 .slot.locked .art, .slot.locked .fphoto, .slot.locked .fwrap { filter: none; opacity: 1; }
 .slot.locked .face.front { filter: blur(calc(var(--cw) * .035)) saturate(.7) brightness(.85); }
 .slot.locked .crest { display: block; }
+
+/* Mythic takeover, kept light: a second, ready-made rainbow ray layer fades in (no re-drawing a huge layer mid-animation),
+   the drifting background rests, and big layers are promoted to the GPU. */
+.rays.rbow { opacity: 0; background: repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0) 0 7deg, rgba(255,61,154,.16) 7deg 9deg, rgba(255,225,74,.18) 9deg 11deg, rgba(56,255,210,.16) 11deg 13deg, rgba(77,123,255,.14) 13deg 15deg); animation-duration: 16s; will-change: transform, opacity; }
+.rays { will-change: transform, opacity; }
+body.takeover .bg i, body.mythic-dark .bg i, body.mythic-aura .bg i { animation-play-state: paused; }
+.mshock, .mring, .mtitle, .mname { will-change: transform, opacity; }

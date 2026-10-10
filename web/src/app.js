@@ -960,10 +960,10 @@ export function start(RECIPE) {
     document.body.appendChild(nameEl); setTimeout(function () { nameEl.remove(); }, 3400);
     (document.body.classList.contains("perf") ? [0] : [0, 350, 800]).forEach(function (d) { setTimeout(function () { var w = document.createElement("i"); w.className = "mshock"; w.style.left = x + "px"; w.style.top = y + "px"; document.body.appendChild(w); setTimeout(function () { w.remove(); }, 1500); }, d); });
     try { if (navigator.vibrate) navigator.vibrate([60, 40, 120, 60, 260]); } catch (e) {}
-    burst(x, y, 140, null, 15, true);
-    setTimeout(function () { burst(x - 70, y - 50, 90, "#ffd34d", 11); burst(x + 70, y - 50, 90, "#ffd34d", 11); }, 300);
-    setTimeout(function () { burst(x, y - 90, 160, null, 13, true); }, 750);
-    setTimeout(function () { burst(x, y, 80, "#fff6c2", 9); }, 1250);
+    burst(x, y, 90, null, 15, true);
+    setTimeout(function () { burst(x - 70, y - 50, 50, "#ffd34d", 11); burst(x + 70, y - 50, 50, "#ffd34d", 11); }, 300);
+    setTimeout(function () { burst(x, y - 90, 90, null, 13, true); }, 750);
+    setTimeout(function () { burst(x, y, 40, "#fff6c2", 9); }, 1250);
     var n = c.inGame;
     say("MYTHIC · " + t.name + " (" + t.num + ") · " + (c.test ? "a test pull, nothing saved" : n === 1 ? "the only one in the game" : n > 1 ? "one of only " + n + " in the game" : "No. " + c.serial), 6000);
   }
