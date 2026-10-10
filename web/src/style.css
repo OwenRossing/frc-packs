@@ -1118,3 +1118,14 @@ body.tr-sheet { overflow: hidden; }
 body:not(.daily-pop) #daily { display: none !important; }
 body.daily-pop #daily { position: fixed; top: calc(62px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 32px)); z-index: 55; margin: 0; box-shadow: 0 20px 50px rgba(0,0,0,.6); display: block !important; }
 @media (max-width: 380px) { .brand { font-size: 17px; } .tchip, .top .timer { padding: 5px 8px; font-size: 12px; } }
+
+/* Social activity */
+.soc-tabs { margin-bottom: 12px; }
+.soc-act { display: grid; gap: 8px; }
+.soc-ev { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 9px 11px; font-size: 13px; color: var(--ink-dim); line-height: 1.35; }
+.soc-ev b { color: var(--foam); }
+.soc-ev .ev-i { font-size: 18px; flex: none; }
+.soc-ev .ev-t { flex: 1; min-width: 0; }
+.soc-ev .ev-t .bdg { padding: 2px 6px; font-size: 9px; margin-left: 4px; }
+.soc-ev .ev-c { flex: none; width: 40px; background: none; border: 0; padding: 0; cursor: pointer; }
+.soc-ev time { flex: none; font-size: 11px; white-space: nowrap; }

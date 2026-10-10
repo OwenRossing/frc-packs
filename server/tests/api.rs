@@ -1472,6 +1472,7 @@ async fn first_name_is_required_and_social_lists_players() {
     let me = r.body["players"].as_array().unwrap().iter().find(|p| p["name"] == who.as_str()).expect("listed");
     assert_eq!(me["firstName"], "Test");
     assert!(r.body["recent"].is_array());
+    assert!(r.body["activity"].is_array());
 }
 
 #[tokio::test]

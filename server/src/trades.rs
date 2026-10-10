@@ -652,10 +652,24 @@ struct SocialTrade {
     at: i64,
 }
 
+/// Something worth seeing in the Social feed: a big pull or a finished set.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SocialEvent {
+    kind: &'static str,
+    who: String,
+    team: Option<i32>,
+    tier: Option<String>,
+    serial: Option<i32>,
+    division: Option<String>,
+    at: i64,
+}
+
 #[derive(Serialize)]
 struct SocialOut {
     players: Vec<SocialPlayer>,
     recent: Vec<SocialTrade>,
+    activity: Vec<SocialEvent>,
 }
 
 /// Every player with a few stats, and the latest finished trades, so anyone can see who has what.
@@ -696,5 +710,45 @@ async fn social(State(s): State<Shared>, _user: User, Path(pack): Path<String>) 
             at: at.timestamp_millis(),
         })
         .collect();
-    Ok(Json(SocialOut { players, recent }))
+    type Pull = (String, i32, String, i32, chrono::DateTime<chrono::Utc>);
+    let pulls: Vec<Pull> = sqlx::query_as(
+        "select u.username, c.team, c.tier, c.serial, c.created_at from cards c join users u on u.id = c.user_id
+         where c.pack_id = $1 and c.obtained = 'pack' and u.username is not null and not u.disabled
+           and (c.tier in ('mythic', 'legendary') or c.serial <= 3)
+         order by c.created_at desc limit 25",
+    )
+    .bind(pack.id())
+    .fetch_all(&s.db)
+    .await?;
+    let sets: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "select u.username, d.division, d.completed_at from sets_done d join users u on u.id = d.user_id
+         where d.pack_id = $1 and u.username is not null and not u.disabled order by d.completed_at desc limit 10",
+    )
+    .bind(pack.id())
+    .fetch_all(&s.db)
+    .await?;
+    let mut activity: Vec<SocialEvent> = pulls
+        .into_iter()
+        .map(|(who, team, tier, serial, at)| SocialEvent {
+            kind: "pull",
+            who,
+            team: Some(team),
+            tier: Some(tier),
+            serial: Some(serial),
+            division: None,
+            at: at.timestamp_millis(),
+        })
+        .chain(sets.into_iter().map(|(who, division, at)| SocialEvent {
+            kind: "set",
+            who,
+            team: None,
+            tier: None,
+            serial: None,
+            division: Some(division),
+            at: at.timestamp_millis(),
+        }))
+        .collect();
+    activity.sort_by_key(|e| std::cmp::Reverse(e.at));
+    activity.truncate(30);
+    Ok(Json(SocialOut { players, recent, activity }))
 }

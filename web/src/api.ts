@@ -326,7 +326,8 @@ async function act<T>(path: string, body?: unknown): Promise<T> {
 export interface Special { id: number; edition: string; team: number; name: string; title: string; serial: number; total: number }
 export interface SocialPlayer { name: string; firstName: string | null; badge: string | null; teams: number; mythics: number; legendaries: number; trades: number }
 export interface SocialTrade { from: string; to: string; gave: { num: number }[] | null; got: { num: number }[] | null; gavePacks: number; gotPacks: number; at: number }
-export interface Social { players: SocialPlayer[]; recent: SocialTrade[] }
+export interface SocialEvent { kind: "pull" | "set"; who: string; team: number | null; tier: string | null; serial: number | null; division: string | null; at: number }
+export interface Social { players: SocialPlayer[]; recent: SocialTrade[]; activity: SocialEvent[] }
 
 export const api = {
   /** The signed-in account's state. Fails with 401 `sign_in`, or `guest` for a guest account from before sign-in. */

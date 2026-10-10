@@ -2109,7 +2109,7 @@ export function start(RECIPE) {
   var SOCIAL = null, socBy = "teams", socReq = 0;
   function loadSocial() {
     var n = ++socReq;
-    return api.social(PACK_ID).then(function (d) { if (n !== socReq) return; SOCIAL = d; if (!vSocial.hidden) paintSocial(); paintPeople(); }, function () {});
+    return api.social(PACK_ID).then(function (d) { if (n !== socReq) return; SOCIAL = d; if (!vSocial.hidden) { paintSocial(); paintActivity(); } paintPeople(); }, function () {});
   }
   function badgeHTML(b) { return b ? ' <span class="tagbadge">' + esc(b) + '</span>' : ""; }
   function whoLabel(p) { return (p.firstName ? esc(p.firstName) + ' <small>' + esc(p.name) + '</small>' : esc(p.name)) + badgeHTML(p.badge); }
@@ -2135,6 +2135,33 @@ export function start(RECIPE) {
       feed.appendChild(d);
     });
   }
+  /* Activity: big pulls, finished sets and trades, newest first. */
+  function paintActivity() {
+    var box = $("#socAct"); if (!box || !SOCIAL) return;
+    var ev = (SOCIAL.activity || []).slice();
+    (SOCIAL.recent || []).forEach(function (t) { ev.push({ kind: "trade", who: t.from, other: t.to, at: t.at, gave: t.gave, got: t.got }); });
+    ev.sort(function (a, b) { return b.at - a.at; });
+    box.innerHTML = ev.length ? "" : '<p class="soc-none">Nothing yet. Open a pack!</p>';
+    ev.slice(0, 30).forEach(function (e) {
+      var d = document.createElement("div"); d.className = "soc-ev"; var html = "";
+      if (e.kind === "pull" && BY_NUM[e.team]) {
+        var T = TIERS[e.tier] || TIERS.common, t = BY_NUM[e.team], big = e.tier === "mythic" || e.tier === "legendary";
+        html = '<span class="ev-i">' + (e.tier === "mythic" ? "\u2728" : e.tier === "legendary" ? "\ud83d\udc9c" : "\ud83c\udff7\ufe0f") + '</span><span class="ev-t"><b>' + esc(e.who) + '</b> pulled ' +
+          (!big ? '<b>No. ' + e.serial + '</b> of ' : 'a <b style="color:' + T.color + '">' + T.label + '</b> \u00b7 ') + esc(t.name) + (big && e.serial <= 10 ? ' <span class="bdg g">No. ' + e.serial + '</span>' : '') + '</span>' +
+          '<button type="button" class="ev-c" aria-label="See ' + esc(t.name) + '">' + miniCard(e.team, { serial: e.serial }) + '</button>';
+      } else if (e.kind === "set") {
+        html = '<span class="ev-i">\ud83c\udfc6</span><span class="ev-t"><b>' + esc(e.who) + '</b> finished the <b>' + esc(e.division) + '</b> set</span>';
+      } else if (e.kind === "trade") {
+        var side = function (cards) { return (cards || []).map(function (c) { return c.num; }).filter(function (n) { return BY_NUM[n]; }).join(", ") || "packs"; };
+        html = '<span class="ev-i">\u21c4</span><span class="ev-t"><b>' + esc(e.who) + '</b> traded ' + esc(side(e.gave)) + ' to <b>' + esc(e.other) + '</b> for ' + esc(side(e.got)) + '</span>';
+      } else return;
+      d.innerHTML = html + '<time>' + ago(e.at) + '</time>';
+      var c = d.querySelector(".ev-c"); if (c) c.onclick = function () { viewCard(e.team, { serial: e.serial, from: esc(e.who) + "'s pull.", locked: !(S.inv[e.team] || []).length }); };
+      box.appendChild(d);
+    });
+  }
+  $("#socTabAct").onclick = function () { $("#socTabAct").setAttribute("aria-selected", "true"); $("#socTabPpl").setAttribute("aria-selected", "false"); $("#socAct").hidden = false; $("#socPpl").hidden = true; };
+  $("#socTabPpl").onclick = function () { $("#socTabAct").setAttribute("aria-selected", "false"); $("#socTabPpl").setAttribute("aria-selected", "true"); $("#socAct").hidden = true; $("#socPpl").hidden = false; };
   Array.prototype.forEach.call(document.querySelectorAll(".soc-sort button"), function (b) {
     b.onclick = function () { socBy = b.dataset.by; Array.prototype.forEach.call(document.querySelectorAll(".soc-sort button"), function (x) { x.setAttribute("aria-selected", String(x === b)); }); paintSocial(); };
   });

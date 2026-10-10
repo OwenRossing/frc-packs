@@ -251,11 +251,14 @@
 
   <section id="viewSocial" hidden>
     <div class="social">
-      <h2>Players</h2>
+      <div class="seg soc-tabs" role="tablist" aria-label="Social"><button type="button" role="tab" id="socTabAct" aria-selected="true">Activity</button><button type="button" role="tab" id="socTabPpl" aria-selected="false">Players</button></div>
+      <div id="socAct" class="soc-act"></div>
+      <div id="socPpl" hidden>
       <div class="seg soc-sort" role="tablist" aria-label="Rank by"><button type="button" role="tab" data-by="teams" aria-selected="true">Teams</button><button type="button" role="tab" data-by="mythics" aria-selected="false">Mythics</button><button type="button" role="tab" data-by="legendaries" aria-selected="false">Legendaries</button><button type="button" role="tab" data-by="trades" aria-selected="false">Trades</button></div>
       <div class="soc-list" id="socList"></div>
       <h3>Recent trades</h3>
       <div class="soc-feed" id="socFeed"></div>
+      </div>
     </div>
   </section>
 
