@@ -1159,8 +1159,8 @@ body.daily-pop #daily { position: fixed; top: calc(62px + env(safe-area-inset-to
 html { overscroll-behavior-y: none; }
 .tabbar { -webkit-transform: translate3d(0, 0, 0); transform: translate3d(0, 0, 0); will-change: transform; bottom: 0; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
 @supports (height: 100dvh) { .app { min-height: 100dvh; } }
-.top { position: sticky; top: 0; z-index: 30; margin-inline: -16px; padding: max(12px, env(safe-area-inset-top)) 16px 8px; margin-top: calc(-1 * max(12px, env(safe-area-inset-top))); background: rgba(5,20,26,.88); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
-body.signed-out .top { background: none; backdrop-filter: none; }
+.app > .top { position: sticky; top: 0; z-index: 30; margin-inline: -16px; padding: max(12px, env(safe-area-inset-top)) 16px 8px; margin-top: calc(-1 * max(12px, env(safe-area-inset-top))); background: rgba(5,20,26,.88); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+body.signed-out .app > .top { background: none; backdrop-filter: none; }
 
 /* Black boxes around cards on some phones: blend-mode layers (foil, sparkle, glare) inside a 3D-transformed card are composited
    against the whole page unless their card face is its own group. Isolating the face keeps them inside the card, and the
@@ -1211,3 +1211,4 @@ body.settings-open { overflow: hidden; }
 .modal.card-view .modal-in > .cta-row:last-child { gap: 8px; flex-wrap: wrap; }
 .modal.card-view .modal-in > .cta-row:last-child .cta { flex: 1 1 0; min-width: 0; padding: 11px 8px; font-size: 15px; white-space: nowrap; }
 .modal.card-view .modal-in > .cta-row:last-child .cta.wide { flex-basis: 100%; }
+

@@ -271,7 +271,8 @@ export function start(RECIPE) {
   function attachTilt(slot) {
     var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
     slot.addEventListener("pointermove", function (e) {
-      if (slot.classList.contains("drag")) return;
+      /* Tilt follows a mouse. On touch it's the swipe's job; a finger can leave a card stuck at an angle. */
+      if (slot.classList.contains("drag") || (e.pointerType && e.pointerType !== "mouse")) return;
       var r = slot.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
       tilt.classList.remove("rest"); slot.classList.add("live");
       tilt.style.setProperty("--ry", ((px - .5) * 26) + "deg"); tilt.style.setProperty("--rx", ((.5 - py) * 22) + "deg");
@@ -279,7 +280,7 @@ export function start(RECIPE) {
       inner.style.setProperty("--mx", (px * 100).toFixed(1)); inner.style.setProperty("--my", (py * 100).toFixed(1));
     });
     function leave() { slot.classList.remove("live"); slot.style.setProperty("--sx", 0); slot.style.setProperty("--sy", 0); tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
-    slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave);
+    slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave); slot.addEventListener("pointerup", function (e) { if (e.pointerType && e.pointerType !== "mouse") leave(); });
   }
   var EDGES = [-2, -1, 1, 2].map(function (z) { return '<i class="edge" style="--z:' + z + '"></i>'; }).join("") + '<i class="edge e0" style="--z:0"></i>';
   /* c = { num, tier, serial, isNew, copy } */
