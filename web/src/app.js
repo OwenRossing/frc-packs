@@ -283,7 +283,7 @@ export function start(RECIPE) {
     function leave() { slot.classList.remove("live"); slot.style.setProperty("--sx", 0); slot.style.setProperty("--sy", 0); tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
     /* Grab and drag, in the big card view: the card turns the way your finger moves, eases off near the limit, and springs
        back when you let go. It only reacts to a drag that starts on the card. */
-    var G = { held: false, rawX: 0, rawY: 0, rx: 0, ry: 0, vx: 0, vy: 0, lx: 0, ly: 0, lt: 0, id: null, raf: 0 }, MAXA = 30, GAIN = .36;
+    var G = { held: false, rawX: 0, rawY: 0, rx: 0, ry: 0, vx: 0, vy: 0, lx: 0, ly: 0, lt: 0, id: null, raf: 0 }, MAXA = 20, GAIN = .3;
     function soft(v) { return MAXA * Math.tanh(v / MAXA); }
     function paintGrab() {
       var cx = Math.max(0, Math.min(100, 50 + G.ry / MAXA * 50)), cy = Math.max(0, Math.min(100, 50 - G.rx / MAXA * 50));
