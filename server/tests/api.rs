@@ -1604,3 +1604,50 @@ async fn username_and_first_name_can_be_changed() {
     let empty = call(&app, "POST", "/api/account/name", Some(&cookie), Some(json!({ "firstName": "  " }))).await;
     assert_eq!(empty.body["error"], "bad_first_name");
 }
+
+#[tokio::test]
+async fn favorite_cards_are_never_scrapped() {
+    let (app, db) = need_db!(setup(true));
+    let (c, _) = player(&app, &db).await;
+    let id = user_id(&db, &c).await;
+    let team = team_of("common", 30);
+    for s in 1..=3 {
+        sqlx::query("insert into cards (user_id, pack_id, team, tier, serial, obtained) values ($1, 'cmp26', $2, 'common', $3, 'pack')")
+            .bind(id).bind(team).bind(900 + s).execute(&db).await.unwrap();
+    }
+    let not_owned = call(&app, "POST", "/api/favorites", Some(&c), Some(json!({ "pack": "cmp26", "team": team + 1000, "on": true }))).await;
+    assert_eq!(not_owned.body["error"], "not_owned");
+    let fav = call(&app, "POST", "/api/favorites", Some(&c), Some(json!({ "pack": "cmp26", "team": team, "on": true }))).await;
+    assert_eq!(fav.status, StatusCode::OK, "{}", fav.body);
+    let r = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common"] }))).await;
+    assert_eq!(r.body["scrapped"], 0, "{}", r.body);
+    let left: i64 = sqlx::query_scalar("select count(*) from cards where user_id = $1 and team = $2").bind(id).bind(team).fetch_one(&db).await.unwrap();
+    assert_eq!(left, 3, "every copy of a favorite stays");
+    call(&app, "POST", "/api/favorites", Some(&c), Some(json!({ "pack": "cmp26", "team": team, "on": false }))).await;
+    let r2 = call(&app, "POST", "/api/scrap/extras", Some(&c), Some(json!({ "pack": "cmp26", "tiers": ["common"] }))).await;
+    assert!(r2.body["scrapped"].as_i64().unwrap() >= 2, "without the favorite mark, extras scrap again");
+}
+
+#[tokio::test]
+async fn trades_can_name_the_exact_serial() {
+    let (app, db) = need_db!(setup(true));
+    let (ca, _) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let b_name = sb["account"]["username"].as_str().unwrap().to_string();
+    age(&db, &[a, b]).await;
+    let team = team_of("common", 40);
+    for s in [501, 502, 503] {
+        sqlx::query("insert into cards (user_id, pack_id, team, tier, serial, obtained) values ($1, 'cmp26', $2, 'common', $3, 'pack')")
+            .bind(a).bind(team).bind(s).execute(&db).await.unwrap();
+    }
+    let other = team_of("rare", 40);
+    sqlx::query("insert into cards (user_id, pack_id, team, tier, serial, obtained) values ($1, 'cmp26', $2, 'rare', 900, 'pack')")
+        .bind(b).bind(other).execute(&db).await.unwrap();
+    // A gives the middle copy, serial 502, not the newest one.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [team], "giveSerials": [502], "want": [other], "wantSerials": [900] }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["outgoing"][0]["youGive"][0]["serial"], 502);
+    let nope = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "give": [team], "giveSerials": [999], "want": [other] }))).await;
+    assert_eq!(nope.body["error"], "not_owned", "a serial you don't have can't be offered");
+}

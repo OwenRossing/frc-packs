@@ -95,6 +95,7 @@
     <div class="line"><span>Sound<small>Chimes, rip and reveal stings.</small></span><button type="button" class="chip" id="mute" aria-pressed="false">On</button></div>
     <div class="line"><span>Demo luck<small>Boosts Mythic to roughly 1 pack in 5 so you can feel the big moment. Real odds are 1 in 400, and the Mythic meter guarantees one by pack 200.</small></span><button type="button" class="chip" id="demoLuck" aria-pressed="true">On</button></div>
     <div class="line"><span>Extra packs<small>Developer tools. Real packs come from the free-pack timer.</small></span><div class="btns"><button type="button" class="cta small ghost" id="demoPack">+1 demo pack</button><button type="button" class="cta small ghost" id="skipTimer">Skip timer</button></div></div>
+    <div class="line"><span>Performance mode<small>Lighter effects for slower phones: fewer sparkles, no blur or glow layers. Auto turns it on for phones that look slow.</small></span><button type="button" class="chip" id="perfBtn" aria-pressed="false">Auto</button></div>
     <div class="line"><span>Pack wheel every time<small>Pick from the wheel of 10 packs each time you open another pack.</small></span><button type="button" class="chip" id="wheelAgain" aria-pressed="true">On</button></div>
     <div class="line"><span>My team<small id="myTeamTxt">Not picked yet.</small></span><button type="button" class="chip" id="changeTeam">Change</button></div>
     <div class="line"><span>Start over<small>Developer tools. Deletes this account's cards and packs.</small></span><button type="button" class="chip" id="reset">Reset collection</button></div>
@@ -239,6 +240,7 @@
         <div class="tr-scrim" id="trScrim"></div>
         <div class="tr-browse" id="trBrowse" role="dialog" aria-label="Add to the trade">
           <div class="tr-grab"></div>
+          <div class="tr-copies" id="trCopies" hidden></div>
           <div class="tr-sheet-h"><b id="trSheetT">Your stuff</b><button type="button" class="linkbtn" id="trSheetX">Done</button></div>
           <div class="tr-browse-h">
             <div class="seg tr-kind" role="tablist" aria-label="What to trade"><button type="button" role="tab" id="trKindCards" aria-selected="true">Cards</button><button type="button" role="tab" id="trKindGoods" aria-selected="false">Packs &amp; parts</button></div>

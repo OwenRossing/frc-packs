@@ -1166,7 +1166,6 @@ body.signed-out .app > .top { background: none; backdrop-filter: none; }
    against the whole page unless their card face is its own group. Isolating the face keeps them inside the card, and the
    shadow is a plain rounded box-shadow instead of a gradient layer that some GPUs draw as a square. */
 .card .inner, .card .front, .slot .face.front { isolation: isolate; }
-.shade { background: none !important; border-radius: 7% / 5%; box-shadow: 0 calc(var(--cw) * .08) calc(var(--cw) * .12) rgba(0,0,0,.5); }
 .soc-ev.fresh { animation: evin .7s cubic-bezier(.2,1.2,.3,1) both; border-color: var(--tide); }
 @keyframes evin { from { opacity: 0; transform: translateY(-14px) scale(.97); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .soc-ev.fresh { animation: none; } }
@@ -1212,3 +1211,31 @@ body.settings-open { overflow: hidden; }
 .modal.card-view .modal-in > .cta-row:last-child .cta { flex: 1 1 0; min-width: 0; padding: 11px 8px; font-size: 15px; white-space: nowrap; }
 .modal.card-view .modal-in > .cta-row:last-child .cta.wide { flex-basis: 100%; }
 
+
+/* Performance mode: drop the effects that cost the most on slower phones, keep the moment itself. */
+body.perf .bg i { animation: none; }
+body.perf .rays, body.perf .ringfloor { display: none !important; }
+body.perf .foil, body.perf .spark, body.perf .glare, body.perf .front::after, body.perf .card[data-tier="mythic"] .inner::after { display: none !important; }
+body.perf *, body.perf *::before, body.perf *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+body.perf .ph-bg { display: none; }
+body.perf .slot.charging::before { display: none; }
+body.perf .mtitle, body.perf .mname b { filter: none; }
+body.perf .stage.shake, body.perf .shake, body.perf .shake-big { animation: none !important; }
+body.perf .mring, body.perf .mshock { display: none; }
+body.perf .tabbar, body.perf .app > .top { background: rgba(5,20,26,.97); }
+
+.fav-badge { position: absolute; left: 6px; bottom: 6px; z-index: 5; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #ff3d6e; color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.4); pointer-events: none; }
+.keepb.on { border-color: #ff3d6e; color: #ff7a9c; }
+
+/* Choosing which copies (serials) go in a trade */
+.tr-copies { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; background: #0b2630; border-top: 1px solid var(--line); border-radius: 22px 22px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); display: grid; gap: 10px; box-shadow: 0 -16px 40px rgba(0,0,0,.5); }
+.tr-copies[hidden] { display: none; }
+.tc-h { display: flex; justify-content: space-between; align-items: center; font-family: var(--display); font-size: 19px; }
+.tc-h small { font: 700 12px var(--body); color: var(--ink-dim); margin-left: 6px; }
+.tc-s { margin: 0; font-size: 12px; color: var(--ink-dim); }
+.tc-chips { display: flex; flex-wrap: wrap; gap: 8px; max-height: 38vh; overflow-y: auto; }
+.tc-chip { background: #0c2e38; border: 1px solid var(--line); border-radius: 99px; padding: 8px 13px; color: var(--ink); font: 700 13px var(--body); cursor: pointer; font-variant-numeric: tabular-nums; }
+.tc-chip.on { border-color: var(--tide); box-shadow: inset 0 0 0 1px var(--tide); background: rgba(39,211,195,.14); }
+.tc-chip.low { color: #ffd34d; }
+.tc-chip.match { color: var(--tide); }
+.tc-chip:disabled { opacity: .35; cursor: not-allowed; }

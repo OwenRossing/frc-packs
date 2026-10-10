@@ -75,6 +75,7 @@ export interface Account {
 
 export interface State {
   account: Account;
+  favorites?: number[];
   /** Collector level: one per `per` different teams; `claimed` levels have paid out. */
   level?: { teams: number; level: number; claimed: number; per: number; reward: number };
   /** Server time in ms, so timers don't depend on the device clock. */
@@ -366,7 +367,7 @@ export const api = {
     call<Collection>("GET", `/api/players/${encodeURIComponent(name)}/collection/${encodeURIComponent(pack)}`),
   trades: () => call<Trades>("GET", "/api/trades"),
   /** Offer one copy each of `give` (your teams) for one copy each of `want` (theirs). */
-  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveBoosted: number; wantBoosted: number; giveParts: number; wantParts: number; giveSpecials?: number[]; wantSpecials?: number[] }) =>
+  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveBoosted: number; wantBoosted: number; giveParts: number; wantParts: number; giveSpecials?: number[]; wantSpecials?: number[]; giveSerials?: number[]; wantSerials?: number[] }) =>
     act<Trades>("/api/trades", { to, pack, give, want, ...extra }),
   acceptTrade: (id: number) =>
     call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),
@@ -379,6 +380,7 @@ export const api = {
   /** A player's profile: showcase, stats, rarest cards, wishlist. */
   profile: (name: string, pack: string) => call<Profile>("GET", `/api/players/${encodeURIComponent(name)}/profile/${encodeURIComponent(pack)}`),
   /** Put a team on your wishlist or take it off; returns the whole list. */
+  setFavorite: (pack: string, team: number, on: boolean) => call<number[]>("POST", "/api/favorites", { pack, team, on }),
   setWish: (pack: string, team: number, on: boolean) => call<number[]>("POST", "/api/wishlist", { pack, team, on }),
   /** Pin up to 3 teams you own to your profile. */
   setShowcase: (pack: string, teams: number[]) => call<number[]>("POST", "/api/showcase", { pack, teams }),

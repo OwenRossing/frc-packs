@@ -43,17 +43,26 @@ struct TestPackReq {
 
 #[derive(Serialize)]
 struct TestPackOut {
-    /// Five cards, best last, rolled with the pack's real odds.
+    /// One team of each rarity, best last.
     cards: Vec<crate::roll::Rolled>,
 }
 
-/// A throwaway pack for the admin to try the opening flow: rolled with the same odds and code as a real pack, but it
+/// A throwaway pack for the admin to try the opening flow: one sample team of every rarity, but it
 /// reads and writes nothing. No pack is used, no serial number is minted, nothing joins the binder, the pity counters
 /// don't move, and the ledger and circulation counts never see it.
 async fn test_pack(State(s): State<Shared>, _admin: Admin, Json(req): Json<TestPackReq>) -> ApiResult<Json<TestPackOut>> {
     let pack = api::pack(&s, &req.pack)?;
-    let opts = crate::roll::Opts { boosted: req.boosted, ..Default::default() };
-    let cards = crate::roll::roll(pack, &mut rand::rng(), &opts);
+    // One sample team of every rarity, so the whole range can be seen in one pack (best last).
+    let mut rng = rand::rng();
+    let mut cards: Vec<crate::roll::Rolled> = crate::packs::Tier::ORDER
+        .iter()
+        .filter_map(|t| {
+            let pool = pack.pools.get(t)?;
+            (!pool.is_empty()).then(|| crate::roll::Rolled { num: pool[rand::Rng::random_range(&mut rng, 0..pool.len())], tier: *t })
+        })
+        .collect();
+    crate::roll::sort_best_last(&mut cards);
+    let _ = req.boosted;
     Ok(Json(TestPackOut { cards }))
 }
 

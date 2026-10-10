@@ -23,6 +23,7 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/players/{name}/profile/{pack}", get(profile))
         .route("/wishlist", post(set_wish))
+        .route("/favorites", post(set_favorite))
         .route("/showcase", post(set_showcase))
 }
 
@@ -236,4 +237,52 @@ async fn set_showcase(State(s): State<Shared>, user: User, Json(req): Json<Showc
     }
     sqlx::query("update users set showcase = $2 where id = $1").bind(user.id).bind(&req.teams).execute(&s.db).await?;
     Ok(Json(req.teams))
+}
+
+#[derive(Deserialize)]
+struct FavReq {
+    pack: String,
+    team: i32,
+    on: bool,
+}
+
+pub async fn favorites(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResult<Vec<i32>> {
+    Ok(sqlx::query_scalar("select team from favorites where user_id = $1 and pack_id = $2 order by created_at")
+        .bind(user)
+        .bind(pack)
+        .fetch_all(&mut *c)
+        .await?)
+}
+
+/// Marks a team you own as a favorite (never scrapped), or unmarks it.
+async fn set_favorite(State(s): State<Shared>, user: User, Json(req): Json<FavReq>) -> ApiResult<Json<Vec<i32>>> {
+    let pack = api::pack(&s, &req.pack)?;
+    let mut tx = s.db.begin().await?;
+    if req.on {
+        let owned: bool = sqlx::query_scalar("select exists (select 1 from cards where user_id = $1 and pack_id = $2 and team = $3)")
+            .bind(user.id)
+            .bind(pack.id())
+            .bind(req.team)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !owned {
+            return Err(err(StatusCode::CONFLICT, "not_owned"));
+        }
+        sqlx::query("insert into favorites (user_id, pack_id, team) values ($1, $2, $3) on conflict do nothing")
+            .bind(user.id)
+            .bind(pack.id())
+            .bind(req.team)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query("delete from favorites where user_id = $1 and pack_id = $2 and team = $3")
+            .bind(user.id)
+            .bind(pack.id())
+            .bind(req.team)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let list = favorites(&mut tx, user.id, pack.id()).await?;
+    tx.commit().await?;
+    Ok(Json(list))
 }

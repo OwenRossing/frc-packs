@@ -50,11 +50,15 @@ export function start(RECIPE) {
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
-      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true;
+      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true; S.perf = prefs.perf === "on" || prefs.perf === "off" ? prefs.perf : "auto";
       if (prefs.unseen && typeof prefs.unseen === "object" && !Array.isArray(prefs.unseen)) S.unseen = prefs.unseen;
     }
   } catch (e) {}
-  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, unseen: S.unseen })); } catch (e) {} }
+  /* Performance mode: lighter effects. Auto turns it on for phones that look slow (few cores or little memory). */
+  var SLOW = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) || (navigator.deviceMemory && navigator.deviceMemory <= 3);
+  function perfOn() { return S.perf === "on" || (S.perf !== "off" && !!SLOW); }
+  function paintPerf() { document.body.classList.toggle("perf", perfOn()); var b = $("#perfBtn"); if (b) { b.textContent = S.perf === "on" ? "On" : S.perf === "off" ? "Off" : "Auto" + (SLOW ? " (on)" : " (off)"); b.setAttribute("aria-pressed", String(perfOn())); } }
+  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, perf: S.perf, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
   /* The donation link is off for now: set DONATIONS to true (and the link in the admin panel) to show it. */
   var DONATIONS = false;
@@ -69,7 +73,7 @@ export function start(RECIPE) {
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
     S.account = st.account || S.account; S.level = st.level || null; S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
-    if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
+    S.favorites = st.favorites || S.favorites || []; if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
     /* The donation link only shows when the admin set one (always https, checked by the server). */
     var don = DONATIONS && st.donateUrl && /^https:\/\//.test(st.donateUrl) ? st.donateUrl : "";
     $("#donateLine").hidden = !don; if (don) { $("#donateBtn").href = don; }
@@ -173,7 +177,7 @@ export function start(RECIPE) {
   size(); addEventListener("resize", size);
   var PALETTE = ["#ff3d9a", "#ffe14a", "#38ffd2", "#4d7bff", "#c04dff", "#ffffff"];
   function burst(x, y, n, color, pow, rainbow) {
-    if (RM) n = Math.min(n, 12);
+    if (RM) n = Math.min(n, 12); else if (document.body.classList.contains("perf")) n = Math.ceil(n * .3);
     for (var i = 0; i < n; i++) {
       var a = Math.random() * Math.PI * 2, s = (.3 + Math.random()) * pow;
       parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - pow * .35, life: 1, dec: .008 + Math.random() * .014, sz: 3 + Math.random() * 6, c: rainbow ? PALETTE[i % PALETTE.length] : color, rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
@@ -927,7 +931,7 @@ export function start(RECIPE) {
   function mythicMoment(el, c, t, x, y) {
     document.body.classList.remove("mythic-dark"); document.body.classList.add("mythic-aura");
     takeover("rgba(255,225,120,.2)"); flash(); shake(true); sfx.mythic();
-    [0, 180, 420].forEach(function (d, i) {
+    (document.body.classList.contains("perf") ? [0] : [0, 180, 420]).forEach(function (d, i) {
       setTimeout(function () { var r = document.createElement("i"); r.className = "mring" + (i === 1 ? " gold" : ""); r.style.left = x + "px"; r.style.top = y + "px"; document.body.appendChild(r); setTimeout(function () { r.remove(); }, 1300); }, d);
     });
     var title = document.createElement("div"); title.className = "mtitle"; title.setAttribute("aria-hidden", "true"); title.style.setProperty("--ty", (y - el.getBoundingClientRect().height * .12) + "px");
@@ -938,7 +942,7 @@ export function start(RECIPE) {
     nameEl.style.setProperty("--ny", (y + el.getBoundingClientRect().height * .46) + "px");
     nameEl.innerHTML = '<b>' + esc(t.name) + '</b><span>Team ' + t.num + '</span>';
     document.body.appendChild(nameEl); setTimeout(function () { nameEl.remove(); }, 3400);
-    [0, 350, 800].forEach(function (d) { setTimeout(function () { var w = document.createElement("i"); w.className = "mshock"; w.style.left = x + "px"; w.style.top = y + "px"; document.body.appendChild(w); setTimeout(function () { w.remove(); }, 1500); }, d); });
+    (document.body.classList.contains("perf") ? [0] : [0, 350, 800]).forEach(function (d) { setTimeout(function () { var w = document.createElement("i"); w.className = "mshock"; w.style.left = x + "px"; w.style.top = y + "px"; document.body.appendChild(w); setTimeout(function () { w.remove(); }, 1500); }, d); });
     try { if (navigator.vibrate) navigator.vibrate([60, 40, 120, 60, 260]); } catch (e) {}
     burst(x, y, 140, null, 15, true);
     setTimeout(function () { burst(x - 70, y - 50, 90, "#ffd34d", 11); burst(x + 70, y - 50, 90, "#ffd34d", 11); }, 300);
@@ -1126,6 +1130,7 @@ export function start(RECIPE) {
       }
       var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
       if (S.unseen[t.num]) showRibbon(el);
+      if (isFav(t.num)) { var hb = document.createElement("div"); hb.className = "fav-badge"; hb.textContent = "\u2665"; hb.setAttribute("aria-label", "Kept"); el.appendChild(hb); }
       el.addEventListener("click", function () { cardNav = list.slice(0, shown).map(function (x) { return x.num; }); inspect(t); });
       el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(t); } });
       gridEl.appendChild(el);
@@ -1155,6 +1160,18 @@ export function start(RECIPE) {
   (function () { var n = document.querySelector(".ws-note:not(.ws-held):not(.ws-other)"); if (n) { var t = infoTip(n.textContent); n.remove(); document.querySelector(".ws-parts").appendChild(t); } })();
   /* Copies the server won't scrap yet: cards from the pack being revealed, and cards in open trade offers. Keyed
      "team:serial". */
+  function isFav(n) { return (S.favorites || []).indexOf(+n) >= 0; }
+  /* "Keep": a favorite is never scrapped, however many copies you hold. */
+  function keepButton(num) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta ghost keepb";
+    var paint = function () { b.textContent = isFav(num) ? "\u2665 Kept" : "\u2661 Keep"; b.setAttribute("aria-pressed", String(isFav(num))); b.classList.toggle("on", isFav(num)); };
+    paint();
+    b.onclick = function () {
+      b.disabled = true;
+      api.setFavorite(PACK_ID, num, !isFav(num)).then(function (l) { S.favorites = l; b.disabled = false; paint(); sfx.tick(); say(isFav(num) ? "Kept. It will never be scrapped." : "No longer kept.", 1800); paintWorkshop(); }, function (e) { b.disabled = false; offline(e); });
+    };
+    return b;
+  }
   function heldCopies() {
     var held = {};
     if (S.pending) S.pending.cards.forEach(function (c) { held[c.num + ":" + c.serial] = 1; });
@@ -1166,7 +1183,7 @@ export function start(RECIPE) {
   function extras() {
     var out = { held: 0 }, h = heldCopies(); ORDER.forEach(function (t) { out[t] = 0; });
     Object.keys(S.inv).forEach(function (k) {
-      var t = BY_NUM[k], all = S.inv[k].length; if (!t || all < 2) return;
+      var t = BY_NUM[k], all = S.inv[k].length; if (!t || all < 2 || isFav(k)) return;
       var free = S.inv[k].filter(function (s) { return !h[k + ":" + s]; }).length, now = Math.max(0, free - 1);
       out[t.tier] += now; if (scrapPick[t.tier]) out.held += all - 1 - now;
     });
@@ -1341,6 +1358,7 @@ export function start(RECIPE) {
     var close = closeButton(); row.appendChild(close);
     row.appendChild(pinButton(t.num));
     row.insertBefore(detailsButton(), row.children[1] || null);
+    if (serials.length) row.insertBefore(keepButton(t.num), row.children[2] || null);
     modalIn.appendChild(row); cardPos();
     if (serials.length) {
       var offer = document.createElement("button"); offer.type = "button"; offer.className = "cta ghost wide"; offer.textContent = "Offer it in a trade";
@@ -1430,6 +1448,7 @@ export function start(RECIPE) {
       row.insertBefore(go, row.firstChild);
     }
     row.insertBefore(detailsButton(), row.children[1] || null);
+    if (mine) row.insertBefore(keepButton(num), row.children[2] || null);
     modalIn.appendChild(row); cardPos();
     return close;
   }
@@ -1692,8 +1711,9 @@ export function start(RECIPE) {
   });
   function paintSocialAfterRename() { SOCIAL = null; var mb = $("#meBtn"); if (mb) mb.innerHTML = avatar(ME); }
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
+  $("#perfBtn").onclick = function () { S.perf = S.perf === "auto" ? "on" : S.perf === "on" ? "off" : "auto"; save(); paintPerf(); };
   wheelBtn.onclick = function () { S.wheel = S.wheel !== true; save(); paintToggles(); };
-  function paintToggles() { paintV2(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === true ? "On" : "Off"; wheelBtn.setAttribute("aria-pressed", String(S.wheel === true));
+  function paintToggles() { paintV2(); paintPerf(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === true ? "On" : "Off"; wheelBtn.setAttribute("aria-pressed", String(S.wheel === true));
     ["#demoLuck", "#demoPack", "#reset"].forEach(function (id) { $(id).closest(".line").hidden = !S.devTools; });
   }
   /* New layout, for testing: the admin can switch it on in Settings. It only changes how the Collection page is arranged. */
@@ -1787,6 +1807,7 @@ export function start(RECIPE) {
      your earliest serial longest. Offers for you, sent offers and history each have a tab. */
   var TR = { incoming: [], outgoing: [], recent: [] }, MAXT = 5;
   var trWho = $("#trWho"), trSend = $("#trSend"), trPickQ = $("#trPickQ"), trGrid = $("#trGrid");
+  var trSerials = { give: {}, get: {} }, theirSer = {};
   var trGive = [], trGet = [], theirInv = null, theirName = "", whoTimer = 0, theirsReq = 0;
   var trPane = "new", trSide = "mine", trTier = "all", trFresh = {};
   function loadTrades() { return api.trades().then(function (t) { TR = t; paintTradeDot(); if (!vTrade.hidden) paintTrades(); }, function () {}); }
@@ -1972,14 +1993,50 @@ export function start(RECIPE) {
     });
   }
   /* The table: your side, their side, and how even it looks. */
+  /* Which exact copy (serial number) each card on the table is: the one you picked, or 0 for "any". */
+  function ownSerials(n) { return (S.inv[n] || []).map(Number); }
+  function serialOf(side, nums, i) {
+    var n = nums[i], k = nums.slice(0, i).filter(function (x) { return x === n; }).length, arr = trSerials[side][n], v = arr && arr[k] ? +arr[k] : 0;
+    var valid = side === "give" ? ownSerials(n) : (theirSer[n] || []).map(Number);
+    return v && valid.indexOf(v) >= 0 ? v : 0;
+  }
+  function serialsFor(side, nums) { return nums.map(function (n, i) { return serialOf(side, nums, i); }); }
+  /* Choose which copies of a card go on the table. */
+  function openCopies(side, n) {
+    var box = $("#trCopies"), mine = side === "give", all = mine ? ownSerials(n) : (theirSer[n] || []).map(Number);
+    var held = mine ? heldCopies() : {}, chosen = (trSerials[side][n] || []).filter(function (x) { return x && all.indexOf(+x) >= 0; }).map(Number);
+    var t = BY_NUM[n];
+    box.innerHTML = '<div class="tc-h"><b>' + esc(t.name) + ' <small>' + n + '</small></b><button type="button" class="linkbtn" id="tcDone">Done</button></div><p class="tc-s">Pick the copies to ' + (mine ? "give" : "ask for") + '. Low serials are worth more.</p><div class="tc-chips"></div>';
+    var chips = box.querySelector(".tc-chips");
+    all.slice().sort(function (a, b) { return a - b; }).forEach(function (sn) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "tc-chip" + (chosen.indexOf(sn) >= 0 ? " on" : "") + (sn <= 10 ? " low" : "") + (sn === n ? " match" : "");
+      b.textContent = "No. " + sn; if (held[n + ":" + sn]) { b.disabled = true; b.title = "In a pack or another offer"; }
+      b.onclick = function () {
+        var arr = mine ? trGive : trGet, i = chosen.indexOf(sn), others = arr.filter(function (x) { return x !== n; }).length;
+        if (i >= 0) chosen.splice(i, 1); else { if (others + chosen.length >= MAXT) return say("Up to " + MAXT + " cards on each side.", 1800); chosen.push(sn); }
+        chosen.sort(function (a, c) { return a - c; });
+        for (var k = arr.length - 1; k >= 0; k--) if (arr[k] === n) arr.splice(k, 1);
+        chosen.forEach(function () { arr.push(n); }); trSerials[side][n] = chosen.slice(); trFresh[(mine ? "give" : "get") + n] = 1;
+        b.classList.toggle("on", i < 0); sfx.tick(); paintTable(); paintCopiesLabel();
+      };
+      chips.appendChild(b);
+    });
+    function paintCopiesLabel() { /* the grid behind updates when this closes */ }
+    $("#tcDone").onclick = function () { box.hidden = true; paintTable(); paintGrid(); };
+    box.hidden = false;
+  }
   function slots(box, nums, side) {
     box.innerHTML = "";
     for (var i = 0; i < MAXT; i++) {
       var n = nums[i], s = document.createElement("button"); s.type = "button";
       if (n) {
-        s.className = "tr-slot full" + (trFresh[side + n] ? " pop" : ""); s.innerHTML = miniCard(n) + '<span class="tr-x" aria-hidden="true">×</span>';
-        s.setAttribute("aria-label", "Remove " + BY_NUM[n].name);
-        s.onclick = (function (n) { return function () { (side === "give" ? trGive : trGet).splice((side === "give" ? trGive : trGet).indexOf(n), 1); sfx.tick(); paintTable(); paintGrid(); }; })(n);
+        var sv = serialOf(side, nums, i);
+        s.className = "tr-slot full" + (trFresh[side + n] ? " pop" : ""); s.innerHTML = miniCard(n, sv ? { serial: sv } : {}) + '<span class="tr-x" aria-hidden="true">×</span>';
+        s.setAttribute("aria-label", "Remove " + BY_NUM[n].name + (sv ? ", No. " + sv : ""));
+        s.onclick = (function (n, i) { return function () {
+          var arr = side === "give" ? trGive : trGet, k = arr.slice(0, i).filter(function (x) { return x === n; }).length, sa = trSerials[side][n];
+          if (sa && sa.length) sa.splice(k, 1);
+          arr.splice(i, 1); sfx.tick(); paintTable(); paintGrid(); }; })(n, i);
         // Drag a card off the table to take it back.
         draggable(s, { targets: function () { return [$("#trBrowse")]; }, drop: (function (s, sideEl) { return function (t, x, y) { var r = sideEl.getBoundingClientRect(); if (t || x < r.left || x > r.right || y < r.top || y > r.bottom) s.onclick(); }; })(s, box.closest(".tr-side")) });
       } else {
@@ -2064,6 +2121,7 @@ export function start(RECIPE) {
         (mineSide && theirWish.indexOf(n) >= 0 ? '<span class="tr-want">They want</span>' : !mineSide && wished(n) ? '<span class="tr-want mine">♥ Your list</span>' : "");
       /* Each tap puts one more copy on the table; once every copy is there, the next tap takes them all back. */
       b.onclick = function () {
+        if (inv[n] > 1) { openCopies(mineSide ? "give" : "get", n); return; }
         var have = picked.filter(function (x) { return x === n; }).length;
         if (have >= inv[n]) { for (var k = picked.length - 1; k >= 0; k--) if (picked[k] === n) picked.splice(k, 1); sfx.tick(); }
         else if (picked.length >= MAXT) return say("Up to " + MAXT + " cards on each side.", 1800);
@@ -2098,10 +2156,10 @@ export function start(RECIPE) {
       if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
       if (name.toLowerCase() !== theirName.toLowerCase()) { trGet = []; trSide = "theirs"; }
       theirName = name; theirInv = {}; theirWish = [];
-      theirGoods = null; trGoods.wantPacks = trGoods.wantBoosted = trGoods.wantParts = 0; trSpec.want = []; theirSpecials = [];
+      theirGoods = null; trGoods.wantPacks = trGoods.wantBoosted = trGoods.wantParts = 0; trSpec.want = []; theirSpecials = []; trSerials.get = {};
       api.playerSpecials(name).then(function (l) { if (theirName === name) { theirSpecials = l; paintTable(); paintGrid(); } }, function () {});
       api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; theirGoods = { packs: p.packs, boosted: p.boosted, parts: p.parts }; paintTable(); paintGrid(); paintMatch(); } }, function () {});
-      col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
+      theirSer = {}; col.cards.forEach(function (c) { if (BY_NUM[c.num]) { theirInv[c.num] = c.serials.length; theirSer[c.num] = c.serials.slice(); } });
       if (pendingWant && theirInv[pendingWant] && trGet.indexOf(pendingWant) < 0 && trGet.length < MAXT) { trGet.push(pendingWant); trFresh["get" + pendingWant] = 1; trSide = "theirs"; }
       if (pendingGive && (S.inv[pendingGive] || []).length && trGive.indexOf(pendingGive) < 0 && trGive.length < MAXT) { trGive.push(pendingGive); trFresh["give" + pendingGive] = 1; }
       pendingWant = pendingGive = 0;
@@ -2134,8 +2192,8 @@ export function start(RECIPE) {
   trSend.addEventListener("click", function () {
     if (trSend.disabled) return; trSend.disabled = true; closeSheet();
     var r = trSend.getBoundingClientRect();
-    api.offerTrade(theirName, PACK_ID, trGive, trGet, Object.assign({}, trGoods, { giveSpecials: trSpec.give, wantSpecials: trSpec.want })).then(function (t) {
-      TR = t; trGive = []; trGet = []; trSpec = { give: [], want: [] }; trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
+    api.offerTrade(theirName, PACK_ID, trGive, trGet, Object.assign({}, trGoods, { giveSpecials: trSpec.give, wantSpecials: trSpec.want, giveSerials: serialsFor("give", trGive), wantSerials: serialsFor("get", trGet) })).then(function (t) {
+      TR = t; trGive = []; trGet = []; trSerials = { give: {}, get: {} }; trSpec = { give: [], want: [] }; trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
       say("Offer sent to " + theirName + ". You'll see it under Sent until they answer.", 3000);
       loadTheirs(true); paintTrades(); paintTradeDot();
     }, function (e) { offline(e); paintTable(); });

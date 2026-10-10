@@ -102,6 +102,11 @@ struct OfferReq {
     give_parts: i32,
     #[serde(default)]
     want_parts: i32,
+    /// A particular serial number for each card in `give` / `want` (same order); 0 or missing means any copy.
+    #[serde(default)]
+    give_serials: Vec<i32>,
+    #[serde(default)]
+    want_serials: Vec<i32>,
     /// Special edition cards each way, by id.
     #[serde(default)]
     give_specials: Vec<i64>,
@@ -201,15 +206,17 @@ async fn move_goods(c: &mut PgConnection, from: Uuid, to: Uuid, pack: &str, pack
 
 /// Picks one tradeable copy for each team listed (a team listed twice gets two different copies): the newest one, so a player keeps their earliest (lowest) serial longest.
 /// Cards still being revealed or already promised in another open offer from the same player are left out.
-async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i32], promised_by: Option<Uuid>) -> ApiResult<Vec<i64>> {
+async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i32], serials: &[i32], promised_by: Option<Uuid>) -> ApiResult<Vec<i64>> {
     let mut ids = Vec::with_capacity(teams.len());
-    for num in teams {
+    for (i, num) in teams.iter().enumerate() {
+        let want_serial = serials.get(i).copied().unwrap_or(0);
         let id: Option<i64> = sqlx::query_scalar(
             "select c.id from cards c left join openings o on o.id = c.opening_id
              where c.user_id = $1 and c.pack_id = $2 and c.team = $3 and (o.id is null or o.revealed >= 5)
                and ($4::uuid is null or not exists (
                  select 1 from trades t where t.status = 'open' and t.from_user = $4 and c.id = any(t.give)))
                and not (c.id = any($5))
+               and ($6 = 0 or c.serial = $6)
              order by c.id desc limit 1",
         )
         .bind(owner)
@@ -217,6 +224,7 @@ async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i3
         .bind(num)
         .bind(promised_by)
         .bind(&ids)
+        .bind(want_serial)
         .fetch_optional(&mut *c)
         .await?;
         ids.push(id.ok_or(err(StatusCode::CONFLICT, "not_owned"))?);
@@ -256,8 +264,8 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     if open >= MAX_OPEN {
         return Err(err(StatusCode::CONFLICT, "too_many_offers"));
     }
-    let give = pick_copies(&mut tx, user.id, pack, &req.give, Some(user.id)).await?;
-    let want = pick_copies(&mut tx, to, pack, &req.want, None).await?;
+    let give = pick_copies(&mut tx, user.id, pack, &req.give, &req.give_serials, Some(user.id)).await?;
+    let want = pick_copies(&mut tx, to, pack, &req.want, &req.want_serials, None).await?;
     if crate::specials::owned_count(&mut tx, &req.give_specials, user.id, false).await? != req.give_specials.len() as i64
         || crate::specials::owned_count(&mut tx, &req.want_specials, to, false).await? != req.want_specials.len() as i64
     {

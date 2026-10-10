@@ -209,6 +209,8 @@ pub struct StateOut {
     /// Teams on your wishlist, and the teams pinned to your profile (the free pack's).
     wishlist: Vec<i32>,
     showcase: Vec<i32>,
+    /// Teams that are never scrapped.
+    favorites: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -400,6 +402,7 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
     let (missions, streak) = crate::missions::load(&mut *c, user).await?;
     let level = crate::missions::level(&mut *c, user, s.catalog.claimable().id()).await?;
     let wishlist = crate::profiles::wishlist(&mut *c, user, s.catalog.claimable().id()).await?;
+    let favorites = crate::profiles::favorites(&mut *c, user, s.catalog.claimable().id()).await?;
     let showcase: Vec<i32> = sqlx::query_scalar("select showcase from users where id = $1").bind(user).fetch_one(&mut *c).await?;
     // If the admin shortened the timer, nobody waits longer than one new timer.
     let next = next.min(Utc::now() + Duration::milliseconds(r.claim_ms()));
@@ -428,6 +431,7 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         streak,
         level,
         wishlist,
+        favorites,
         showcase,
     })
 }
@@ -1093,6 +1097,9 @@ async fn scrap_copies(
         .flat_map(|t| pack.pools.get(t).into_iter().flatten().copied())
         .filter(|n| teams.is_none_or(|only| only.contains(n)))
         .collect();
+    // Favorites are never scrapped.
+    let faves = crate::profiles::favorites(&mut *c, user, pack.id()).await?;
+    let teams: Vec<i32> = teams.into_iter().filter(|n| !faves.contains(n)).collect();
     // Extra copies counting every card, so the player hears about any that were held back.
     let extras: i64 = sqlx::query_scalar(
         "select coalesce(sum(least(greatest(n - 1, 0), $4)), 0)::bigint from (
