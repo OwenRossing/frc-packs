@@ -321,6 +321,7 @@ async function act<T>(path: string, body?: unknown): Promise<T> {
   }
 }
 
+export interface Special { edition: string; team: number; name: string; title: string; serial: number; total: number }
 export interface SocialPlayer { name: string; firstName: string | null; badge: string | null; teams: number; mythics: number; legendaries: number; trades: number }
 export interface SocialTrade { from: string; to: string; gave: { num: number }[] | null; got: { num: number }[] | null; gavePacks: number; gotPacks: number; at: number }
 export interface Social { players: SocialPlayer[]; recent: SocialTrade[] }
@@ -346,6 +347,8 @@ export const api = {
   /** Scrap every extra copy of these tiers. */
   scrapExtras: (pack: string, tiers: Tier[]) => act<Scrapped>("/api/scrap/extras", { pack, tiers }),
   /** Players whose username contains `q`, for picking who to trade with. */
+  specials: () => call<Special[]>("GET", "/api/specials"),
+  playerSpecials: (name: string) => call<Special[]>("GET", `/api/players/${encodeURIComponent(name)}/specials`),
   social: (pack: string) => call<Social>("GET", `/api/social/${encodeURIComponent(pack)}`),
   players: (q: string) => call<string[]>("GET", `/api/players?q=${encodeURIComponent(q)}`),
   playerCollection: (name: string, pack: string) =>

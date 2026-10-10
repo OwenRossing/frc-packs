@@ -1504,3 +1504,24 @@ async fn boosted_packs_trade_like_cards() {
     let st = call(&app, "GET", "/api/state", Some(&ca), None).await.body;
     assert_eq!(packs(&st), (5, 1), "A: 5 - 2 + 2 = 5 sealed, 1 boosted left");
 }
+
+#[tokio::test]
+async fn special_editions_are_numbered_and_admin_only() {
+    let (app, db) = need_db!(setup(false));
+    let admin = make_admin(&app, &db).await;
+    let (cp, sp) = player(&app, &db).await;
+    let who = sp["account"]["username"].as_str().unwrap().to_string();
+    let no = call(&app, "POST", "/api/specials/grant", Some(&cp), Some(json!({ "username": who, "edition": "beta7028" }))).await;
+    assert_eq!(no.status, StatusCode::FORBIDDEN, "only the admin hands them out");
+    let first = call(&app, "POST", "/api/specials/grant", Some(&admin), Some(json!({ "username": who, "edition": "beta7028", "serial": 1 }))).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    assert_eq!((first.body["serial"].as_i64(), first.body["total"].as_i64()), (Some(1), Some(100)));
+    let again = call(&app, "POST", "/api/specials/grant", Some(&admin), Some(json!({ "username": who, "edition": "beta7028", "serial": 1 }))).await;
+    assert_eq!(again.body["error"], "serial_taken", "a number is only ever used once");
+    let next = call(&app, "POST", "/api/specials/grant", Some(&admin), Some(json!({ "username": who, "edition": "beta7028" }))).await;
+    assert_eq!(next.body["serial"], 2, "the next free number");
+    let mine = call(&app, "GET", "/api/specials", Some(&cp), None).await;
+    assert_eq!(mine.body.as_array().unwrap().len(), 2);
+    let unknown = call(&app, "POST", "/api/specials/grant", Some(&admin), Some(json!({ "username": who, "edition": "nope" }))).await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}

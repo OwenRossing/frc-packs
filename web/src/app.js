@@ -890,6 +890,13 @@ export function start(RECIPE) {
     var title = document.createElement("div"); title.className = "mtitle"; title.setAttribute("aria-hidden", "true"); title.style.setProperty("--ty", (y - el.getBoundingClientRect().height * .12) + "px");
     title.innerHTML = "MYTHIC".split("").map(function (ch, i) { return '<span style="--i:' + i + '">' + ch + '</span>'; }).join("");
     document.body.appendChild(title); setTimeout(function () { title.remove(); }, 2900);
+    /* The team's name and number arrive under the title, with shockwaves rolling across the whole screen and a buzz on phones. */
+    var nameEl = document.createElement("div"); nameEl.className = "mname"; nameEl.setAttribute("aria-hidden", "true");
+    nameEl.style.setProperty("--ny", (y + el.getBoundingClientRect().height * .46) + "px");
+    nameEl.innerHTML = '<b>' + esc(t.name) + '</b><span>Team ' + t.num + '</span>';
+    document.body.appendChild(nameEl); setTimeout(function () { nameEl.remove(); }, 3400);
+    [0, 350, 800].forEach(function (d) { setTimeout(function () { var w = document.createElement("i"); w.className = "mshock"; w.style.left = x + "px"; w.style.top = y + "px"; document.body.appendChild(w); setTimeout(function () { w.remove(); }, 1500); }, d); });
+    try { if (navigator.vibrate) navigator.vibrate([60, 40, 120, 60, 260]); } catch (e) {}
     burst(x, y, 140, null, 15, true);
     setTimeout(function () { burst(x - 70, y - 50, 90, "#ffd34d", 11); burst(x + 70, y - 50, 90, "#ffd34d", 11); }, 300);
     setTimeout(function () { burst(x, y - 90, 160, null, 13, true); }, 750);
@@ -1397,6 +1404,9 @@ export function start(RECIPE) {
         modalIn.querySelector(".profile").appendChild(rep);
       }
       if (!p.me) {
+        var spSec = document.createElement("section"); spSec.className = "pf-sec sp-host"; spSec.hidden = true;
+        modalIn.querySelector(".profile").insertBefore(spSec, modalIn.querySelector(".profile .pf-sec"));
+        api.playerSpecials(p.username).then(function (l) { specialRow(l, spSec); }, function () {});
         var tr = document.createElement("button"); tr.type = "button"; tr.className = "cta"; tr.textContent = "Trade";
         tr.onclick = function () { closeAll(function () { tradeFor(p.username); }); };
         row.appendChild(tr);
@@ -1557,7 +1567,7 @@ export function start(RECIPE) {
     tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr)); tabSocial.setAttribute("aria-selected", String(so));
     $("#status").hidden = !open; $("#daily").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
     setTimeout(coach, 0);
-    if (b) { paintBinder(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
+    if (b) { paintBinder(); loadSpecials(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
     if (tr) { enterTrade(); paintTrades(); loadTrades(); loadSocial(); }
     if (so) loadSocial();
     try { history.replaceState(history.state, "", "#" + (b ? "binder" : tr ? "trade" : so ? "social" : "open")); } catch (e) {}
@@ -1987,6 +1997,50 @@ export function start(RECIPE) {
   /* Check for new offers now and then, so the tab dot shows up without a reload. */
   setInterval(function () { if (!document.hidden) loadTrades(); }, 60000);
 
+
+
+  /* ---------- special editions: numbered limited cards ---------- */
+  var SPECIALS = [];
+  function pad3(n) { return String(n).padStart(3, "0"); }
+  function specialCardEl(sp) {
+    var el = document.createElement("div"); el.className = "spc";
+    el.setAttribute("aria-label", sp.name + ", team " + sp.team + ", " + sp.title + ", number " + sp.serial + " of " + sp.total);
+    el.innerHTML = '<div class="spc-in"><div class="spc-lines"></div><div class="spc-glow"></div>' +
+      '<div class="spc-hd"><div class="spc-num"><small>TEAM</small>' + sp.team + '</div><div class="spc-ed">Beta Edition<b>' + pad3(sp.serial) + ' / ' + sp.total + '</b></div></div>' +
+      '<div class="spc-photo"><img src="/photos/' + sp.team + '.webp" alt="" draggable="false"></div>' +
+      '<div class="spc-bot"><div class="spc-nm">' + esc(sp.name) + '<small>' + esc(sp.title) + '</small></div><div class="spc-sn">LIMITED<b>No. ' + pad3(sp.serial) + '</b></div></div>' +
+      '<div class="spc-sheen"></div><div class="spc-glare"></div><canvas class="spc-fx"></canvas></div>';
+    var cv = el.querySelector("canvas"), ctx = cv.getContext("2d"), dots = [], alive = true;
+    function size() { cv.width = (el.clientWidth || 200) * 2; cv.height = (el.clientHeight || 280) * 2; dots = []; for (var i = 0; i < 24; i++) dots.push({ x: Math.random(), y: Math.random(), r: Math.random() * 2 + .6, p: Math.random() * 6.28, s: .4 + Math.random() * 1.2 }); }
+    function tick(t) {
+      if (!alive || !el.isConnected) { alive = false; return; }
+      if (!RM) { ctx.clearRect(0, 0, cv.width, cv.height); dots.forEach(function (d) { var a = .2 + .8 * Math.abs(Math.sin(t / 700 * d.s + d.p)); ctx.fillStyle = "rgba(255,255,255," + a.toFixed(2) + ")"; var x = d.x * cv.width, y = d.y * cv.height, r = d.r * 2; ctx.beginPath(); ctx.moveTo(x, y - r * 2); ctx.lineTo(x + r * .5, y - r * .5); ctx.lineTo(x + r * 2, y); ctx.lineTo(x + r * .5, y + r * .5); ctx.lineTo(x, y + r * 2); ctx.lineTo(x - r * .5, y + r * .5); ctx.lineTo(x - r * 2, y); ctx.lineTo(x - r * .5, y - r * .5); ctx.fill(); }); }
+      requestAnimationFrame(tick);
+    }
+    setTimeout(function () { size(); requestAnimationFrame(tick); }, 30);
+    function move(e) { var r = el.getBoundingClientRect(), x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+      el.classList.remove("rest"); el.style.setProperty("--mx", x * 100 + "%"); el.style.setProperty("--my", y * 100 + "%"); el.style.setProperty("--ry", ((x - .5) * 26) + "deg"); el.style.setProperty("--rx", ((.5 - y) * 22) + "deg"); }
+    function leave() { el.classList.add("rest"); el.style.setProperty("--rx", "0deg"); el.style.setProperty("--ry", "0deg"); el.style.setProperty("--mx", "50%"); el.style.setProperty("--my", "50%"); }
+    el.addEventListener("pointermove", move); el.addEventListener("pointerdown", function (e) { try { el.setPointerCapture(e.pointerId); } catch (er) {} move(e); });
+    el.addEventListener("pointerleave", leave); el.addEventListener("pointerup", leave); el.addEventListener("pointercancel", leave);
+    return el;
+  }
+  function specialScreen(sp) {
+    var wrap = document.createElement("div"); wrap.className = "spc-wrap"; wrap.appendChild(specialCardEl(sp)); modalIn.appendChild(wrap);
+    var info = document.createElement("div"); info.className = "serials"; info.innerHTML = "<b>" + esc(sp.title) + "</b><br>Copy " + sp.serial + " of " + sp.total + ". Only " + sp.total + " will ever exist."; modalIn.appendChild(info);
+    var row = document.createElement("div"); row.className = "cta-row"; var close = closeButton(); row.appendChild(close); modalIn.appendChild(row);
+    return close;
+  }
+  function specialRow(list, host) {
+    host.innerHTML = ""; host.hidden = !list.length; if (!list.length) return;
+    var h = document.createElement("h3"); h.className = "sp-h"; h.textContent = "Special editions"; host.appendChild(h);
+    var row = document.createElement("div"); row.className = "sp-row";
+    list.forEach(function (sp) { var b = document.createElement("button"); b.type = "button"; b.className = "sp-thumb"; b.appendChild(specialCardEl(sp)); b.onclick = function () { present(function () { return specialScreen(sp); }); }; row.appendChild(b); });
+    host.appendChild(row);
+  }
+  function loadSpecials() { return api.specials().then(function (l) { SPECIALS = l; specialRow(l, spHost); }, function () {}); }
+  var spHost = document.createElement("div"); spHost.className = "sp-host"; spHost.hidden = true;
+  (function () { var g = $("#grid"); g.parentNode.insertBefore(spHost, g); })();
 
   /* ---------- social: every player, and the latest trades ---------- */
   var SOCIAL = null, socBy = "teams", socReq = 0;
