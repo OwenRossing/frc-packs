@@ -1194,3 +1194,20 @@ body.settings-open { overflow: hidden; }
 #settings .pwform { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
 .top .gear-hidden { display: none !important; }
 .set-bar { background: #06161d; }
+
+/* Card view: no scrolling. The card fits the screen, buttons sit right above the tab bar, details open over the card, swipe for the next card. */
+:root { --tabh: calc(66px + env(safe-area-inset-bottom)); }
+.modal { inset: 0 0 var(--tabh) 0; }
+.modal.card-view { overflow: hidden; }
+.modal.card-view .modal-in { --cw: min(76vw, calc((100svh - var(--tabh) - 250px) / 1.4)); justify-content: center; gap: 10px; position: relative; padding-top: 8px; }
+.modal.card-view .modal-in > .serials:not(.card-facts), .modal.card-view .modal-in > .card-facts { display: none; }
+.modal.card-view.facts-on .modal-in > .card-facts { display: block; position: absolute; left: 6%; right: 6%; top: 30px; bottom: 96px; z-index: 6; overflow-y: auto; background: rgba(5,20,26,.97); border: 1px solid var(--line); border-radius: 18px; padding: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.6); }
+.card-pos { font: 700 11px var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); }
+.modal.card-view .badges { min-height: 24px; }
+.modal.card-view .modal-in > .cta-row:last-child { background: transparent; padding-bottom: 10px; }
+.modal.card-view .modal-in > .cta-row:last-child .cta { padding: 12px 14px; font-size: 16px; }
+@media (min-width: 700px) { .modal.card-view .modal-in { --cw: min(320px, calc((100svh - var(--tabh) - 250px) / 1.4)); } }
+.modal.card-view .modal-in { overflow: hidden; max-height: 100%; height: 100%; }
+.modal.card-view .modal-in > .cta-row:last-child { gap: 8px; flex-wrap: wrap; }
+.modal.card-view .modal-in > .cta-row:last-child .cta { flex: 1 1 0; min-width: 0; padding: 11px 8px; font-size: 15px; white-space: nowrap; }
+.modal.card-view .modal-in > .cta-row:last-child .cta.wide { flex-basis: 100%; }

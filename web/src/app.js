@@ -1014,7 +1014,7 @@ export function start(RECIPE) {
     deck.forEach(function (c, i) {
       var el = cardEl(c, { faceUp: true, button: true, ribbon: true }); el.style.setProperty("--n", i); showRibbon(el);
       if (i === deck.length - 1 && c.tier !== "common" && c.tier !== "uncommon") el.classList.add("best");
-      var look = function () { if (c.test) viewCard(c.num, { serial: "TEST", from: "A test card: not saved anywhere." }); else inspect(BY_NUM[c.num]); };
+      var look = function () { cardNav = deck.filter(function (x) { return !x.test; }).map(function (x) { return x.num; }); if (c.test) { cardNav = null; viewCard(c.num, { serial: "TEST", from: "A test card: not saved anywhere." }); } else inspect(BY_NUM[c.num]); };
       el.addEventListener("click", look);
       el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); look(); } });
       summaryEl.appendChild(el);
@@ -1119,13 +1119,13 @@ export function start(RECIPE) {
         gh.appendChild(tag); gh.setAttribute("aria-label", t.name + ", team " + t.num + ", " + TIERS[t.tier].label + ", not owned yet" + (wished(t.num) ? ", on your wishlist" : ""));
         gh.setAttribute("role", "button"); gh.tabIndex = 0;
         if (wished(t.num)) { var wl = document.createElement("span"); wl.className = "tr-want mine"; wl.textContent = "♥ Wishlist"; gh.appendChild(wl); }
-        gh.addEventListener("click", function () { viewCard(t.num, { locked: true }); });
+        gh.addEventListener("click", function () { cardNav = list.slice(0, shown).map(function (x) { return x.num; }); viewCard(t.num, { locked: true }); });
         gh.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); viewCard(t.num, { locked: true }); } });
         gridEl.appendChild(gh); return;
       }
       var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
       if (S.unseen[t.num]) showRibbon(el);
-      el.addEventListener("click", function () { inspect(t); });
+      el.addEventListener("click", function () { cardNav = list.slice(0, shown).map(function (x) { return x.num; }); inspect(t); });
       el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inspect(t); } });
       gridEl.appendChild(el);
     });
@@ -1247,9 +1247,10 @@ export function start(RECIPE) {
     paintModal(push && mstack.length > 1 ? "push" : replace ? "" : "in");
   }
   function paintModal(dir) {
-    modalIn.innerHTML = "";
+    modalIn.innerHTML = ""; modal.classList.remove("facts-on");
     var focus = mstack[mstack.length - 1]();
     modal.hidden = false; document.body.classList.add("modal-open");
+    modal.classList.toggle("card-view", !!modalIn.querySelector(".slot") && !modalIn.querySelector(".profile"));
     if (dir !== "") modal.scrollTop = 0;
     modalIn.classList.remove("m-push", "m-pop", "m-in");
     if (dir) { void modalIn.offsetWidth; modalIn.classList.add("m-" + dir); }
@@ -1282,7 +1283,7 @@ export function start(RECIPE) {
   /* Tap the dark area around a card or profile to close it, like Close. */
   modal.addEventListener("click", function (e) { if (e.target === modal || e.target === modalIn) closeModal(); });
   function hideModal() {
-    mstack = []; modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = "";
+    mstack = []; cardNav = null; modal.classList.remove("card-view", "facts-on"); modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = "";
     if (lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
   }
   /* The phone's back button and back swipe step back through the app the way the on-screen buttons do (card ->
@@ -1324,7 +1325,7 @@ export function start(RECIPE) {
   }
   function inspect(t, replace) { present(function () { return inspectScreen(t); }, replace); }
   function inspectScreen(t) {
-    var serials = S.inv[t.num] || [];
+    var serials = S.inv[t.num] || []; modalIn.dataset.num = t.num;
     modalIn.appendChild(cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true, alive: !!serials.length, locked: !serials.length }));
     var bdg2 = serials.length && serialBadges(t.num, serials); if (bdg2) modalIn.appendChild(bdg2);
     var info = document.createElement("div"); info.className = "serials";
@@ -1338,7 +1339,8 @@ export function start(RECIPE) {
     var row = document.createElement("div"); row.className = "cta-row";
     var close = closeButton(); row.appendChild(close);
     row.appendChild(pinButton(t.num));
-    modalIn.appendChild(row);
+    row.insertBefore(detailsButton(), row.children[1] || null);
+    modalIn.appendChild(row); cardPos();
     if (serials.length) {
       var offer = document.createElement("button"); offer.type = "button"; offer.className = "cta ghost wide"; offer.textContent = "Offer it in a trade";
       offer.onclick = function () { closeAll(function () { offerFromBinder(t.num); }); };
@@ -1366,7 +1368,33 @@ export function start(RECIPE) {
     api.scrap(PACK_ID, t.num, count).then(function (r) { scrapped(r); inspect(t, true); }, function (e) { btn.disabled = false; offline(e); });
   }
   /* A card up close from the trading post: the full card (tilt it), its team stats, and whose copy it is. */
-  function viewCard(num, o) { present(function () { return cardScreen(num, o || {}); }); }
+  /* Swiping through cards: the list the card was opened from (the collection grid, or the pack you just opened). */
+  var cardNav = null;
+  function navTo(num) { var own = (S.inv[num] || []).length; if (own) inspect(BY_NUM[num], true); else viewCard(num, { locked: true }, true); }
+  function cardStep(d) {
+    if (!cardNav || modal.hidden || !modal.classList.contains("card-view") || mstack.length > 1) return;
+    var cur = +modalIn.dataset.num, i = cardNav.indexOf(cur); if (i < 0) return;
+    var n = cardNav[i + d]; if (n == null) { buzz(8); return; }
+    sfx.tick(); navTo(n);
+  }
+  function cardPos() {
+    if (!cardNav || cardNav.length < 2) return; var i = cardNav.indexOf(+modalIn.dataset.num); if (i < 0) return;
+    var p = document.createElement("div"); p.className = "card-pos"; p.textContent = (i + 1) + " of " + cardNav.length;
+    modalIn.insertBefore(p, modalIn.firstChild);
+  }
+  function detailsButton() {
+    var b = document.createElement("button"); b.type = "button"; b.className = "cta ghost dtl"; b.textContent = "Details";
+    b.onclick = function () { var on = modal.classList.toggle("facts-on"); b.textContent = on ? "Card" : "Details"; };
+    return b;
+  }
+  (function () {
+    var g = null;
+    modal.addEventListener("pointerdown", function (e) { g = modal.classList.contains("card-view") && !e.target.closest("button, input, a, .card-facts") ? { x: e.clientX, y: e.clientY, t: Date.now() } : null; });
+    modal.addEventListener("pointerup", function (e) { if (!g) return; var dx = e.clientX - g.x, dy = e.clientY - g.y, was = g; g = null; if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - was.t < 700) { dragEnded = Date.now(); cardStep(dx < 0 ? 1 : -1); } });
+    modal.addEventListener("pointercancel", function () { g = null; });
+    addEventListener("keydown", function (e) { if (!modal.hidden && (e.key === "ArrowRight" || e.key === "ArrowLeft")) cardStep(e.key === "ArrowRight" ? 1 : -1); });
+  })();
+  function viewCard(num, o, replace) { present(function () { return cardScreen(num, o || {}); }, replace); }
   /* Serial numbers worth bragging about: No. 1, any of the first ten, and a serial that matches the team number. */
   function serialBadges(num, serials) {
     var b = [];
@@ -1378,7 +1406,7 @@ export function start(RECIPE) {
     var d = document.createElement("div"); d.className = "badges"; d.innerHTML = b.join(""); return d;
   }
   function cardScreen(num, o) {
-    var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
+    modalIn.dataset.num = num; var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
     modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: !o.locked, locked: !!o.locked }));
     var bdg = !o.locked && o.serial && serialBadges(num, [o.serial]); if (bdg) modalIn.appendChild(bdg);
     var facts = document.createElement("div"); facts.className = "serials card-facts";
@@ -1400,7 +1428,8 @@ export function start(RECIPE) {
       go.onclick = function () { closeAll(o.action.run); };
       row.insertBefore(go, row.firstChild);
     }
-    modalIn.appendChild(row);
+    row.insertBefore(detailsButton(), row.children[1] || null);
+    modalIn.appendChild(row); cardPos();
     return close;
   }
   /* ---------- wishlist, showcase and profiles ---------- */
@@ -1619,7 +1648,7 @@ export function start(RECIPE) {
   var tabOpen = $("#tabOpen"), tabBinder = $("#tabBinder"), tabTrade = $("#tabTrade"), tabSocial = $("#tabSocial"), vOpen = $("#viewOpen"), vBinder = $("#viewBinder"), vTrade = $("#viewTrade"), vSocial = $("#viewSocial");
   function show(which) {
     var b = which === "binder", tr = which === "trade", so = which === "social", open = !b && !tr && !so;
-    banner.classList.remove("show");
+    banner.classList.remove("show"); if (!modal.hidden) hideModal();
     vOpen.hidden = !open; vBinder.hidden = !b; vTrade.hidden = !tr; vSocial.hidden = !so;
     tabOpen.setAttribute("aria-selected", String(open)); tabBinder.setAttribute("aria-selected", String(b)); tabTrade.setAttribute("aria-selected", String(tr)); tabSocial.setAttribute("aria-selected", String(so));
     $("#status").hidden = !open; $("#daily").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
