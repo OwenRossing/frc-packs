@@ -50,11 +50,11 @@ export function start(RECIPE) {
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
-      S.muted = prefs.muted === true; S.wheel = prefs.wheel !== false;
+      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true;
       if (prefs.unseen && typeof prefs.unseen === "object" && !Array.isArray(prefs.unseen)) S.unseen = prefs.unseen;
     }
   } catch (e) {}
-  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel: S.wheel, unseen: S.unseen })); } catch (e) {} }
+  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
   /* The donation link is off for now: set DONATIONS to true (and the link in the admin panel) to show it. */
   var DONATIONS = false;
@@ -401,6 +401,12 @@ export function start(RECIPE) {
     setText(packCount, S.packs);
     var n = banked(now), ready = n * PER, next = PER === 1 ? "another" : PER + " more";
     if (claimBtn.hidden !== !n) claimBtn.hidden = !n; setText(claimBtn, ready === 1 ? "Claim pack" : "Claim " + ready + " packs");
+    /* The ring around the pack fills as the next pack gets closer. */
+    var left = S.nextClaimAt + (n ? n * CLAIM_MS : 0) - now, full = n >= BANK;
+    collectionEl.style.setProperty("--mp", (full ? 100 : Math.max(0, Math.min(100, (1 - left / CLAIM_MS) * 100))).toFixed(2) + "%");
+    collectionEl.classList.toggle("ready", n > 0);
+    var capT = n ? (ready === 1 ? "Pack ready" : ready + " packs ready") : "Next pack " + fmt(S.nextClaimAt - now);
+    if (collectionEl.getAttribute("data-cap") !== capT) collectionEl.setAttribute("data-cap", capT);
     if (n >= BANK) setHTML(timerEl, "<b>Ready</b>");
     else if (n) setHTML(timerEl, "<b>" + fmt(S.nextClaimAt + n * CLAIM_MS - now) + "</b>");
     else setHTML(timerEl, "<b>" + fmt(S.nextClaimAt - now) + "</b>");
@@ -410,7 +416,7 @@ export function start(RECIPE) {
     var n = S.pity.m, el = $("#meter");
     var w = (Math.min(n, HARD) / HARD * 100) + "%", bar = $("#meterBar"); if (bar.style.width !== w) bar.style.width = w;
     setText($("#meterTxt"), n + " / " + HARD);
-    collectionEl.style.setProperty("--mp", (Math.min(n, HARD) / HARD * 100) + "%"); collectionEl.setAttribute("data-cap", "Mythic " + n + " / " + HARD);
+    var mb = $("#mythicBar"); if (mb) { mb.querySelector("i").style.width = (Math.min(n, HARD) / HARD * 100) + "%"; setText(mb.querySelector("em"), n + " / " + HARD); mb.classList.toggle("hot", n >= SOFT); }
     var pc = $("#partsChip"); if (pc) setText(pc, "⚙ " + S.parts);
     if (el.classList.contains("hot") !== (n >= SOFT)) el.classList.toggle("hot", n >= SOFT);
     var tip = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + "."; if (el.title !== tip) el.title = tip;
@@ -503,6 +509,7 @@ export function start(RECIPE) {
     ringwrap.classList.toggle("test", S.testMode);
     if (state === "home" && (homeKinds().length !== $("#kindRow").children.length || (homeKinds().length > 1 && homeKinds().indexOf(homeKind) < 0))) return paintHome();
     Array.prototype.forEach.call(collectionEl.querySelectorAll(".ptype"), function (tile) { paintTile(tile, PACKS[0]); });
+    var kr = $("#kindRow"); if (kr && state === "home") homeKinds().forEach(function (k, i) { var c = kr.children[i]; if (!c) return; var n = k === "test" ? "∞" : kindCount(k === true); var em = c.querySelector("em"); if (em && em.textContent !== String(n)) em.textContent = n; c.classList.toggle("empty", k !== "test" && !n); });
     var inv = $("#packInv");
     if (inv) setHTML(inv, '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') +
       '<span><b>' + S.parts + '</b> parts</span><span><b>' + Math.max(0, S.boostCost - S.parts) + '</b> to next boosted</span>');
@@ -552,7 +559,9 @@ export function start(RECIPE) {
   function openRing(tile) {
     if (state !== "home") return; actx();
     if (have() < 1) { shake(false); say(S.packs ? "None of those left. Pick the other stack." : claimBtn.hidden ? "Out of packs. Next one in " + fmt(S.nextClaimAt - Date.now()) : "Claim your pack first", 2400); return; }
-    sfx.pick(); paintSelect(true);
+    sfx.pick();
+    /* Straight to the pack in your hand; the wheel of 10 is a setting. */
+    if (S.wheel === true) paintSelect(true); else { paintSelect(false); choose(Math.floor(SHELF_N / 2)); }
   }
   /* ---------- the wheel of 10 packs ---------- */
   var ringA = 0, ringFront = -1, ringRaf = 0, ringDragged = false;
@@ -723,6 +732,7 @@ export function start(RECIPE) {
   function back() {
     if (state !== "inspect") return;
     if (openReq) { cut(); return; } // already torn far enough to open; finish it
+    if (S.wheel !== true) { paintHome(); return; }
     paintSelect(false, chosen);
     try { ringwrap.focus({ preventScroll: true }); } catch (e) {}
   }
@@ -1031,7 +1041,7 @@ export function start(RECIPE) {
     if (state !== "summary") return;
     if (!have()) S.openKind = !S.openKind; // that stack ran out: carry on with the other one
     if (!S.testMode && S.packs < 1) return paintHome();
-    if (have() > 0 && S.wheel !== false) { sfx.pick(); paintSelect(true); }
+    if (have() > 0 && S.wheel === true) { sfx.pick(); paintSelect(true); }
     else if (have() > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
   });
   function revealAll() {
@@ -1620,8 +1630,8 @@ export function start(RECIPE) {
   var gear = $("#gear"), settings = $("#settings");
   gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
-  wheelBtn.onclick = function () { S.wheel = S.wheel === false; save(); paintToggles(); };
-  function paintToggles() { paintV2(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === false ? "Off" : "On"; wheelBtn.setAttribute("aria-pressed", String(S.wheel !== false));
+  wheelBtn.onclick = function () { S.wheel = S.wheel !== true; save(); paintToggles(); };
+  function paintToggles() { paintV2(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === true ? "On" : "Off"; wheelBtn.setAttribute("aria-pressed", String(S.wheel === true));
     ["#demoLuck", "#demoPack", "#reset"].forEach(function (id) { $(id).closest(".line").hidden = !S.devTools; });
   }
   /* New layout, for testing: the admin can switch it on in Settings. It only changes how the Collection page is arranged. */

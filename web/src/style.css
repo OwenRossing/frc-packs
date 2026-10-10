@@ -1143,3 +1143,14 @@ body.daily-pop #daily { position: fixed; top: calc(62px + env(safe-area-inset-to
 .track .ln { flex: 1; height: 3px; background: #1d4550; }
 .track .ln.d { background: var(--tide); }
 .lvl .cta { justify-self: start; }
+
+/* Open: the ring is the timer to your next pack; the Mythic meter is a bar underneath */
+.collection.one::before { background: conic-gradient(var(--tide) 0 var(--mp, 0%), #14323b 0); transition: background .4s; }
+.collection.one.ready::before { background: conic-gradient(#ffd34d 0 100%, #14323b 0); filter: drop-shadow(0 0 10px rgba(255,211,77,.55)); }
+.collection.one::after { color: var(--foam); font-variant-numeric: tabular-nums; }
+.collection.one.ready::after { color: #ffd34d; border-color: #a07a1c; }
+.mythicbar { display: flex; align-items: center; gap: 10px; width: min(320px, 86%); margin: 12px auto 0; font: 700 11px var(--body); letter-spacing: .1em; text-transform: uppercase; color: #cdb2ff; }
+.mythicbar .mb { flex: 1; height: 8px; border-radius: 99px; background: #14323b; overflow: hidden; }
+.mythicbar .mb i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #b58cff, #3cffdc); transition: width .6s cubic-bezier(.2,1,.3,1); }
+.mythicbar em { font-style: normal; color: var(--foam); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.mythicbar.hot .mb i { animation: hot 1.4s ease-in-out infinite; }
