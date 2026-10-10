@@ -1719,7 +1719,7 @@ export function start(RECIPE) {
     if (m) { trGoods[k[0]] = Math.min(trGoods[k[0]], m.packs, 50); trGoods[k[1]] = Math.min(trGoods[k[1]], m.boosted, 50); trGoods[k[2]] = Math.min(trGoods[k[2]], m.parts, 100000); }
     var chips = m ? goodsChips(trGoods[k[0]], trGoods[k[2]], trGoods[k[1]]) : "";
     box.innerHTML = m ? '<button type="button" class="goods-sum">' + (chips || '<span class="gs-add">+ Packs &amp; parts</span>') + '</button>' : "";
-    var b = box.querySelector("button"); if (b) b.onclick = function () { trKind = "goods"; trSide = mine ? "mine" : "theirs"; paintGrid(); try { $("#trBrowse").scrollIntoView({ block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} };
+    var b = box.querySelector("button"); if (b) b.onclick = function () { openSheet(mine ? "mine" : "theirs", "goods"); };
   }
   /* The picker: standard packs, boosted packs and parts, each with a counter, for one side of the trade. */
   function paintGoodsPicker() {
@@ -1871,7 +1871,7 @@ export function start(RECIPE) {
       } else {
         s.className = "tr-slot"; s.innerHTML = '<span class="tr-plus" aria-hidden="true">+</span>';
         s.setAttribute("aria-label", side === "give" ? "Add one of your cards" : "Add one of their cards");
-        s.onclick = function () { trKind = "cards"; trSide = side === "give" ? "mine" : "theirs"; paintGrid(); try { trPickQ.focus({ preventScroll: true }); $("#trBrowse").scrollIntoView({ block: "nearest", behavior: RM ? "auto" : "smooth" }); } catch (e) {} };
+        s.onclick = function () { openSheet(side === "give" ? "mine" : "theirs", "cards"); };
       }
       box.appendChild(s);
     }
@@ -1913,6 +1913,7 @@ export function start(RECIPE) {
     $("#trPickMine").setAttribute("aria-selected", String(mineSide)); $("#trPickTheirs").setAttribute("aria-selected", String(!mineSide));
     $("#trPickMine").textContent = trKind === "goods" ? "Your packs" : "Your cards";
     $("#trPickTheirs").textContent = theirName ? theirName + (trKind === "goods" ? "'s packs" : "'s cards") : (trKind === "goods" ? "Their packs" : "Their cards");
+    $("#trSheetT").textContent = trSide === "mine" ? "Your stuff" : (theirName || "Their") + "'s stuff";
     $("#trKindCards").setAttribute("aria-selected", String(trKind === "cards")); $("#trKindGoods").setAttribute("aria-selected", String(trKind === "goods"));
     $("#trBrowse").classList.toggle("goods-mode", trKind === "goods");
     if (trKind === "goods") { $("#trTierF").innerHTML = ""; paintGoodsPicker(); return; }
@@ -1951,6 +1952,12 @@ export function start(RECIPE) {
     });
     if (list.length > 80) { var more = document.createElement("p"); more.className = "tr-more"; more.textContent = "Showing 80 of " + list.length + ". Search to find the rest."; trGrid.appendChild(more); }
   }
+  /* The picker is a sheet that slides up over the offer. */
+  function openSheet(side, kind) { trSide = side; if (kind) trKind = kind; $("#trBrowse").classList.add("open"); document.body.classList.add("tr-sheet"); paintGrid(); }
+  function closeSheet() { $("#trBrowse").classList.remove("open"); document.body.classList.remove("tr-sheet"); }
+  Array.prototype.forEach.call(document.querySelectorAll(".tr-add"), function (b) { b.onclick = function () { openSheet(b.dataset.side, "cards"); }; });
+  $("#trSheetX").onclick = closeSheet; $("#trScrim").onclick = closeSheet;
+  addEventListener("keydown", function (e) { if (e.key === "Escape" && $("#trBrowse").classList.contains("open")) closeSheet(); });
   $("#trKindCards").onclick = function () { trKind = "cards"; paintGrid(); };
   $("#trKindGoods").onclick = function () { trKind = "goods"; paintGrid(); };
   $("#trPickMine").onclick = function () { trSide = "mine"; paintGrid(); };
@@ -1997,7 +2004,7 @@ export function start(RECIPE) {
   trWho.addEventListener("change", function () { loadTheirs(); });
   trWho.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); var first = $("#trSugg .tr-sug"); if (first) first.click(); else loadTheirs(); } });
   trSend.addEventListener("click", function () {
-    if (trSend.disabled) return; trSend.disabled = true;
+    if (trSend.disabled) return; trSend.disabled = true; closeSheet();
     var r = trSend.getBoundingClientRect();
     api.offerTrade(theirName, PACK_ID, trGive, trGet, trGoods).then(function (t) {
       TR = t; trGive = []; trGet = []; trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);

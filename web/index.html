@@ -212,6 +212,7 @@
             <div class="tr-side-h"><span id="avMe" class="av me"></span><div><b>You give</b><small id="trGiveN">0 / 5</small></div></div>
             <div class="tr-slots" id="trGiveSlots"></div>
             <div class="tr-goods" id="trGiveGoods"></div>
+            <button type="button" class="tr-add" data-side="mine">+ Add</button>
           </div>
           <div class="tr-mid" aria-hidden="true">
             <span class="tr-swap"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>
@@ -220,11 +221,15 @@
             <div class="tr-side-h"><button type="button" class="who-btn" id="trThemBtn" aria-label="See their profile"><span id="avThem" class="av them empty">?</span></button><div><b id="trThemName">Pick a player</b> <button type="button" class="linkbtn" id="trChange">Change</button><small id="trGetN">0 / 5</small></div></div>
             <div class="tr-slots" id="trGetSlots"></div>
             <div class="tr-goods" id="trGetGoods"></div>
+            <button type="button" class="tr-add" data-side="theirs">+ Add</button>
           </div>
           <div class="tr-fair" hidden><div class="tr-fairbar" id="trFairBar"><i></i></div><small id="trFairTxt"></small></div>
           <div class="tr-send"><p id="trSummary"></p><button type="button" class="cta" id="trSend" disabled>Send offer</button></div>
         </div>
-        <div class="tr-browse" id="trBrowse">
+        <div class="tr-scrim" id="trScrim"></div>
+        <div class="tr-browse" id="trBrowse" role="dialog" aria-label="Add to the trade">
+          <div class="tr-grab"></div>
+          <div class="tr-sheet-h"><b id="trSheetT">Your stuff</b><button type="button" class="linkbtn" id="trSheetX">Done</button></div>
           <div class="tr-browse-h">
             <div class="seg tr-kind" role="tablist" aria-label="What to trade"><button type="button" role="tab" id="trKindCards" aria-selected="true">Cards</button><button type="button" role="tab" id="trKindGoods" aria-selected="false">Packs &amp; parts</button></div>
             <div class="seg tr-which" role="tablist" aria-label="Whose cards"><button type="button" role="tab" id="trPickMine" aria-selected="true">Your cards</button><button type="button" role="tab" id="trPickTheirs" aria-selected="false">Their cards</button></div>
