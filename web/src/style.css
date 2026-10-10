@@ -1089,3 +1089,5 @@ body.tr-sheet { overflow: hidden; }
 .tr-spec .sp-thumb .spc { pointer-events: none; }
 #trBrowse.goods-mode .tr-grid { display: block; overflow: auto; }
 #trBrowse.goods-mode .gp { width: 100%; }
+@media (max-width: 640px) { .tr-browse .tr-grid { overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: none; } }
+.tr-browse .tr-grid { touch-action: pan-y; }
