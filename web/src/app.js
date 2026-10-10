@@ -50,15 +50,26 @@ export function start(RECIPE) {
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
-      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true; S.perf = prefs.perf === "on" || prefs.perf === "off" ? prefs.perf : "auto";
+      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true; S.perf = prefs.perf === "on" || prefs.perf === "off" ? prefs.perf : "auto"; S.laggy = prefs.laggy === true;
       if (prefs.unseen && typeof prefs.unseen === "object" && !Array.isArray(prefs.unseen)) S.unseen = prefs.unseen;
     }
   } catch (e) {}
   /* Performance mode: lighter effects. Auto turns it on for phones that look slow (few cores or little memory). */
   var SLOW = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) || (navigator.deviceMemory && navigator.deviceMemory <= 3);
-  function perfOn() { return S.perf === "on" || (S.perf !== "off" && !!SLOW); }
-  function paintPerf() { document.body.classList.toggle("perf", perfOn()); var b = $("#perfBtn"); if (b) { b.textContent = S.perf === "on" ? "On" : S.perf === "off" ? "Off" : "Auto" + (SLOW ? " (on)" : " (off)"); b.setAttribute("aria-pressed", String(perfOn())); } }
-  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, perf: S.perf, unseen: S.unseen })); } catch (e) {} }
+  function perfOn() { return S.perf === "on" || (S.perf !== "off" && (!!SLOW || !!S.laggy)); }
+  function paintPerf() { document.body.classList.toggle("perf", perfOn()); var b = $("#perfBtn"); if (b) { b.textContent = S.perf === "on" ? "On" : S.perf === "off" ? "Off" : "Auto" + ((SLOW || S.laggy) ? " (on)" : " (off)"); b.setAttribute("aria-pressed", String(perfOn())); } }
+  /* Measures how smoothly this phone draws while a pack is opening. If it's choppy, Auto turns performance mode on for next time. */
+  var probed = false;
+  function probeFps() {
+    if (probed || S.perf !== "auto" || perfOn()) return; probed = true;
+    var last = 0, n = 0, total = 0, start = performance.now();
+    requestAnimationFrame(function f(t) {
+      if (last) { total += t - last; n++; } last = t;
+      if (t - start < 1500 && !document.hidden) return requestAnimationFrame(f);
+      if (n > 20 && total / n > 24) { S.laggy = true; save(); paintPerf(); say("Switched to lighter effects for smoother opening. You can change this in Settings.", 3600); }
+    });
+  }
+  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, perf: S.perf, laggy: S.laggy, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
   /* The donation link is off for now: set DONATIONS to true (and the link in the admin panel) to show it. */
   var DONATIONS = false;
@@ -769,7 +780,7 @@ export function start(RECIPE) {
     return openReq;
   }
   function cut() {
-    if (state !== "inspect") return; state = "cutting";
+    if (state !== "inspect") return; state = "cutting"; probeFps();
     startOpen().then(function (res) {
       openReq = null;
       var o = res.opening;
@@ -879,7 +890,8 @@ export function start(RECIPE) {
   function topEl() { var c = stackEl.children; for (var i = c.length - 1; i >= 0; i--) if (!c[i].classList.contains("gone")) return c[i]; return null; }
   function armTop() {
     var el = topEl(); if (!el) return;
-    var all = stackEl.children;
+    /* Cards still flying off don't count, or the new top card keeps a leftover offset and angle. */
+    var all = Array.prototype.filter.call(stackEl.children, function (c) { return !c.classList.contains("gone"); });
     for (var i = 0; i < all.length; i++) { all[i].style.setProperty("--k", all.length - 1 - i); all[i].classList.toggle("top", all[i] === el); }
     var c = el._c;
     if (el._hidden) {
@@ -969,7 +981,7 @@ export function start(RECIPE) {
     if (idx < deck.length) { state = "stack"; armTop(); }
     setTimeout(function () {
       el.remove();
-      if (idx >= deck.length) summary();
+      if (idx >= deck.length) summary(); else if (state === "stack") armTop();
     }, RM ? 60 : 380);
   }
   function tapTop() {
