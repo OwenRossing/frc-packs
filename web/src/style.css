@@ -1161,3 +1161,9 @@ html { overscroll-behavior-y: none; }
 @supports (height: 100dvh) { .app { min-height: 100dvh; } }
 .top { position: sticky; top: 0; z-index: 30; margin-inline: -16px; padding: max(12px, env(safe-area-inset-top)) 16px 8px; margin-top: calc(-1 * max(12px, env(safe-area-inset-top))); background: rgba(5,20,26,.88); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 body.signed-out .top { background: none; backdrop-filter: none; }
+
+/* Black boxes around cards on some phones: blend-mode layers (foil, sparkle, glare) inside a 3D-transformed card are composited
+   against the whole page unless their card face is its own group. Isolating the face keeps them inside the card, and the
+   shadow is a plain rounded box-shadow instead of a gradient layer that some GPUs draw as a square. */
+.card .inner, .card .front, .slot .face.front { isolation: isolate; }
+.shade { background: none !important; border-radius: 7% / 5%; box-shadow: 0 calc(var(--cw) * .08) calc(var(--cw) * .12) rgba(0,0,0,.5); }
