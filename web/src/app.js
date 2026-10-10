@@ -1028,7 +1028,7 @@ export function start(RECIPE) {
     var copies = 0; owned.forEach(function (t) { copies += S.inv[t.num].length; });
     $("#binderSum").textContent = owned.length + " of " + TEAMS.length + " teams · " + copies + " cards";
     $("#binderTitle").textContent = "Cards";
-    paintPacks(owned, counts); paintWorkshop();
+    paintPacks(owned, counts); paintWorkshop(); paintV2Binder(owned, counts);
     tiersEl.innerHTML = "";
     var all = document.createElement("button"); all.type = "button"; all.className = "chip" + (filter === "all" ? " on" : ""); all.setAttribute("aria-pressed", String(filter === "all"));
     all.innerHTML = '<b>All</b><em>' + owned.length + '</em><span class="bar"><i style="width:' + (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + '%"></i></span>';
@@ -1048,12 +1048,12 @@ export function start(RECIPE) {
       b.onclick = function () { filter = key; shown = 48; paintBinder(); }; divsEl.appendChild(b);
     });
     var isDiv = filter.indexOf("div:") === 0, dname = filter.slice(4);
-    missingBtn.hidden = filter === "all"; missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
+    missingBtn.hidden = filter === "all" && !document.body.classList.contains("v2"); missingBtn.setAttribute("aria-pressed", String(showMissing)); missingBtn.classList.toggle("on", showMissing);
     var q = searchEl.value.trim().toLowerCase();
     var everyone = (filter === "all" ? TEAMS : isDiv ? DIV_TEAMS[dname] : POOL[filter]).slice().sort(function (a, b) { return ORDER.indexOf(a.tier) - ORDER.indexOf(b.tier) || a.rank - b.rank; });
     var have = function (t) { return S.inv[t.num] && S.inv[t.num].length ? 1 : 0; };
     var list = q ? everyone.filter(function (t) { return matches(t, q); }).sort(function (a, b) { return have(b) - have(a); }) // yours first
-      : (showMissing && filter !== "all") ? everyone
+      : showMissing ? everyone
       : owned.filter(function (t) { return filter === "all" || (isDiv ? t.div === dname : t.tier === filter); });
     gridEl.innerHTML = "";
     if (!list.length) {
@@ -1070,8 +1070,8 @@ export function start(RECIPE) {
         gh.appendChild(tag); gh.setAttribute("aria-label", t.name + ", team " + t.num + ", " + TIERS[t.tier].label + ", not owned yet" + (wished(t.num) ? ", on your wishlist" : ""));
         gh.setAttribute("role", "button"); gh.tabIndex = 0;
         if (wished(t.num)) { var wl = document.createElement("span"); wl.className = "tr-want mine"; wl.textContent = "♥ Wishlist"; gh.appendChild(wl); }
-        gh.addEventListener("click", function () { viewCard(t.num, {}); });
-        gh.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); viewCard(t.num, {}); } });
+        gh.addEventListener("click", function () { viewCard(t.num, { locked: true }); });
+        gh.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); viewCard(t.num, { locked: true }); } });
         gridEl.appendChild(gh); return;
       }
       var el = cardEl({ num: t.num, tier: t.tier, serial: serials[0], isNew: true }, { faceUp: true, button: true, count: serials.length, ribbon: !!S.unseen[t.num] });
@@ -1317,7 +1317,7 @@ export function start(RECIPE) {
   function viewCard(num, o) { present(function () { return cardScreen(num, o || {}); }); }
   function cardScreen(num, o) {
     var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
-    modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: true }));
+    modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: !o.locked, locked: !!o.locked }));
     var facts = document.createElement("div"); facts.className = "serials card-facts";
     facts.innerHTML = '<dl>' +
       '<dt>Team</dt><dd>' + num + ' · ' + esc(t.name) + '</dd>' +
@@ -1581,12 +1581,33 @@ export function start(RECIPE) {
   $("#v2Btn").onclick = function () { v2On = !v2On; try { localStorage.setItem(V2, v2On ? "1" : "0"); } catch (e) {} paintV2(); };
   (function () {
     var head = document.querySelector("#viewBinder .binder-head"), search = $("#binderSearch"); if (!head || !search) return;
-    var bar = document.createElement("div"); bar.className = "v2-bar";
-    bar.innerHTML = '<button type="button" class="chip" id="v2Ws" aria-pressed="false">Workshop</button><button type="button" class="chip" id="v2Sets" aria-pressed="false">Sets</button>';
-    head.insertBefore(bar, search);
+    var top = document.createElement("div"); top.className = "v2-top";
+    top.innerHTML = '<div class="v2-prog"><div class="v2-pn"><b id="v2PackName"></b><span id="v2PackSum"></span></div><div class="v2-bar2"><i id="v2PackBar"></i></div></div>' +
+      '<div class="seg v2-seg" role="tablist" aria-label="Collection pages"><button type="button" role="tab" id="v2Cards" aria-selected="true">Cards</button><button type="button" role="tab" id="v2Work" aria-selected="false">Workshop</button></div>';
+    head.insertBefore(top, head.firstChild);
+    var sel = document.createElement("div"); sel.className = "v2-sel";
+    sel.innerHTML = '<select class="v2s" id="v2Rar" aria-label="Rarity"></select><select class="v2s" id="v2Set" aria-label="Set"></select>';
+    head.insertBefore(sel, search.nextSibling);
     var view = $("#viewBinder");
-    [["#v2Ws", "ws-open"], ["#v2Sets", "sets-open"]].forEach(function (x) { $(x[0]).onclick = function () { var on = view.classList.toggle(x[1]); this.setAttribute("aria-pressed", String(on)); }; });
+    function page(ws) { view.classList.toggle("ws-open", ws); $("#v2Cards").setAttribute("aria-selected", String(!ws)); $("#v2Work").setAttribute("aria-selected", String(ws)); }
+    $("#v2Cards").onclick = function () { page(false); }; $("#v2Work").onclick = function () { page(true); };
+    $("#v2Rar").onchange = function () { filter = this.value; shown = 48; paintBinder(); };
+    $("#v2Set").onchange = function () { filter = this.value; shown = 48; paintBinder(); };
   })();
+  /* The new layout's header and dropdowns follow the same filter state as the chips. */
+  function paintV2Binder(owned, counts) {
+    if (!$("#v2Rar")) return;
+    $("#v2PackName").textContent = PACKS[0].name; $("#v2PackSum").textContent = owned.length + " of " + TEAMS.length;
+    $("#v2PackBar").style.width = (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + "%";
+    var rar = $("#v2Rar"), set = $("#v2Set"), isDiv = filter.indexOf("div:") === 0;
+    rar.innerHTML = '<option value="all">All rarities</option>' + ORDER.map(function (t) { return '<option value="' + t + '">' + TIERS[t].label + ' ' + counts[t] + '/' + POOL[t].length + '</option>'; }).join("");
+    rar.value = isDiv ? "all" : filter;
+    set.innerHTML = '<option value="all">All sets</option>' + DIVS.map(function (d) {
+      var have = DIV_TEAMS[d].filter(function (t) { return S.inv[t.num] && S.inv[t.num].length; }).length;
+      return '<option value="div:' + esc(d) + '">' + esc(d) + ' ' + have + '/' + DIV_TEAMS[d].length + (S.sets[d] ? " ✓" : "") + '</option>';
+    }).join("");
+    set.value = isDiv ? filter : "all";
+  }
   muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
   function devDone(st) { applyState(st); paintToggles(); paintStatus(); if (state === "select" || state === "home") paintSelectHud(); }
   demoBtn.onclick = function () { api.dev.demo(!S.demo).then(devDone, offline); };
