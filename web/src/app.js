@@ -1571,9 +1571,22 @@ export function start(RECIPE) {
   gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
   wheelBtn.onclick = function () { S.wheel = S.wheel === false; save(); paintToggles(); };
-  function paintToggles() { muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === false ? "Off" : "On"; wheelBtn.setAttribute("aria-pressed", String(S.wheel !== false));
+  function paintToggles() { paintV2(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === false ? "Off" : "On"; wheelBtn.setAttribute("aria-pressed", String(S.wheel !== false));
     ["#demoLuck", "#demoPack", "#reset"].forEach(function (id) { $(id).closest(".line").hidden = !S.devTools; });
   }
+  /* New layout, for testing: the admin can switch it on in Settings. It only changes how the Collection page is arranged. */
+  var V2 = "frcpacks.v2", v2On = false;
+  try { v2On = localStorage.getItem(V2) === "1"; } catch (e) {}
+  function paintV2() { document.body.classList.toggle("v2", v2On && isAdmin()); var l = $("#v2Line"); if (l) { l.hidden = !isAdmin(); $("#v2Btn").textContent = v2On ? "On" : "Off"; $("#v2Btn").setAttribute("aria-pressed", String(v2On)); } }
+  $("#v2Btn").onclick = function () { v2On = !v2On; try { localStorage.setItem(V2, v2On ? "1" : "0"); } catch (e) {} paintV2(); };
+  (function () {
+    var head = document.querySelector("#viewBinder .binder-head"), search = $("#binderSearch"); if (!head || !search) return;
+    var bar = document.createElement("div"); bar.className = "v2-bar";
+    bar.innerHTML = '<button type="button" class="chip" id="v2Ws" aria-pressed="false">Workshop</button><button type="button" class="chip" id="v2Sets" aria-pressed="false">Sets</button>';
+    head.insertBefore(bar, search);
+    var view = $("#viewBinder");
+    [["#v2Ws", "ws-open"], ["#v2Sets", "sets-open"]].forEach(function (x) { $(x[0]).onclick = function () { var on = view.classList.toggle(x[1]); this.setAttribute("aria-pressed", String(on)); }; });
+  })();
   muteBtn.onclick = function () { S.muted = !S.muted; save(); paintToggles(); blip(660, .08, "triangle", .08); };
   function devDone(st) { applyState(st); paintToggles(); paintStatus(); if (state === "select" || state === "home") paintSelectHud(); }
   demoBtn.onclick = function () { api.dev.demo(!S.demo).then(devDone, offline); };

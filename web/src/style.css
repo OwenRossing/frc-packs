@@ -961,3 +961,15 @@ body.signed-out .tabbar { display: none; }
 .gp-row .step button:disabled { opacity: .35; cursor: default; }
 .gp-row .step b { min-width: 2.5ch; text-align: center; font-family: var(--display); font-weight: 400; font-size: 22px; }
 .gp-row .input { width: 110px; }
+
+/* New layout (admin testing): the Collection page shows the grid first; workshop and sets open on request. */
+.v2-bar { display: none; gap: 8px; }
+body.v2 .v2-bar { display: flex; }
+body.v2 #viewBinder .packrow, body.v2 #viewBinder #divs, body.v2 #viewBinder .workshop { display: none; }
+body.v2 #viewBinder.ws-open .workshop { display: grid; }
+body.v2 #viewBinder.sets-open #divs { display: flex; }
+body.v2 #viewBinder .tiers:not(.divs) { flex-wrap: nowrap; overflow-x: auto; gap: 6px; scrollbar-width: none; }
+body.v2 #viewBinder .tiers:not(.divs) .chip { min-width: 0; flex: none; padding: 6px 12px; flex-direction: row; align-items: center; gap: 6px; }
+body.v2 #viewBinder .tiers:not(.divs) .chip .bar { display: none; }
+body.v2 #viewBinder .binder-sum h2 { font-size: 28px; }
+body.v2 #viewBinder .grid { gap: 10px; }
