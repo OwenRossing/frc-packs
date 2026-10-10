@@ -1245,3 +1245,6 @@ body.perf .tabbar, body.perf .app > .top { background: rgba(5,20,26,.97); }
 .card[data-tier="mythic"] .front, .card[data-tier="mythic"].mc { background: #0c2027; }
 .card[data-tier="mythic"] .inner { box-shadow: 0 0 0 1px rgba(255,255,255,.18), 0 0 18px rgba(60,255,220,.25) inset; }
 body.perf .card[data-tier="mythic"] .front::before, body.perf .card[data-tier="mythic"].mc::before { animation: none; }
+
+.modal.card-view .modal-in > .cta-row:last-child .cta { white-space: normal; line-height: 1.1; flex: 1 1 auto; }
+.modal.card-view .modal-in { overflow-x: hidden; }
