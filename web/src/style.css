@@ -1081,3 +1081,11 @@ body.tr-sheet { overflow: hidden; }
   .modal-in { max-width: 460px; }
   .soc-row { max-width: 640px; }
 }
+
+.tr-chip.beta { color: #bffff5; border-color: rgba(25,230,208,.6); background: rgba(25,230,208,.12); }
+.tr-spec { grid-column: 1 / -1; display: grid; gap: 6px; }
+.tr-spec .sp-thumb { width: 104px; border-radius: 10px; }
+.tr-spec .sp-thumb.on { outline: 3px solid var(--tide); outline-offset: 2px; }
+.tr-spec .sp-thumb .spc { pointer-events: none; }
+#trBrowse.goods-mode .tr-grid { display: block; overflow: auto; }
+#trBrowse.goods-mode .gp { width: 100%; }

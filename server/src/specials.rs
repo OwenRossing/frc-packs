@@ -34,6 +34,7 @@ pub fn routes() -> Router<Shared> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpecialOut {
+    pub id: i64,
     pub edition: &'static str,
     pub team: i32,
     pub name: &'static str,
@@ -43,14 +44,43 @@ pub struct SpecialOut {
 }
 
 pub async fn load(c: &mut PgConnection, user: Uuid) -> ApiResult<Vec<SpecialOut>> {
-    let rows: Vec<(String, i32)> =
-        sqlx::query_as("select edition, serial from special_cards where user_id = $1 order by edition, serial").bind(user).fetch_all(&mut *c).await?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|(edition, serial)| {
-            EDITIONS.iter().find(|e| e.id == edition).map(|e| SpecialOut { edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total })
+    let rows: Vec<(i64, String, i32)> =
+        sqlx::query_as("select id, edition, serial from special_cards where user_id = $1 order by edition, serial").bind(user).fetch_all(&mut *c).await?;
+    Ok(out(rows))
+}
+
+fn out(rows: Vec<(i64, String, i32)>) -> Vec<SpecialOut> {
+    rows.into_iter()
+        .filter_map(|(id, edition, serial)| {
+            EDITIONS.iter().find(|e| e.id == edition).map(|e| SpecialOut { id, edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total })
         })
-        .collect())
+        .collect()
+}
+
+/// These special cards, in the order asked for.
+pub async fn by_ids(c: &mut PgConnection, ids: &[i64]) -> ApiResult<Vec<SpecialOut>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let rows: Vec<(i64, String, i32)> =
+        sqlx::query_as("select id, edition, serial from special_cards where id = any($1)").bind(ids).fetch_all(&mut *c).await?;
+    let mut all = out(rows);
+    all.sort_by_key(|s| ids.iter().position(|i| *i == s.id).unwrap_or(usize::MAX));
+    Ok(all)
+}
+
+/// How many of these special cards the player owns (for checking an offer).
+pub async fn owned_count(c: &mut PgConnection, ids: &[i64], user: Uuid, lock: bool) -> ApiResult<i64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let lock = if lock { " for update" } else { "" };
+    let ids: Vec<i64> = sqlx::query_scalar(&format!("select id from special_cards where id = any($1) and user_id = $2{lock}"))
+        .bind(ids)
+        .bind(user)
+        .fetch_all(&mut *c)
+        .await?;
+    Ok(ids.len() as i64)
 }
 
 async fn mine(State(s): State<Shared>, user: User) -> ApiResult<Json<Vec<SpecialOut>>> {
@@ -95,7 +125,8 @@ async fn grant(State(s): State<Shared>, _admin: Admin, Json(req): Json<GrantReq>
     if taken {
         return Err(ApiError::new(StatusCode::CONFLICT, "serial_taken"));
     }
-    sqlx::query("insert into special_cards (edition, serial, user_id) values ($1, $2, $3)").bind(e.id).bind(serial).bind(to).execute(&mut *tx).await?;
+    let new_id: i64 =
+        sqlx::query_scalar("insert into special_cards (edition, serial, user_id) values ($1, $2, $3) returning id").bind(e.id).bind(serial).bind(to).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Json(SpecialOut { edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total }))
+    Ok(Json(SpecialOut { id: new_id, edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total }))
 }

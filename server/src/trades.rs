@@ -102,6 +102,11 @@ struct OfferReq {
     give_parts: i32,
     #[serde(default)]
     want_parts: i32,
+    /// Special edition cards each way, by id.
+    #[serde(default)]
+    give_specials: Vec<i64>,
+    #[serde(default)]
+    want_specials: Vec<i64>,
     /// Sealed boosted packs each way.
     #[serde(default)]
     give_boosted: i32,
@@ -223,15 +228,15 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     let pack = api::pack(&s, &req.pack)?;
     let goods = 0..=MAX_PACKS;
     let parts = 0..=MAX_PARTS;
-    let side_ok = |cards: &[i32], packs: i32, boosted: i32, pts: i32| {
-        cards.len() <= MAX_CARDS
+    let side_ok = |cards: &[i32], packs: i32, boosted: i32, pts: i32, sp: &[i64]| {
+        sp.len() <= MAX_CARDS && sp.iter().enumerate().all(|(i, x)| !sp[..i].contains(x)) && (!sp.is_empty() || !cards.is_empty() || packs > 0 || boosted > 0 || pts > 0)
+            && cards.len() <= MAX_CARDS
             && goods.contains(&packs)
             && goods.contains(&boosted)
             && parts.contains(&pts)
-            && (!cards.is_empty() || packs > 0 || boosted > 0 || pts > 0)
     };
-    if !side_ok(&req.give, req.give_packs, req.give_boosted, req.give_parts)
-        || !side_ok(&req.want, req.want_packs, req.want_boosted, req.want_parts)
+    if !side_ok(&req.give, req.give_packs, req.give_boosted, req.give_parts, &req.give_specials)
+        || !side_ok(&req.want, req.want_packs, req.want_boosted, req.want_parts, &req.want_specials)
     {
         return Err(err(StatusCode::BAD_REQUEST, "bad_trade"));
     }
@@ -253,6 +258,11 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     }
     let give = pick_copies(&mut tx, user.id, pack, &req.give, Some(user.id)).await?;
     let want = pick_copies(&mut tx, to, pack, &req.want, None).await?;
+    if crate::specials::owned_count(&mut tx, &req.give_specials, user.id, false).await? != req.give_specials.len() as i64
+        || crate::specials::owned_count(&mut tx, &req.want_specials, to, false).await? != req.want_specials.len() as i64
+    {
+        return Err(err(StatusCode::CONFLICT, "not_owned"));
+    }
     if !has_goods(&mut tx, user.id, pack.id(), req.give_packs, req.give_boosted, req.give_parts, false).await? {
         return Err(err(StatusCode::CONFLICT, "not_enough_to_trade"));
     }
@@ -275,8 +285,8 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     let want_cards = cards_by_id(&mut tx, &want).await?;
     sqlx::query(
         "insert into trades (from_user, to_user, pack_id, give, want, give_packs, want_packs, give_parts, want_parts,
-                             give_cards, want_cards, give_boosted, want_boosted)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                             give_cards, want_cards, give_boosted, want_boosted, give_specials, want_specials)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
     )
     .bind(user.id)
     .bind(to)
@@ -291,6 +301,8 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     .bind(sqlx::types::Json(&want_cards))
     .bind(req.give_boosted)
     .bind(req.want_boosted)
+    .bind(&req.give_specials)
+    .bind(&req.want_specials)
     .execute(&mut *tx)
     .await?;
     let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
@@ -345,6 +357,8 @@ struct TradeOut {
     you_get_packs: i32,
     you_give_boosted: i32,
     you_get_boosted: i32,
+    you_give_specials: Vec<crate::specials::SpecialOut>,
+    you_get_specials: Vec<crate::specials::SpecialOut>,
     you_give_parts: i32,
     you_get_parts: i32,
     status: String,
@@ -395,6 +409,9 @@ async fn list_in(c: &mut PgConnection, me: Uuid) -> ApiResult<TradesOut> {
     .fetch_all(&mut *c)
     .await?;
     let mut out = TradesOut { incoming: vec![], outgoing: vec![], recent: vec![] };
+    let trade_ids: Vec<i64> = rows.iter().map(|r| r.0).collect();
+    let sp_rows: Vec<(i64, Vec<i64>, Vec<i64>)> =
+        sqlx::query_as("select id, give_specials, want_specials from trades where id = any($1)").bind(&trade_ids).fetch_all(&mut *c).await?;
     for (id, from, with, pack, give, want, status, created, decided, gpk, wpk, gpt, wpt, gsnap, wsnap, boost) in rows {
         let mine = from == me;
         let (gives, gets) = if mine { (give, want) } else { (want, give) };
@@ -415,6 +432,14 @@ async fn list_in(c: &mut PgConnection, me: Uuid) -> ApiResult<TradesOut> {
             you_get_packs: get_packs,
             you_give_boosted: give_boosted,
             you_get_boosted: get_boosted,
+            you_give_specials: {
+                let (g, w) = sp_rows.iter().find(|r| r.0 == id).map(|r| (r.1.clone(), r.2.clone())).unwrap_or_default();
+                crate::specials::by_ids(&mut *c, if mine { &g } else { &w }).await?
+            },
+            you_get_specials: {
+                let (g, w) = sp_rows.iter().find(|r| r.0 == id).map(|r| (r.1.clone(), r.2.clone())).unwrap_or_default();
+                crate::specials::by_ids(&mut *c, if mine { &w } else { &g }).await?
+            },
             you_give_parts: give_parts,
             you_get_parts: get_parts,
             status: status.clone(),
@@ -488,6 +513,10 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
         tx.commit().await?;
         return Err(err(StatusCode::CONFLICT, "trade_stale"));
     }
+    let (give_sp, want_sp): (Vec<i64>, Vec<i64>) =
+        sqlx::query_as("select give_specials, want_specials from trades where id = $1").bind(id).fetch_one(&mut *tx).await?;
+    let specials_ok = crate::specials::owned_count(&mut tx, &give_sp, from, true).await? == give_sp.len() as i64
+        && crate::specials::owned_count(&mut tx, &want_sp, to, true).await? == want_sp.len() as i64;
     let pack = api::pack(&s, &pack_id)?;
     // Lock every card in the trade, then check each is still where the offer says and not mid-reveal.
     let all: Vec<i64> = give.iter().chain(want.iter()).copied().collect();
@@ -506,7 +535,7 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
             if who == from { (give_packs, give_boosted, give_parts) } else { (want_packs, want_boosted, want_parts) };
         goods_ok &= has_goods(&mut tx, who, &pack_id, packs, boosted, parts, true).await?;
     }
-    if !ok(&give, from) || !ok(&want, to) || !goods_ok {
+    if !ok(&give, from) || !ok(&want, to) || !goods_ok || !specials_ok {
         close(&mut tx, id, "failed").await?;
         tx.commit().await?;
         return Err(err(StatusCode::CONFLICT, "trade_stale"));
@@ -521,6 +550,16 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
         .bind(from)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("update special_cards set user_id = $2 where id = any($1)").bind(&give_sp).bind(to).execute(&mut *tx).await?;
+    sqlx::query("update special_cards set user_id = $2 where id = any($1)").bind(&want_sp).bind(from).execute(&mut *tx).await?;
+    let all_sp: Vec<i64> = give_sp.iter().chain(want_sp.iter()).copied().collect();
+    sqlx::query(
+        "update trades set status = 'failed', decided_at = now() where id in (
+           select id from trades where status = 'open' and (give_specials && $1 or want_specials && $1) for update skip locked)",
+    )
+    .bind(&all_sp)
+    .execute(&mut *tx)
+    .await?;
     move_goods(&mut tx, from, to, &pack_id, give_packs, give_boosted, give_parts).await?;
     move_goods(&mut tx, to, from, &pack_id, want_packs, want_boosted, want_parts).await?;
     close(&mut tx, id, "accepted").await?;

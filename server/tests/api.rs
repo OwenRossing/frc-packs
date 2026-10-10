@@ -1525,3 +1525,32 @@ async fn special_editions_are_numbered_and_admin_only() {
     let unknown = call(&app, "POST", "/api/specials/grant", Some(&admin), Some(json!({ "username": who, "edition": "nope" }))).await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn special_edition_cards_can_be_traded() {
+    let (app, db) = need_db!(setup(true));
+    let admin = make_admin(&app, &db).await;
+    let (ca, sa) = player(&app, &db).await;
+    let (cb, sb) = player(&app, &db).await;
+    let (a, b) = (user_id(&db, &ca).await, user_id(&db, &cb).await);
+    let (a_name, b_name) = (sa["account"]["username"].as_str().unwrap().to_string(), sb["account"]["username"].as_str().unwrap().to_string());
+    age(&db, &[a, b]).await;
+    let g = call(&app, "POST", "/api/specials/grant", Some(&admin), Some(json!({ "username": a_name, "edition": "beta7028", "serial": 7 }))).await;
+    assert_eq!(g.status, StatusCode::OK, "{}", g.body);
+    let sid = g.body["id"].as_i64().unwrap();
+    // B can't offer a special card they don't own, and can't ask for one they don't know of.
+    let nope = call(&app, "POST", "/api/trades", Some(&cb), Some(json!({ "to": a_name, "pack": "cmp26", "giveSpecials": [sid], "wantPacks": 1 }))).await;
+    assert_eq!(nope.body["error"], "not_owned");
+    // B has packs from the start; A offers the special card for one of B's packs.
+    let r = call(&app, "POST", "/api/trades", Some(&ca), Some(json!({ "to": b_name, "pack": "cmp26", "giveSpecials": [sid], "wantPacks": 1 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let t = &r.body["outgoing"][0];
+    assert_eq!(t["youGiveSpecials"][0]["serial"], 7);
+    let id = t["id"].as_i64().unwrap();
+    let ok = call(&app, "POST", &format!("/api/trades/{id}/accept"), Some(&cb), Some(json!({}))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    let owner: uuid::Uuid = sqlx::query_scalar("select user_id from special_cards where id = $1").bind(sid).fetch_one(&db).await.unwrap();
+    assert_eq!(owner, b, "the special card moved to the other player");
+    let mine = call(&app, "GET", "/api/specials", Some(&cb), None).await;
+    assert_eq!(mine.body[0]["serial"], 7);
+}

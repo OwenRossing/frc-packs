@@ -221,6 +221,8 @@ export interface Trade {
   youGetPacks: number;
   youGiveBoosted: number;
   youGetBoosted: number;
+  youGiveSpecials: Special[];
+  youGetSpecials: Special[];
   youGiveParts: number;
   youGetParts: number;
   status: "open" | "accepted" | "declined" | "cancelled" | "failed";
@@ -321,7 +323,7 @@ async function act<T>(path: string, body?: unknown): Promise<T> {
   }
 }
 
-export interface Special { edition: string; team: number; name: string; title: string; serial: number; total: number }
+export interface Special { id: number; edition: string; team: number; name: string; title: string; serial: number; total: number }
 export interface SocialPlayer { name: string; firstName: string | null; badge: string | null; teams: number; mythics: number; legendaries: number; trades: number }
 export interface SocialTrade { from: string; to: string; gave: { num: number }[] | null; got: { num: number }[] | null; gavePacks: number; gotPacks: number; at: number }
 export interface Social { players: SocialPlayer[]; recent: SocialTrade[] }
@@ -355,7 +357,7 @@ export const api = {
     call<Collection>("GET", `/api/players/${encodeURIComponent(name)}/collection/${encodeURIComponent(pack)}`),
   trades: () => call<Trades>("GET", "/api/trades"),
   /** Offer one copy each of `give` (your teams) for one copy each of `want` (theirs). */
-  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveBoosted: number; wantBoosted: number; giveParts: number; wantParts: number }) =>
+  offerTrade: (to: string, pack: string, give: number[], want: number[], extra?: { givePacks: number; wantPacks: number; giveBoosted: number; wantBoosted: number; giveParts: number; wantParts: number; giveSpecials?: number[]; wantSpecials?: number[] }) =>
     act<Trades>("/api/trades", { to, pack, give, want, ...extra }),
   acceptTrade: (id: number) =>
     call<{ sets: string[]; state: State; collection: Collection; trades: Trades }>("POST", `/api/trades/${id}/accept`),

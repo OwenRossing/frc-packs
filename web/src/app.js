@@ -1581,7 +1581,7 @@ export function start(RECIPE) {
     $("#status").hidden = !open; $("#daily").hidden = !open; paintTeamPick(!open); document.body.classList.toggle("focus", open && state === "inspect");
     setTimeout(coach, 0);
     if (b) { paintBinder(); loadSpecials(); loadTrades().then(function () { if (!vBinder.hidden) paintWorkshop(); }); }
-    if (tr) { enterTrade(); paintTrades(); loadTrades(); loadSocial(); }
+    if (tr) { enterTrade(); paintTrades(); loadTrades(); loadSocial(); loadSpecials(); }
     if (so) loadSocial();
     try { history.replaceState(history.state, "", "#" + (b ? "binder" : tr ? "trade" : so ? "social" : "open")); } catch (e) {}
     if (!b && vBinder._was) { S.unseen = {}; save(); } // new marks last one binder visit
@@ -1704,10 +1704,11 @@ export function start(RECIPE) {
   /* Parts a card would scrap for: a rough sense of what each side of a trade is worth. */
   function worth(nums) { return nums.reduce(function (a, n) { return a + (S.scrapParts[BY_NUM[n].tier] || 0); }, 0); }
   /* Packs and parts on the table. A sealed pack counts as 50 parts when weighing a trade. */
-  var PACK_WORTH = 50, trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }, theirGoods = null, trKind = "cards";
-  function goodsChips(packs, parts, boosted) {
+  var PACK_WORTH = 50, trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }, theirGoods = null, trKind = "cards", trSpec = { give: [], want: [] }, theirSpecials = [];
+  function goodsChips(packs, parts, boosted, specials) {
     return (packs ? '<span class="tr-chip pack"><i aria-hidden="true"></i>' + packs + (packs === 1 ? " pack" : " packs") + '</span>' : "") +
       (boosted ? '<span class="tr-chip pack gold"><i aria-hidden="true"></i>' + boosted + ' boosted</span>' : "") +
+      (specials || []).map(function (sp) { return '<span class="tr-chip beta">Beta No. ' + pad3(sp.serial) + '</span>'; }).join("") +
       (parts ? '<span class="tr-chip parts"><i aria-hidden="true"></i>' + parts + ' parts</span>' : "");
   }
   /* On the table: what you've added, as chips. Tap them to change it in the Packs & parts picker. */
@@ -1717,7 +1718,8 @@ export function start(RECIPE) {
   function goodsControls(box, side) {
     var mine = side === "give", m = goodsMax(side), k = mine ? ["givePacks", "giveBoosted", "giveParts"] : ["wantPacks", "wantBoosted", "wantParts"];
     if (m) { trGoods[k[0]] = Math.min(trGoods[k[0]], m.packs, 50); trGoods[k[1]] = Math.min(trGoods[k[1]], m.boosted, 50); trGoods[k[2]] = Math.min(trGoods[k[2]], m.parts, 100000); }
-    var chips = m ? goodsChips(trGoods[k[0]], trGoods[k[2]], trGoods[k[1]]) : "";
+    var spList = (mine ? SPECIALS : theirSpecials).filter(function (x) { return trSpec[mine ? "give" : "want"].indexOf(x.id) >= 0; });
+    var chips = m ? goodsChips(trGoods[k[0]], trGoods[k[2]], trGoods[k[1]], spList) : "";
     box.innerHTML = m ? '<button type="button" class="goods-sum">' + (chips || '<span class="gs-add">+ Packs &amp; parts</span>') + '</button>' : "";
     var b = box.querySelector("button"); if (b) b.onclick = function () { openSheet(mine ? "mine" : "theirs", "goods"); };
   }
@@ -1759,7 +1761,7 @@ export function start(RECIPE) {
     var side = function (label, cards, whose) {
       return '<div class="tr-o-side"><small>' + label + '</small><div class="tr-o-cards">' + cards.map(function (c) {
         return BY_NUM[c.num] ? '<button type="button" class="tr-view" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
-      }).join("") + '</div>' + (whose === "you" ? goodsChips(t.youGivePacks, t.youGiveParts, t.youGiveBoosted) : goodsChips(t.youGetPacks, t.youGetParts, t.youGetBoosted)) + '</div>';
+      }).join("") + '</div>' + (whose === "you" ? goodsChips(t.youGivePacks, t.youGiveParts, t.youGiveBoosted, t.youGiveSpecials) : goodsChips(t.youGetPacks, t.youGetParts, t.youGetBoosted, t.youGetSpecials)) + '</div>';
     };
     el.innerHTML = '<header><button type="button" class="who-btn" data-who="' + esc(t.with) + '" aria-label="See ' + esc(t.with) + '\'s profile">' + avatar(t.with) + '</button><p>' + who + '<small>' + ago(when) + '</small></p>' + (kind === "past" ? '<span class="pill ' + t.status + '">' + t.status + '</span>' : "") + '</header>' +
       '<div class="tr-o-body">' + side("You give", t.youGive, "you") + '<span class="tr-o-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h13l-4-4M20 15H7l4 4"/></svg></span>' + side("You get", t.youGet, t.with) + '</div>' +
@@ -1779,7 +1781,7 @@ export function start(RECIPE) {
         return api.acceptTrade(t.id).then(function (r) {
           var at = b.getBoundingClientRect();
           applyState(r.state); applyCollection(r.collection); TR = r.trades;
-          t.youGet.forEach(function (c) { S.unseen[c.num] = 1; }); save();
+          t.youGet.forEach(function (c) { S.unseen[c.num] = 1; }); save(); loadSpecials();
           sfx.promote(); burst(at.left + at.width / 2, at.top + at.height / 2, 70, null, 9, true);
           paintStatus(); paintTabDot(); paintTradeDot(); paintTrades();
           say("Trade done with " + t.with + "!" + (t.youGet.length ? " " + t.youGet.length + (t.youGet.length === 1 ? " card is" : " cards are") + " in your binder" : "") +
@@ -1839,16 +1841,16 @@ export function start(RECIPE) {
       var when = t.decidedAt || t.createdAt, day = dayLabel(when);
       if (day !== last) { var h = document.createElement("h4"); h.className = "th-day"; h.textContent = day; list.appendChild(h); last = day; }
       var st = TH_STATUS[t.status] || [t.status, "·"], el = document.createElement("article"); el.className = "th-item " + t.status;
-      var row = function (label, cards, packs, parts, whose, boosted) {
-        if (!cards.length && !packs && !parts && !boosted) return "";
+      var row = function (label, cards, packs, parts, whose, boosted, specials) {
+        if (!cards.length && !packs && !parts && !boosted && !(specials || []).length) return "";
         return '<div class="th-row"><small>' + label + '</small><div class="th-cards">' + cards.map(function (c) {
           return BY_NUM[c.num] ? '<button type="button" class="tr-view th-card" data-num="' + c.num + '" data-serial="' + esc(c.serial) + '" data-whose="' + whose + '" aria-label="See ' + esc(BY_NUM[c.num].name) + '">' + miniCard(c.num, { serial: c.serial }) + '</button>' : "";
-        }).join("") + goodsChips(packs, parts, boosted) + '</div></div>';
+        }).join("") + goodsChips(packs, parts, boosted, specials) + '</div></div>';
       };
       var verb = t.status === "accepted" ? ["Got", "Gave"] : ["Would have got", "Would have given"];
       el.innerHTML = '<header><span class="th-icon" aria-hidden="true">' + st[1] + '</span><button type="button" class="who-btn" aria-label="See ' + esc(t.with) + '\'s profile">' + avatar(t.with) + '<b>' + esc(t.with) + '</b></button>' +
         '<span class="pill ' + t.status + '">' + st[0] + '</span><time>' + new Date(when).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) + '</time></header>' +
-        row(verb[0], t.youGet, t.youGetPacks, t.youGetParts, t.with, t.youGetBoosted) + row(verb[1], t.youGive, t.youGivePacks, t.youGiveParts, "you", t.youGiveBoosted) +
+        row(verb[0], t.youGet, t.youGetPacks, t.youGetParts, t.with, t.youGetBoosted, t.youGetSpecials) + row(verb[1], t.youGive, t.youGivePacks, t.youGiveParts, "you", t.youGiveBoosted, t.youGiveSpecials) +
         (t.status === "failed" ? '<p class="th-note">Someone no longer had a card, pack or parts in it, so it was called off.</p>' : '');
       el.querySelector(".who-btn").onclick = function () { openProfile(t.with); };
       Array.prototype.forEach.call(el.querySelectorAll(".tr-view"), function (b) {
@@ -1895,12 +1897,12 @@ export function start(RECIPE) {
     $("#trThemName").textContent = theirName || "Pick a player";
     $("#trPaneNew").classList.toggle("picking", !theirName);
     goodsControls($("#trGiveGoods"), "give"); goodsControls($("#trGetGoods"), "get");
-    var g = worth(trGive) + trGoods.givePacks * PACK_WORTH + trGoods.giveBoosted * S.boostCost + trGoods.giveParts, w = worth(trGet) + trGoods.wantPacks * PACK_WORTH + trGoods.wantBoosted * S.boostCost + trGoods.wantParts;
+    var g = worth(trGive) + trSpec.give.length * 800 + trGoods.givePacks * PACK_WORTH + trGoods.giveBoosted * S.boostCost + trGoods.giveParts, w = worth(trGet) + trSpec.want.length * 800 + trGoods.wantPacks * PACK_WORTH + trGoods.wantBoosted * S.boostCost + trGoods.wantParts;
     var total = g + w, bar = $("#trFairBar"), txt = $("#trFairTxt");
     var lean = total ? (w - g) / total : 0; // -1: you give it all, +1: you get it all
     bar.style.setProperty("--lean", lean.toFixed(3)); bar.parentNode.hidden = !total;
     txt.textContent = !total ? "" : Math.abs(lean) < .2 ? "Looks even" : lean > 0 ? (lean > .6 ? "A big ask" : "You get more") : (lean < -.6 ? "Very generous" : "You give more");
-    var giving = trGive.length || trGoods.givePacks || trGoods.giveBoosted || trGoods.giveParts, getting = trGet.length || trGoods.wantPacks || trGoods.wantBoosted || trGoods.wantParts;
+    var giving = trGive.length || trSpec.give.length || trGoods.givePacks || trGoods.giveBoosted || trGoods.giveParts, getting = trGet.length || trSpec.want.length || trGoods.wantPacks || trGoods.wantBoosted || trGoods.wantParts;
     var ready = theirName && giving && getting;
     trSend.disabled = !ready; paintMatch();
     $("#trSummary").textContent = !theirName ? "Start by picking who to trade with." : !giving && !getting ? "Put cards, packs or parts on the table." :
@@ -1928,6 +1930,19 @@ export function start(RECIPE) {
     var list = Object.keys(inv).map(Number).filter(function (n) { return BY_NUM[n] && inv[n] > 0 && (trTier === "all" || BY_NUM[n].tier === trTier) && (!q || matches(BY_NUM[n], q)); })
       .sort(function (a, b) { var A = BY_NUM[a], B = BY_NUM[b]; return ORDER.indexOf(A.tier) - ORDER.indexOf(B.tier) || A.rank - B.rank; });
     if (!list.length) { trGrid.innerHTML = '<div class="tr-empty"><b>' + (q || trTier !== "all" ? "No cards match" : mineSide ? "Your binder is empty" : "No cards yet") + '</b>' + (q || trTier !== "all" ? "Try another search or rarity." : mineSide ? "Open some packs first." : "They haven't opened any packs.") + '</div>'; return; }
+    var specs = mineSide ? SPECIALS : theirSpecials;
+    if (specs.length) {
+      var sr = document.createElement("div"); sr.className = "tr-spec"; sr.innerHTML = '<h3 class="sp-h">Special editions</h3>';
+      var srow = document.createElement("div"); srow.className = "sp-row";
+      specs.forEach(function (sp) {
+        var list2 = trSpec[mineSide ? "give" : "want"], on2 = list2.indexOf(sp.id) >= 0;
+        var b = document.createElement("button"); b.type = "button"; b.className = "sp-thumb" + (on2 ? " on" : ""); b.appendChild(specialCardEl(sp));
+        b.setAttribute("aria-pressed", String(on2));
+        b.onclick = function () { var i = list2.indexOf(sp.id); if (i >= 0) list2.splice(i, 1); else if (list2.length < MAXT) list2.push(sp.id); sfx.pick(); paintTable(); paintGrid(); };
+        srow.appendChild(b);
+      });
+      sr.appendChild(srow); trGrid.appendChild(sr);
+    }
     list.slice(0, 80).forEach(function (n) {
       var cnt = picked.filter(function (x) { return x === n; }).length, on = cnt > 0, cell = document.createElement("div"), b = document.createElement("button");
       cell.className = "tr-cell";
@@ -1971,7 +1986,8 @@ export function start(RECIPE) {
       if (n !== theirsReq || trWho.value.trim().toLowerCase() !== name.toLowerCase()) return; // they typed on
       if (name.toLowerCase() !== theirName.toLowerCase()) { trGet = []; trSide = "theirs"; }
       theirName = name; theirInv = {}; theirWish = [];
-      theirGoods = null; trGoods.wantPacks = trGoods.wantBoosted = trGoods.wantParts = 0;
+      theirGoods = null; trGoods.wantPacks = trGoods.wantBoosted = trGoods.wantParts = 0; trSpec.want = []; theirSpecials = [];
+      api.playerSpecials(name).then(function (l) { if (theirName === name) { theirSpecials = l; paintTable(); paintGrid(); } }, function () {});
       api.profile(name, PACK_ID).then(function (p) { if (theirName === name) { theirWish = p.wishlist; theirGoods = { packs: p.packs, boosted: p.boosted, parts: p.parts }; paintTable(); paintGrid(); paintMatch(); } }, function () {});
       col.cards.forEach(function (c) { if (BY_NUM[c.num]) theirInv[c.num] = c.serials.length; });
       if (pendingWant && theirInv[pendingWant] && trGet.indexOf(pendingWant) < 0 && trGet.length < MAXT) { trGet.push(pendingWant); trFresh["get" + pendingWant] = 1; trSide = "theirs"; }
@@ -2006,8 +2022,8 @@ export function start(RECIPE) {
   trSend.addEventListener("click", function () {
     if (trSend.disabled) return; trSend.disabled = true; closeSheet();
     var r = trSend.getBoundingClientRect();
-    api.offerTrade(theirName, PACK_ID, trGive, trGet, trGoods).then(function (t) {
-      TR = t; trGive = []; trGet = []; trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
+    api.offerTrade(theirName, PACK_ID, trGive, trGet, Object.assign({}, trGoods, { giveSpecials: trSpec.give, wantSpecials: trSpec.want })).then(function (t) {
+      TR = t; trGive = []; trGet = []; trSpec = { give: [], want: [] }; trGoods = { givePacks: 0, wantPacks: 0, giveBoosted: 0, wantBoosted: 0, giveParts: 0, wantParts: 0 }; sfx.whoosh(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#27d3c3", 6);
       say("Offer sent to " + theirName + ". You'll see it under Sent until they answer.", 3000);
       loadTheirs(true); paintTrades(); paintTradeDot();
     }, function (e) { offline(e); paintTable(); });
