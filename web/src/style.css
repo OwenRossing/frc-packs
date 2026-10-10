@@ -1248,3 +1248,8 @@ body.perf .card[data-tier="mythic"] .front::before, body.perf .card[data-tier="m
 
 .modal.card-view .modal-in > .cta-row:last-child .cta { white-space: normal; line-height: 1.1; flex: 1 1 auto; }
 .modal.card-view .modal-in { overflow-x: hidden; }
+
+/* A card you don't have yet is shown blurred, whole: you can see it's a card, and the reveal still lands. */
+.slot.locked .art, .slot.locked .fphoto, .slot.locked .fwrap { filter: none; opacity: 1; }
+.slot.locked .face.front { filter: blur(calc(var(--cw) * .035)) saturate(.7) brightness(.85); }
+.slot.locked .crest { display: block; }
