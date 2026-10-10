@@ -1279,6 +1279,8 @@ export function start(RECIPE) {
     if (mstack.length) return paintModal("pop");
     hideModal(); var f = afterClose; afterClose = null; if (f) f();
   }
+  /* Tap the dark area around a card or profile to close it, like Close. */
+  modal.addEventListener("click", function (e) { if (e.target === modal || e.target === modalIn) closeModal(); });
   function hideModal() {
     mstack = []; modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = "";
     if (lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
