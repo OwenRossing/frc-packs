@@ -80,8 +80,13 @@ export function start(RECIPE) {
     S.sets = {}; col.sets.forEach(function (d) { S.sets[d] = 1; });
     hidePending(); // the server lists cards still to be dealt; they join the binder as they're dealt
   }
+  /* Robot photos are fetched and decoded as soon as a pack's cards are known. Face-down cards sit in a flipped 3D layer, and
+     phones (iOS especially) can skip loading images there until it's too late, which left some cards without a picture. */
+  var photoCache = {};
+  function preloadPhotos(nums) { nums.forEach(function (n) { if (photoCache[n] || !BY_NUM[n] || !BY_NUM[n].photo) return; var im = new Image(); im.decoding = "async"; im.src = "/photos/" + n + ".webp"; photoCache[n] = im; if (im.decode) im.decode().catch(function () {}); }); }
   function pendingFrom(o) {
     if (!o || o.pack !== PACK_ID || o.cards.length !== 5 || !o.cards.every(function (c) { return BY_NUM[c.num] && TIERS[c.tier]; })) return null;
+    preloadPhotos(o.cards.map(function (c) { return c.num; }));
     return { id: o.id, revealed: o.revealed, sets: o.sets, cards: o.cards.map(function (c) { return { num: c.num, tier: c.tier, serial: String(c.serial), isNew: c.isNew, copy: c.copy, inGame: c.inGame, test: !!c.test }; }) };
   }
   function offline(e) { say(e && e.status === 0 ? "Can't reach the server. Check your connection." : e && e.status === 401 ? "You've been signed out. Reload to sign in again." : explain(e), 3600); }
