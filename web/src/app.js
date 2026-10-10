@@ -397,6 +397,8 @@ export function start(RECIPE) {
     var n = S.pity.m, el = $("#meter");
     var w = (Math.min(n, HARD) / HARD * 100) + "%", bar = $("#meterBar"); if (bar.style.width !== w) bar.style.width = w;
     setText($("#meterTxt"), n + " / " + HARD);
+    collectionEl.style.setProperty("--mp", (Math.min(n, HARD) / HARD * 100) + "%"); collectionEl.setAttribute("data-cap", "Mythic " + n + " / " + HARD);
+    var pc = $("#partsChip"); if (pc) setText(pc, "⚙ " + S.parts);
     if (el.classList.contains("hot") !== (n >= SOFT)) el.classList.toggle("hot", n >= SOFT);
     var tip = "Packs since your last Mythic. Odds climb after " + SOFT + " and one is guaranteed by pack " + HARD + "."; if (el.title !== tip) el.title = tip;
   }
@@ -486,8 +488,7 @@ export function start(RECIPE) {
     ringwrap.classList.toggle("out", have() < 1);
     ringwrap.classList.toggle("boosted", S.openKind && !S.testMode);
     ringwrap.classList.toggle("test", S.testMode);
-    var want = (S.boosted > 0) + 1 + isAdmin();
-    if (state === "home" && collectionEl.children.length !== want) return paintHome();
+    if (state === "home" && (homeKinds().length !== $("#kindRow").children.length || (homeKinds().length > 1 && homeKinds().indexOf(homeKind) < 0))) return paintHome();
     Array.prototype.forEach.call(collectionEl.querySelectorAll(".ptype"), function (tile) { paintTile(tile, PACKS[0]); });
     var inv = $("#packInv");
     if (inv) setHTML(inv, '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') +
@@ -501,26 +502,39 @@ export function start(RECIPE) {
     setText(b.querySelector(".pt-sub"), n ? (boosted ? "Better odds" : "Tap to open") : "None left");
     var al = (boosted ? "Boosted " : "") + pk.name + " pack, " + n + " to open"; if (b.getAttribute("aria-label") !== al) b.setAttribute("aria-label", al);
   }
+  /* Home: one hero pack inside the Mythic-meter ring, and a row of every pack type you own under it. */
+  var homeKind = null;
+  function homeKinds() {
+    var k = [false]; if (S.boosted > 0) k.push(true); if (isAdmin()) k.push("test"); return k;
+  }
+  function kindName(kind) { return kind === "test" ? "Test" : kind === true ? "Boosted" : "Standard"; }
   function paintHome() {
     state = "home"; showOnly("home");
+    var kinds = homeKinds();
+    if (kinds.indexOf(homeKind) < 0) homeKind = (kindCount(false) < 1 && S.boosted > 0) ? true : false;
     collectionEl.innerHTML = "";
-    var kinds = S.boosted > 0 ? [true, false] : [false];
-    if (isAdmin()) kinds.push("test");
-    collectionEl.classList.toggle("one", kinds.length === 1);
-    kinds.forEach(function (kind) {
-      var pk = PACKS[0], test = kind === "test", boosted = kind === true;
-      var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted ? " boosted" : "") + (test ? " test" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted; b._test = test;
-      b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (test ? "Test " : boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
-      paintTile(b, pk);
-      b.addEventListener("click", function () { S.testMode = test; S.openKind = boosted; openRing(b); });
-      b.addEventListener("pointermove", function (e) {
-        var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
-        b.style.setProperty("--gx", ((px - .5) * 2).toFixed(3)); b.style.setProperty("--gy", ((py - .5) * 2).toFixed(3));
-      });
-      b.addEventListener("pointerleave", function () { b.style.removeProperty("--gx"); b.style.removeProperty("--gy"); });
-      collectionEl.appendChild(b);
+    var kind = homeKind, pk = PACKS[0], test = kind === "test", boosted = kind === true;
+    var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted ? " boosted" : "") + (test ? " test" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted; b._test = test;
+    b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (test ? "Test " : boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
+    paintTile(b, pk);
+    b.addEventListener("click", function () { S.testMode = test; S.openKind = boosted; openRing(b); });
+    b.addEventListener("pointermove", function (e) {
+      var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      b.style.setProperty("--gx", ((px - .5) * 2).toFixed(3)); b.style.setProperty("--gy", ((py - .5) * 2).toFixed(3));
     });
-    paintSelectHud(); paintStatus();
+    b.addEventListener("pointerleave", function () { b.style.removeProperty("--gx"); b.style.removeProperty("--gy"); });
+    collectionEl.appendChild(b); collectionEl.classList.add("one");
+    var row = $("#kindRow"); row.innerHTML = "";
+    kinds.forEach(function (k) {
+      var t = k === "test", g = k === true, n = t ? "∞" : kindCount(g);
+      var c = document.createElement("button"); c.type = "button"; c.className = "kind" + (k === kind ? " on" : "") + (g ? " gold" : "") + (t ? " test" : "") + (t || n ? "" : " empty");
+      c.setAttribute("role", "option"); c.setAttribute("aria-selected", String(k === kind)); c.setAttribute("aria-label", kindName(k) + " packs, " + n);
+      c.innerHTML = '<i></i><em>' + n + '</em><span>' + kindName(k) + '</span>';
+      c.onclick = function () { homeKind = k; S.testMode = t; S.openKind = g; sfx.tick(); paintHome(); };
+      row.appendChild(c);
+    });
+    row.hidden = kinds.length < 2;
+    paintMeter(); paintSelectHud(); paintStatus();
   }
   function openRing(tile) {
     if (state !== "home") return; actx();
