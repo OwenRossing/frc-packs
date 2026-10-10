@@ -410,6 +410,7 @@ export const api = {
     reports: () => call<Report[]>("GET", "/api/admin/reports"),
     resolveReport: (id: number) => call<void>("POST", `/api/admin/reports/${id}/resolve`),
     givePacks: (id: string, count: number) => call<void>("POST", `/api/admin/users/${id}/packs`, { count }),
+    setAdmin: (id: string, admin: boolean) => call<void>("POST", `/api/admin/users/${id}/admin`, { admin }),
     setDisabled: (id: string, disabled: boolean) => call<void>("POST", `/api/admin/users/${id}/disabled`, { disabled }),
     deleteUser: (id: string, confirm: string) => call<void>("POST", `/api/admin/users/${id}/delete`, { confirm }),
     settings: () => call<Rules>("GET", "/api/admin/settings"),

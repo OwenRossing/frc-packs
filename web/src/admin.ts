@@ -352,6 +352,17 @@ function manage(u: AdminUser): HTMLElement {
     );
   }
   row.append(
+    confirmButton(u.admin ? "Remove admin" : "Make admin", "Tap to confirm", async () => {
+      try {
+        await api.admin.setAdmin(u.id, !u.admin);
+        say(u.admin ? `${u.username} is no longer an admin.` : `${u.username} is now an admin.`);
+        await loadUsers();
+      } catch (e) {
+        fail(e);
+      }
+    }),
+  );
+  row.append(
     confirmButton(u.disabled ? "Turn on" : "Turn off", u.disabled ? "Tap to turn on" : "Tap to turn off", async () => {
       try {
         await api.admin.setDisabled(u.id, !u.disabled);

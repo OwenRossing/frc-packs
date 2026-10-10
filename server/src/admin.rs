@@ -23,6 +23,7 @@ pub fn routes() -> Router<Shared> {
         .route("/users/{id}/password", post(reset_password))
         .route("/users/{id}/packs", post(give_packs))
         .route("/users/{id}/disabled", post(set_disabled))
+        .route("/users/{id}/admin", post(set_admin))
         .route("/users/{id}/delete", post(delete_user))
         .route("/settings", get(settings).post(save_settings))
         .route("/reports", get(reports))
@@ -461,6 +462,25 @@ async fn give_packs(
     .rows_affected();
     tx.commit().await?;
     if n == 0 { Err(err(StatusCode::NOT_FOUND, "not_found")) } else { Ok(StatusCode::NO_CONTENT) }
+}
+
+#[derive(Deserialize)]
+struct SetAdmin {
+    admin: bool,
+}
+
+/// Makes an account an admin, or takes admin away. An admin can't change their own, and a guest can't be one.
+async fn set_admin(State(s): State<Shared>, admin: Admin, Path(id): Path<Uuid>, Json(req): Json<SetAdmin>) -> ApiResult<StatusCode> {
+    other_user(&s, &admin, id).await?;
+    let done = sqlx::query("update users set is_admin = $2 where id = $1 and username is not null")
+        .bind(id)
+        .bind(req.admin)
+        .execute(&s.db)
+        .await?;
+    if done.rows_affected() == 0 {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
