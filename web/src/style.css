@@ -1214,16 +1214,6 @@ body.settings-open { overflow: hidden; }
 
 
 /* Performance mode: drop the effects that cost the most on slower phones, keep the moment itself. */
-body.perf .bg i { animation: none; }
-body.perf .rays, body.perf .ringfloor { display: none !important; }
-body.perf .foil, body.perf .spark, body.perf .glare, body.perf .front::after, body.perf .card[data-tier="mythic"] .inner::after { display: none !important; }
-body.perf *, body.perf *::before, body.perf *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-body.perf .ph-bg { display: none; }
-body.perf .slot.charging::before { display: none; }
-body.perf .mtitle, body.perf .mname b { filter: none; }
-body.perf .stage.shake, body.perf .shake, body.perf .shake-big { animation: none !important; }
-body.perf .mring, body.perf .mshock { display: none; }
-body.perf .tabbar, body.perf .app > .top { background: rgba(5,20,26,.97); }
 
 .fav-badge { position: absolute; left: 6px; bottom: 6px; z-index: 5; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #ff3d6e; color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.4); pointer-events: none; }
 .keepb.on { border-color: #ff3d6e; color: #ff7a9c; }
@@ -1245,7 +1235,6 @@ body.perf .tabbar, body.perf .app > .top { background: rgba(5,20,26,.97); }
 .card[data-tier="mythic"] .front::before, .card[data-tier="mythic"].mc::before { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cdefs%3E%3Cfilter id='d' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.005 0.02' numOctaves='3' seed='11' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='170' xChannelSelector='R' yChannelSelector='G'/%3E%3C/filter%3E%3Cpattern id='p' width='600' height='26' patternUnits='userSpaceOnUse'%3E%3Crect width='600' height='26' fill='%2316313a'/%3E%3Crect y='0' width='600' height='5' fill='%23dcecf0'/%3E%3Crect y='7' width='600' height='4' fill='%236fa3b2'/%3E%3Crect y='13' width='600' height='5' fill='%230c2027'/%3E%3Crect y='19' width='600' height='2' fill='%233cffdc' opacity='.6'/%3E%3Crect y='22' width='600' height='3' fill='%23a9c9d3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect x='-200' y='-200' width='1000' height='1000' fill='url(%23p)' filter='url(%23d)'/%3E%3C/svg%3E") center / 100% 100% no-repeat; animation: turn 48s linear infinite; }
 .card[data-tier="mythic"] .front, .card[data-tier="mythic"].mc { background: #0c2027; }
 .card[data-tier="mythic"] .inner { box-shadow: 0 0 0 1px rgba(255,255,255,.18), 0 0 18px rgba(60,255,220,.25) inset; }
-body.perf .card[data-tier="mythic"] .front::before, body.perf .card[data-tier="mythic"].mc::before { animation: none; }
 
 .modal.card-view .modal-in > .cta-row:last-child .cta { white-space: normal; line-height: 1.1; flex: 1 1 auto; }
 .modal.card-view .modal-in { overflow-x: hidden; }
@@ -1267,7 +1256,6 @@ body.takeover .bg i, body.mythic-dark .bg i, body.mythic-aura .bg i { animation-
 .modal-in .slot:active { cursor: grabbing; }
 
 /* While a card or profile is open the page behind must not move: it made the pinned buttons and tab bar jump on some phones. */
-body.modal-lock { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .modal.card-view, .modal.card-view .modal-in, .modal.card-view .modal-in * { touch-action: none; }
 .modal { overscroll-behavior: none; }
 

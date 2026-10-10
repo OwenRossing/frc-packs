@@ -50,26 +50,11 @@ export function start(RECIPE) {
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
-      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true; S.perf = prefs.perf === "on" || prefs.perf === "off" ? prefs.perf : "auto"; S.laggy = prefs.laggy === true;
+      S.muted = prefs.muted === true; S.wheel = prefs.wheel2 === true; 
       if (prefs.unseen && typeof prefs.unseen === "object" && !Array.isArray(prefs.unseen)) S.unseen = prefs.unseen;
     }
   } catch (e) {}
-  /* Performance mode: lighter effects. Auto turns it on for phones that look slow (few cores or little memory). */
-  var SLOW = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) || (navigator.deviceMemory && navigator.deviceMemory <= 3);
-  function perfOn() { return S.perf === "on" || (S.perf !== "off" && (!!SLOW || !!S.laggy)); }
-  function paintPerf() { document.body.classList.toggle("perf", perfOn()); var b = $("#perfBtn"); if (b) { b.textContent = S.perf === "on" ? "On" : S.perf === "off" ? "Off" : "Auto" + ((SLOW || S.laggy) ? " (on)" : " (off)"); b.setAttribute("aria-pressed", String(perfOn())); } }
-  /* Measures how smoothly this phone draws while a pack is opening. If it's choppy, Auto turns performance mode on for next time. */
-  var probed = false;
-  function probeFps() {
-    if (probed || S.perf !== "auto" || perfOn()) return; probed = true;
-    var last = 0, n = 0, total = 0, start = performance.now();
-    requestAnimationFrame(function f(t) {
-      if (last) { total += t - last; n++; } last = t;
-      if (t - start < 1500 && !document.hidden) return requestAnimationFrame(f);
-      if (n > 20 && total / n > 24) { S.laggy = true; save(); paintPerf(); say("Switched to lighter effects for smoother opening. You can change this in Settings.", 3600); }
-    });
-  }
-  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, perf: S.perf, laggy: S.laggy, unseen: S.unseen })); } catch (e) {} }
+  function save() { try { localStorage.setItem(PREFS, JSON.stringify({ muted: S.muted, wheel2: S.wheel, unseen: S.unseen })); } catch (e) {} }
   /* Server times are converted to this device's clock on every response, so a wrong device clock can't change a timer. */
   /* The donation link is off for now: set DONATIONS to true (and the link in the admin panel) to show it. */
   var DONATIONS = false;
@@ -813,7 +798,7 @@ export function start(RECIPE) {
     return openReq;
   }
   function cut() {
-    if (state !== "inspect") return; state = "cutting"; probeFps();
+    if (state !== "inspect") return; state = "cutting";
     startOpen().then(function (res) {
       openReq = null;
       var o = res.opening;
@@ -1316,7 +1301,6 @@ export function start(RECIPE) {
   function paintModal(dir) {
     modalIn.innerHTML = ""; modal.classList.remove("facts-on");
     var focus = mstack[mstack.length - 1]();
-    if (modal.hidden) { lockY = window.scrollY || 0; document.body.style.top = (-lockY) + "px"; document.body.classList.add("modal-lock"); }
     modal.hidden = false; document.body.classList.add("modal-open");
     modal.classList.toggle("card-view", !!modalIn.querySelector(".slot") && !modalIn.querySelector(".profile"));
     if (dir !== "") modal.scrollTop = 0;
@@ -1350,9 +1334,9 @@ export function start(RECIPE) {
   }
   /* Tap the dark area around a card or profile to close it, like Close. */
   modal.addEventListener("click", function (e) { if (e.target === modal || e.target === modalIn) closeModal(); });
-  var lockY = 0;
+  /* While a card or profile is open the page behind must not scroll (it moved the pinned buttons on some phones). */
+  document.addEventListener("touchmove", function (e) { if (!modal.hidden && !e.target.closest(".modal-in")) e.preventDefault(); }, { passive: false });
   function hideModal() {
-    if (document.body.classList.contains("modal-lock")) { document.body.classList.remove("modal-lock"); document.body.style.top = ""; window.scrollTo(0, lockY); }
     mstack = []; cardNav = null; modal.classList.remove("card-view", "facts-on"); modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = "";
     if (lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
   }
@@ -1757,10 +1741,21 @@ export function start(RECIPE) {
     api.changeUsername(nu, pw).then(function (st) { f.password.value = ""; ME = st.account.username; applyState(st); paintAccount(); paintSocialAfterRename(); setMsg("Username changed to " + st.account.username + ".", false); }, function (er) { setMsg(explain(er), true); });
   });
   function paintSocialAfterRename() { SOCIAL = null; var mb = $("#meBtn"); if (mb) mb.innerHTML = avatar(ME); }
+  /* Latest-version check: compares the script this page loaded with the one the site is serving now. */
+  var verBtn = $("#verBtn"), verTxt = $("#verTxt");
+  function checkVersion() {
+    var cur = document.querySelector('script[type="module"][src*="/assets/"]'); verBtn.disabled = true; verTxt.textContent = "Checking...";
+    fetch("/?v=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (h) {
+      var m = h.match(/\/assets\/main-[^"']+\.js/), have = cur && cur.getAttribute("src");
+      verBtn.disabled = false;
+      if (!m || !have || have.indexOf(m[0]) >= 0) { verTxt.textContent = "You have the latest version."; verBtn.textContent = "Check"; verBtn.dataset.update = ""; }
+      else { verTxt.textContent = "A newer version is ready."; verBtn.textContent = "Update"; verBtn.dataset.update = "1"; }
+    }, function () { verBtn.disabled = false; verTxt.textContent = "Couldn't check. Try again."; });
+  }
+  verBtn.onclick = function () { if (verBtn.dataset.update) location.reload(); else checkVersion(); };
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
-  $("#perfBtn").onclick = function () { S.perf = S.perf === "auto" ? "on" : S.perf === "on" ? "off" : "auto"; save(); paintPerf(); };
   wheelBtn.onclick = function () { S.wheel = S.wheel !== true; save(); paintToggles(); };
-  function paintToggles() { paintV2(); paintPerf(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === true ? "On" : "Off"; wheelBtn.setAttribute("aria-pressed", String(S.wheel === true));
+  function paintToggles() { paintV2(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === true ? "On" : "Off"; wheelBtn.setAttribute("aria-pressed", String(S.wheel === true));
     ["#demoLuck", "#demoPack", "#reset"].forEach(function (id) { $(id).closest(".line").hidden = !S.devTools; });
   }
   /* New layout, for testing: the admin can switch it on in Settings. It only changes how the Collection page is arranged. */
