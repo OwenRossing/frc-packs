@@ -301,7 +301,7 @@ export function start(RECIPE) {
         '<div class="mv"><i></i><span>Champs record</span><b>' + esc(t.wl) + '</b></div>' +
         '<div class="mv"><i></i><span>Champs EPA rank</span><b>#' + t.rank + '</b></div>' +
       '</div>' +
-      '<div class="ft"><span class="rar">' + T.gems + '</span><span class="sn' + (+c.serial > 0 && +c.serial <= 10 ? " low" : "") + '">No. ' + esc(c.serial || "------") + '</span><span>' + T.label + '</span></div>' +
+      '<div class="ft"><span class="rar">' + T.gems + '</span><span class="sn' + (+c.serial > 0 && +c.serial <= 10 ? " low" : "") + (+c.serial === c.num ? " match" : "") + '">No. ' + esc(c.serial || "------") + '</span><span>' + T.label + '</span></div>' +
       '<div class="foil"></div><div class="spark"></div><div class="glare"></div></div></div></div></div></div>';
     if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.test ? "TEST" : c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
     if (opts.count > 1) { var b = document.createElement("div"); b.className = "count-badge"; b.textContent = "×" + opts.count; slot.appendChild(b); }
@@ -355,6 +355,8 @@ export function start(RECIPE) {
     $("#dailySum").textContent = (ready ? ready + " to collect · " : "") + done + " of " + ms.length + " missions done" + (st.days && !st.today ? " · open a pack today to keep your streak" : "");
     $("#dailyDots").innerHTML = ms.map(function (m) { return '<i class="' + (m.claimed ? "done" : m.progress >= m.goal ? "ready" : "") + '"></i>'; }).join("");
     $("#dailyToggle").setAttribute("aria-expanded", String(dailyOpen)); $("#dailyBody").hidden = !dailyOpen;
+    var chip = $("#streakChip"); if (chip) chip.innerHTML = "🔥 " + (st.days || 0) + (ready ? '<i class="rdot" aria-label="Mission ready"></i>' : "");
+    var meB = $("#meBtn"); if (meB && ME) meB.innerHTML = avatar(ME);
     var list = $("#dailyList"); list.innerHTML = "";
     ms.forEach(function (m) {
       var el = document.createElement("div"), full = m.progress >= m.goal;
@@ -373,6 +375,17 @@ export function start(RECIPE) {
       (toGift === st.every && st.today ? "Boosted pack earned! Next one in " + st.every + " days." : "A boosted pack every " + st.every + " days in a row" + (st.days ? " · " + toGift + " to go." : ".")) +
       " Missions reset at midnight; parts go toward boosted packs in the binder.";
   }
+  /* Top bar: streak (opens missions), the timer or Claim, and your profile. The old status card and the gear fold in here. */
+  (function () {
+    var tools = document.querySelector(".top .tools"), gearB = $("#gear"); if (!tools || !gearB) return;
+    var sc = document.createElement("button"); sc.type = "button"; sc.className = "tchip"; sc.id = "streakChip"; sc.setAttribute("aria-label", "Streak and missions");
+    var me = document.createElement("button"); me.type = "button"; me.id = "meBtn"; me.className = "mebtn"; me.setAttribute("aria-label", "Your profile");
+    tools.insertBefore(sc, gearB); tools.insertBefore($("#timer"), gearB); tools.insertBefore($("#claim"), gearB); tools.insertBefore(me, gearB);
+    gearB.classList.add("gear-hidden");
+    sc.onclick = function (e) { e.stopPropagation(); var on = !document.body.classList.contains("daily-pop"); document.body.classList.toggle("daily-pop", on); if (on) { dailyOpen = true; paintDaily(); } };
+    document.addEventListener("click", function (e) { if (document.body.classList.contains("daily-pop") && !e.target.closest("#daily") && !e.target.closest("#streakChip")) document.body.classList.remove("daily-pop"); });
+    me.onclick = function () { openProfile(ME); };
+  })();
   $("#dailyToggle").onclick = function () { dailyOpen = !dailyOpen; try { localStorage.setItem("frcpacks.daily", dailyOpen ? "1" : "0"); } catch (e) {} paintDaily(); };
   function collect(m, btn) {
     btn.disabled = true; actx();
@@ -846,6 +859,7 @@ export function start(RECIPE) {
     for (var i = 0; i < all.length; i++) { all[i].style.setProperty("--k", all.length - 1 - i); all[i].classList.toggle("top", all[i] === el); }
     var c = el._c;
     if (el._hidden) {
+      el.classList.add("peek");
       setHud("Something shiny…", TAP + " to flip it");
       if (!el._teased) { el._teased = true; sfx.tease(c.tier); }
       if (el._promo) setTimeout(function () { if (!el._promo || !el._hidden || el !== topEl()) return; promoteCard(el); setHud("Something very shiny…", TAP + " to flip it"); }, RM ? 0 : 900);
@@ -1295,6 +1309,7 @@ export function start(RECIPE) {
   function inspectScreen(t) {
     var serials = S.inv[t.num] || [];
     modalIn.appendChild(cardEl({ num: t.num, tier: t.tier, serial: serials[0] }, { faceUp: true, alive: !!serials.length, locked: !serials.length }));
+    var bdg2 = serials.length && serialBadges(t.num, serials); if (bdg2) modalIn.appendChild(bdg2);
     var info = document.createElement("div"); info.className = "serials";
     info.innerHTML = serials.length ? "<b>" + serials.length + (serials.length === 1 ? " copy" : " copies") + "</b> owned<br>Serials: " + serials.map(function (s) { return "No. " + esc(s); }).join(" · ") : "Not in your collection yet";
     modalIn.appendChild(info);
@@ -1335,9 +1350,20 @@ export function start(RECIPE) {
   }
   /* A card up close from the trading post: the full card (tilt it), its team stats, and whose copy it is. */
   function viewCard(num, o) { present(function () { return cardScreen(num, o || {}); }); }
+  /* Serial numbers worth bragging about: No. 1, any of the first ten, and a serial that matches the team number. */
+  function serialBadges(num, serials) {
+    var b = [];
+    if (serials.some(function (x) { return +x === 1; })) b.push('<span class="bdg g">First print</span>');
+    else if (serials.some(function (x) { return +x > 0 && +x <= 10; })) b.push('<span class="bdg g">Low serial</span>');
+    if (serials.some(function (x) { return +x === num; })) b.push('<span class="bdg t">Team match</span>');
+    if (serials.length > 1) b.push('<span class="bdg p">' + serials.length + ' copies</span>');
+    if (!b.length) return null;
+    var d = document.createElement("div"); d.className = "badges"; d.innerHTML = b.join(""); return d;
+  }
   function cardScreen(num, o) {
     var t = BY_NUM[num], T = TIERS[t.tier], mine = (S.inv[num] || []).length;
     modalIn.appendChild(cardEl({ num: num, tier: t.tier, serial: o.serial || "" }, { faceUp: true, alive: !o.locked, locked: !!o.locked }));
+    var bdg = !o.locked && o.serial && serialBadges(num, [o.serial]); if (bdg) modalIn.appendChild(bdg);
     var facts = document.createElement("div"); facts.className = "serials card-facts";
     facts.innerHTML = '<dl>' +
       '<dt>Team</dt><dd>' + num + ' · ' + esc(t.name) + '</dd>' +
@@ -1411,6 +1437,7 @@ export function start(RECIPE) {
         '</div>';
       var row = document.createElement("div"); row.className = "cta-row";
       var close = closeButton(); row.appendChild(close);
+      if (p.me) { var sb = document.createElement("button"); sb.type = "button"; sb.className = "cta ghost"; sb.textContent = "Settings"; sb.onclick = function () { closeAll(function () { $("#gear").click(); }); }; row.appendChild(sb); }
       if (!p.me && REPORTS) {
         var rep = document.createElement("button"); rep.type = "button"; rep.className = "textbtn pf-report"; rep.textContent = "Report " + p.username;
         rep.onclick = function () { reportForm(p.username); };

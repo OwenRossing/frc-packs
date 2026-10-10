@@ -1091,3 +1091,30 @@ body.tr-sheet { overflow: hidden; }
 #trBrowse.goods-mode .gp { width: 100%; }
 @media (max-width: 640px) { .tr-browse .tr-grid { overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: none; } }
 .tr-browse .tr-grid { touch-action: pan-y; }
+
+/* Serial badges and the rarity peek */
+.badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.bdg { font: 700 11px var(--body); letter-spacing: .06em; text-transform: uppercase; padding: 5px 10px; border-radius: 99px; border: 1px solid; }
+.bdg.g { color: #ffd34d; border-color: rgba(255,211,77,.5); background: rgba(255,211,77,.1); }
+.bdg.t { color: var(--tide); border-color: rgba(39,211,195,.5); background: rgba(39,211,195,.1); }
+.bdg.p { color: #d7b8ff; border-color: rgba(180,120,255,.5); background: rgba(180,120,255,.1); }
+.card .ft .sn.match { color: var(--tide); text-shadow: 0 0 8px rgba(39,211,195,.8); }
+.stack .slot.peek:not(.flipped) .face.back { box-shadow: 0 0 0 2px var(--tc), 0 0 26px 6px var(--tc); transition: box-shadow .4s; }
+
+/* Top bar */
+.status { display: none !important; }
+.gear-hidden { display: none !important; }
+.top { flex-wrap: nowrap; }
+.top .tools { flex-wrap: nowrap; gap: 6px; }
+.tchip { position: relative; display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); color: #ff8a3d; border-radius: 99px; padding: 6px 10px; font: 700 13px var(--body); cursor: pointer; font-variant-numeric: tabular-nums; }
+.tchip .rdot { position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; background: #ffd34d; box-shadow: 0 0 0 2px var(--bg); animation: blink 1.2s ease-in-out infinite; }
+.top .timer { background: var(--panel); border: 1px solid var(--line); border-radius: 99px; padding: 6px 10px; font: 700 13px var(--body); color: var(--foam); white-space: nowrap; flex: none; text-align: center; font-variant-numeric: tabular-nums; }
+.top .timer::before { content: "⏳ "; }
+.top .timer b { font-family: inherit; font-size: inherit; }
+.top .tools:has(#claim:not([hidden])) .timer { display: none; }
+.top .claim { padding: 6px 12px; font-size: 15px; box-shadow: 0 3px 0 #138a80; white-space: nowrap; }
+.mebtn { background: none; border: 0; padding: 0; cursor: pointer; display: grid; }
+.mebtn .av { width: 34px; height: 34px; font-size: 13px; }
+body:not(.daily-pop) #daily { display: none !important; }
+body.daily-pop #daily { position: fixed; top: calc(62px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 32px)); z-index: 55; margin: 0; box-shadow: 0 20px 50px rgba(0,0,0,.6); display: block !important; }
+@media (max-width: 380px) { .brand { font-size: 17px; } .tchip, .top .timer { padding: 5px 8px; font-size: 12px; } }
