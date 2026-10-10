@@ -1391,12 +1391,14 @@ export function start(RECIPE) {
   var cardNav = null;
   function navTo(num) { var own = (S.inv[num] || []).length; if (own) inspect(BY_NUM[num], true); else viewCard(num, { locked: true }, true); }
   function cardStep(d) {
+    return; // swiping between cards was removed
     if (!cardNav || modal.hidden || !modal.classList.contains("card-view") || mstack.length > 1) return;
     var cur = +modalIn.dataset.num, i = cardNav.indexOf(cur); if (i < 0) return;
     var n = cardNav[i + d]; if (n == null) { buzz(8); return; }
     sfx.tick(); navTo(n);
   }
   function cardPos() {
+    return;
     if (!cardNav || cardNav.length < 2) return; var i = cardNav.indexOf(+modalIn.dataset.num); if (i < 0) return;
     var p = document.createElement("div"); p.className = "card-pos"; p.textContent = (i + 1) + " of " + cardNav.length;
     modalIn.insertBefore(p, modalIn.firstChild);
@@ -1406,13 +1408,6 @@ export function start(RECIPE) {
     b.onclick = function () { var on = modal.classList.toggle("facts-on"); b.textContent = on ? "Card" : "Details"; };
     return b;
   }
-  (function () {
-    var g = null;
-    modal.addEventListener("pointerdown", function (e) { g = modal.classList.contains("card-view") && !e.target.closest("button, input, a, .card-facts") ? { x: e.clientX, y: e.clientY, t: Date.now() } : null; });
-    modal.addEventListener("pointerup", function (e) { if (!g) return; var dx = e.clientX - g.x, dy = e.clientY - g.y, was = g; g = null; if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - was.t < 700) { dragEnded = Date.now(); cardStep(dx < 0 ? 1 : -1); } });
-    modal.addEventListener("pointercancel", function () { g = null; });
-    addEventListener("keydown", function (e) { if (!modal.hidden && (e.key === "ArrowRight" || e.key === "ArrowLeft")) cardStep(e.key === "ArrowRight" ? 1 : -1); });
-  })();
   function viewCard(num, o, replace) { present(function () { return cardScreen(num, o || {}); }, replace); }
   /* Serial numbers worth bragging about: No. 1, any of the first ten, and a serial that matches the team number. */
   function serialBadges(num, serials) {
