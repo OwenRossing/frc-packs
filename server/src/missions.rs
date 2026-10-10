@@ -22,7 +22,7 @@ use crate::auth::User;
 use crate::error::{ApiError, ApiResult};
 
 pub fn routes() -> Router<Shared> {
-    Router::new().route("/missions/{id}/claim", post(claim))
+    Router::new().route("/missions/{id}/claim", post(claim)).route("/level/claim", post(claim_level))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -290,6 +290,52 @@ async fn claim(State(s): State<Shared>, user: User, Path(id): Path<String>) -> A
         .execute(&mut *tx)
         .await?;
     sqlx::query("update users set parts = parts + $2 where id = $1").bind(user.id).bind(reward).execute(&mut *tx).await?;
+    let out = api::load_state(&s, &mut tx, user.id).await?;
+    tx.commit().await?;
+    Ok(Json(out))
+}
+
+/// Collector level: one level for every this many different teams you own.
+pub const LEVEL_TEAMS: i64 = 25;
+/// Parts each new level pays, collected by tapping.
+pub const LEVEL_PARTS: i32 = 100;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LevelOut {
+    teams: i64,
+    level: i32,
+    claimed: i32,
+    per: i64,
+    reward: i32,
+}
+
+pub async fn level(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResult<LevelOut> {
+    let teams: i64 = sqlx::query_scalar("select count(distinct team) from cards where user_id = $1 and pack_id = $2")
+        .bind(user)
+        .bind(pack)
+        .fetch_one(&mut *c)
+        .await?;
+    let claimed: i32 = sqlx::query_scalar("select level_claimed from users where id = $1").bind(user).fetch_one(&mut *c).await?;
+    Ok(LevelOut { teams, level: (teams / LEVEL_TEAMS) as i32, claimed, per: LEVEL_TEAMS, reward: LEVEL_PARTS })
+}
+
+/// Collects the parts for every level reached since the last collect.
+async fn claim_level(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
+    let mut tx = s.db.begin().await?;
+    api::reason(&mut tx, "level").await?;
+    api::lock_user(&mut tx, user.id).await?;
+    let l = level(&mut tx, user.id, s.catalog.claimable().id()).await?;
+    if l.level <= l.claimed {
+        return Err(ApiError::new(StatusCode::CONFLICT, "nothing_to_claim"));
+    }
+    let gained = (l.level - l.claimed) * LEVEL_PARTS;
+    sqlx::query("update users set parts = parts + $2, level_claimed = $3 where id = $1")
+        .bind(user.id)
+        .bind(gained)
+        .bind(l.level)
+        .execute(&mut *tx)
+        .await?;
     let out = api::load_state(&s, &mut tx, user.id).await?;
     tx.commit().await?;
     Ok(Json(out))

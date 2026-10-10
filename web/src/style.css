@@ -1129,3 +1129,17 @@ body.daily-pop #daily { position: fixed; top: calc(62px + env(safe-area-inset-to
 .soc-ev .ev-t .bdg { padding: 2px 6px; font-size: 9px; margin-left: 4px; }
 .soc-ev .ev-c { flex: none; width: 40px; background: none; border: 0; padding: 0; cursor: pointer; }
 .soc-ev time { flex: none; font-size: 11px; white-space: nowrap; }
+
+/* Collector level */
+.lvl { display: grid; gap: 10px; background: linear-gradient(135deg, #123d48, #0b222b); border: 1px solid #1f5560; border-radius: 16px; padding: 12px; }
+.lv-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.lv-top b { font-family: var(--display); font-weight: 400; font-size: 19px; color: var(--foam); }
+.lv-top span { font-size: 12px; color: var(--ink-dim); text-align: right; }
+.track { display: flex; align-items: center; }
+.track .nd { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: #14323b; border: 2px solid #1d4550; font: 700 12px var(--body); color: var(--ink-dim); flex: none; }
+.track .nd.d { background: var(--tide); border-color: var(--tide); color: #04201d; }
+.track .nd.r { background: #ffd34d; border-color: #ffd34d; color: #2a1c00; animation: blink 1.2s ease-in-out infinite; }
+.track .nd.n { border-color: #ffd34d; color: #ffd34d; }
+.track .ln { flex: 1; height: 3px; background: #1d4550; }
+.track .ln.d { background: var(--tide); }
+.lvl .cta { justify-self: start; }

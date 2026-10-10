@@ -71,6 +71,8 @@ export interface Account {
 
 export interface State {
   account: Account;
+  /** Collector level: one per `per` different teams; `claimed` levels have paid out. */
+  level?: { teams: number; level: number; claimed: number; per: number; reward: number };
   /** Server time in ms, so timers don't depend on the device clock. */
   now: number;
   nextClaimAt: number;
@@ -377,6 +379,7 @@ export const api = {
   /** Report a player to the admin: reason is username, cheating, harassment or other. */
   report: (username: string, reason: string, details: string) => call<void>("POST", "/api/report", { username, reason, details }),
   /** Collect a finished daily mission's parts. */
+  claimLevel: () => call<State>("POST", "/api/level/claim"),
   claimMission: (id: string) => call<State>("POST", `/api/missions/${encodeURIComponent(id)}/claim`),
   /** Spend parts on a boosted pack. */
   craft: () => act<State>("/api/craft"),

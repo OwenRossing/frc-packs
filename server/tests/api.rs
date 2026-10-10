@@ -1555,3 +1555,28 @@ async fn special_edition_cards_can_be_traded() {
     let mine = call(&app, "GET", "/api/specials", Some(&cb), None).await;
     assert_eq!(mine.body[0]["serial"], 7);
 }
+
+#[tokio::test]
+async fn collector_level_pays_parts_once_per_level() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let id = user_id(&db, &c).await;
+    assert_eq!(st["level"]["per"], 25);
+    let none = call(&app, "POST", "/api/level/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(none.body["error"], "nothing_to_claim");
+    // 50 different teams owned: level 2.
+    let teams: Vec<i32> = sqlx::query_scalar("select distinct team from cards where pack_id = 'cmp26' limit 0").fetch_all(&db).await.unwrap();
+    drop(teams);
+    for n in 1..=50i32 {
+        sqlx::query("insert into cards (user_id, pack_id, team, tier, serial, obtained) values ($1, 'cmp26', $2, 'common', $3, 'pack')")
+            .bind(id).bind(900000 + n).bind(1).execute(&db).await.unwrap();
+    }
+    let parts: i64 = sqlx::query_scalar("select parts::bigint from users where id = $1").bind(id).fetch_one(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/level/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body["level"]["level"].as_i64().unwrap() >= 2);
+    assert_eq!(r.body["level"]["claimed"], r.body["level"]["level"]);
+    assert!(r.body["parts"].as_i64().unwrap() >= parts + 200, "100 parts a level");
+    let again = call(&app, "POST", "/api/level/claim", Some(&c), Some(json!({}))).await;
+    assert_eq!(again.body["error"], "nothing_to_claim", "each level pays once");
+}

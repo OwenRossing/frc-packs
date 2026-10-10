@@ -67,7 +67,7 @@ export function start(RECIPE) {
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
-    S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
+    S.level = st.level || null; S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
     if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
     /* The donation link only shows when the admin set one (always https, checked by the server). */
@@ -1632,7 +1632,7 @@ export function start(RECIPE) {
   (function () {
     var head = document.querySelector("#viewBinder .binder-head"), search = $("#binderSearch"); if (!head || !search) return;
     var top = document.createElement("div"); top.className = "v2-top";
-    top.innerHTML = '<div class="v2-prog"><div class="v2-pn"><b id="v2PackName"></b><span id="v2PackSum"></span></div><div class="v2-bar2"><i id="v2PackBar"></i></div></div>' +
+    top.innerHTML = '<div class="v2-prog"><div class="v2-pn"><b id="v2PackName"></b><span id="v2PackSum"></span></div><div class="v2-bar2"><i id="v2PackBar"></i></div></div><div class="lvl" id="lvlCard"></div>' +
       '<div class="seg v2-seg" role="tablist" aria-label="Collection pages"><button type="button" role="tab" id="v2Cards" aria-selected="true">Cards</button><button type="button" role="tab" id="v2Work" aria-selected="false">Workshop</button></div>';
     head.insertBefore(top, head.firstChild);
     var sel = document.createElement("div"); sel.className = "v2-sel";
@@ -1645,7 +1645,20 @@ export function start(RECIPE) {
     $("#v2Set").onchange = function () { filter = this.value; shown = 48; paintBinder(); };
   })();
   /* The new layout's header and dropdowns follow the same filter state as the chips. */
+  /* Collector level: a short track around your level, and a button when levels are waiting to pay out. */
+  function paintLevel() {
+    var box = $("#lvlCard"), L = S.level; if (!box) return; if (!L) { box.hidden = true; return; } box.hidden = false;
+    var waiting = L.level - L.claimed, next = (L.level + 1) * L.per, nodes = "";
+    for (var i = Math.max(1, L.level - 1); i <= Math.max(1, L.level - 1) + 4; i++) {
+      var cls = i <= L.claimed ? "d" : i <= L.level ? "r" : i === L.level + 1 ? "n" : "";
+      nodes += (nodes ? '<span class="ln' + (i <= L.level ? " d" : "") + '"></span>' : "") + '<span class="nd ' + cls + '" title="Level ' + i + ' at ' + (i * L.per) + ' teams">' + (cls === "d" ? "\u2713" : i) + '</span>';
+    }
+    box.innerHTML = '<div class="lv-top"><b>Collector level ' + L.level + '</b><span>' + (waiting > 0 ? waiting * L.reward + " parts waiting" : (next - L.teams) + " teams to level " + (L.level + 1)) + '</span></div><div class="track">' + nodes + '</div>' +
+      (waiting > 0 ? '<button type="button" class="cta small" id="lvlClaim">Collect +' + waiting * L.reward + ' parts</button>' : '');
+    var b = $("#lvlClaim"); if (b) b.onclick = function () { b.disabled = true; api.claimLevel().then(function (st) { applyState(st); sfx.claim(); var r = b.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 30, "#ffd34d", 6); paintLevel(); paintWorkshop(); }, function (e) { b.disabled = false; offline(e); }); };
+  }
   function paintV2Binder(owned, counts) {
+    paintLevel();
     if (!$("#v2Rar")) return;
     $("#v2PackName").textContent = PACKS[0].name; $("#v2PackSum").textContent = owned.length + " of " + TEAMS.length;
     $("#v2PackBar").style.width = (TEAMS.length ? owned.length / TEAMS.length * 100 : 0) + "%";
