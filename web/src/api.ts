@@ -190,6 +190,7 @@ export interface AdminUser {
   opened: number;
   cards: number;
   lastOpenedAt: number | null;
+  badge: string | null;
 }
 
 export interface Scrapped {
@@ -320,7 +321,7 @@ async function act<T>(path: string, body?: unknown): Promise<T> {
   }
 }
 
-export interface SocialPlayer { name: string; firstName: string | null; teams: number; mythics: number; legendaries: number; trades: number }
+export interface SocialPlayer { name: string; firstName: string | null; badge: string | null; teams: number; mythics: number; legendaries: number; trades: number }
 export interface SocialTrade { from: string; to: string; gave: { num: number }[] | null; got: { num: number }[] | null; gavePacks: number; gotPacks: number; at: number }
 export interface Social { players: SocialPlayer[]; recent: SocialTrade[] }
 
@@ -387,6 +388,7 @@ export const api = {
     deleteInvite: (code: string) => call<void>("POST", `/api/admin/invites/${encodeURIComponent(code)}/delete`),
     users: () => call<AdminUser[]>("GET", "/api/admin/users"),
     resetPassword: (id: string) => call<{ password: string }>("POST", `/api/admin/users/${id}/password`),
+    badge: (id: string, badge: string) => call<void>("POST", `/api/admin/users/${id}/badge`, { badge }),
     rename: (id: string, username: string) => call<void>("POST", `/api/admin/users/${id}/rename`, { username }),
     reports: () => call<Report[]>("GET", "/api/admin/reports"),
     resolveReport: (id: number) => call<void>("POST", `/api/admin/reports/${id}/resolve`),

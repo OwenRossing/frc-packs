@@ -593,6 +593,7 @@ async fn decide(s: &Shared, user: User, id: i64, by_maker: bool) -> ApiResult<Js
 struct SocialPlayer {
     name: String,
     first_name: Option<String>,
+    badge: Option<String>,
     teams: i64,
     mythics: i64,
     legendaries: i64,
@@ -622,7 +623,7 @@ struct SocialOut {
 async fn social(State(s): State<Shared>, _user: User, Path(pack): Path<String>) -> ApiResult<Json<SocialOut>> {
     let pack = api::pack(&s, &pack)?;
     let players: Vec<SocialPlayer> = sqlx::query_as(
-        "select u.username as name, u.first_name,
+        "select u.username as name, u.first_name, u.badge,
                 count(distinct c.team) as teams,
                 count(distinct c.team) filter (where c.tier = 'mythic') as mythics,
                 count(distinct c.team) filter (where c.tier = 'legendary') as legendaries,

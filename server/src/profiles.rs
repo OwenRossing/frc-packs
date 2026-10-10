@@ -42,6 +42,7 @@ struct Card {
 #[serde(rename_all = "camelCase")]
 struct ProfileOut {
     username: String,
+    badge: Option<String>,
     me: bool,
     joined: i64,
     /// Different teams owned, out of `total` in the pack.
@@ -105,6 +106,7 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
             .bind(id)
             .fetch_one(&mut *c)
             .await?;
+    let badge: Option<String> = sqlx::query_scalar("select badge from users where id = $1").bind(id).fetch_one(&mut *c).await?;
     let packs: i32 = sqlx::query_scalar("select coalesce((select sealed - boosted from user_packs where user_id = $1 and pack_id = $2), 0)")
         .bind(id)
         .bind(pack.id())
@@ -143,6 +145,7 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
             .await?;
     Ok(Json(ProfileOut {
         username,
+        badge,
         me: id == user.id,
         joined: joined.timestamp_millis(),
         teams,

@@ -634,6 +634,9 @@ async fn state(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>>
     state_json(&s, user.id).await
 }
 
+/// Chance that a pack collected from the timer is a boosted one.
+const TIMER_BOOSTED_CHANCE: f64 = 0.05;
+
 async fn claim(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
     let mut tx = s.db.begin().await?;
     reason(&mut tx, "claim").await?;
@@ -651,14 +654,22 @@ async fn claim(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>>
     if n == 0 {
         return Err(err(StatusCode::CONFLICT, "not_ready"));
     }
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Claimed, n * i64::from(r.claim_packs)).await?;
     let next = if n >= i64::from(r.bank) { now + window } else { next + window * n as i32 };
     sqlx::query("update users set next_claim_at = $2 where id = $1").bind(user.id).bind(next).execute(&mut *tx).await?;
     let p = s.catalog.claimable().id();
     lock_user_pack(&mut tx, user.id, p).await?;
-    sqlx::query("update user_packs set sealed = sealed + $3 where user_id = $1 and pack_id = $2")
+    // Each pack from the timer has a small chance of arriving boosted.
+    let total = n as i32 * r.claim_packs;
+    let lucky = {
+        let mut rng = rand::rng();
+        (0..total).filter(|_| rand::Rng::random::<f64>(&mut rng) < TIMER_BOOSTED_CHANCE).count() as i32
+    };
+    sqlx::query("update user_packs set sealed = sealed + $3, boosted = boosted + $4 where user_id = $1 and pack_id = $2")
         .bind(user.id)
         .bind(p)
-        .bind(n as i32 * r.claim_packs)
+        .bind(total)
+        .bind(lucky)
         .execute(&mut *tx)
         .await?;
     let out = load_state(&s, &mut tx, user.id).await?;
@@ -868,6 +879,8 @@ async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json
     .await?;
     sqlx::query("update openings set sets = $2 where id = $1").bind(opening_id).bind(&sets).execute(&mut *tx).await?;
     let streak_reward = crate::missions::on_open(&mut tx, user.id, pack.id()).await?;
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::NewTeams, out.iter().filter(|c| c.is_new).count() as i64).await?;
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::RarePlus, out.iter().filter(|c| c.tier.rank() <= Tier::Rare.rank()).count() as i64).await?;
     let state = load_state(&s, &mut tx, user.id).await?;
     let done = OpenOut {
         opening: OpeningOut { id: opening_id, pack: pack.id().to_string(), revealed: 0, cards: out, sets },
@@ -1108,6 +1121,7 @@ async fn craft(State(s): State<Shared>, user: User, key: IdemKey) -> ApiResult<R
         .bind(p)
         .execute(&mut *tx)
         .await?;
+    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Crafted, 1).await?;
     let out = load_state(&s, &mut tx, user.id).await?;
     idem_end(&mut tx, user.id, &key, &out).await?;
     tx.commit().await?;

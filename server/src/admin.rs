@@ -28,6 +28,7 @@ pub fn routes() -> Router<Shared> {
         .route("/reports", get(reports))
         .route("/reports/{id}/resolve", post(resolve_report))
         .route("/users/{id}/rename", post(rename_user))
+        .route("/users/{id}/badge", post(set_badge))
         .route("/users/{id}/ledger", get(ledger))
         .route("/test-pack", post(test_pack))
         .route("/audit", get(audit))
@@ -171,6 +172,22 @@ async fn reports(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<R
 
 async fn resolve_report(State(s): State<Shared>, _admin: Admin, Path(id): Path<i64>) -> ApiResult<StatusCode> {
     sqlx::query("update reports set resolved_at = now() where id = $1 and resolved_at is null").bind(id).execute(&s.db).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct BadgeReq {
+    badge: String,
+}
+
+/// Sets the short tag shown next to a player's name ("Beta tester"); empty clears it.
+async fn set_badge(State(s): State<Shared>, _admin: Admin, Path(id): Path<Uuid>, Json(req): Json<BadgeReq>) -> ApiResult<StatusCode> {
+    let badge = req.badge.trim();
+    if badge.chars().count() > 20 || badge.chars().any(|c| c.is_control()) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_request"));
+    }
+    let badge = (!badge.is_empty()).then_some(badge);
+    sqlx::query("update users set badge = $2 where id = $1").bind(id).bind(badge).execute(&s.db).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -328,6 +345,7 @@ struct UserOut {
     opened: i64,
     cards: i64,
     last_opened_at: Option<i64>,
+    badge: Option<String>,
 }
 
 type UserRow = (
@@ -342,6 +360,7 @@ type UserRow = (
     i64,
     i64,
     Option<DateTime<Utc>>,
+    Option<String>,
 );
 
 async fn users(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<UserOut>>> {
@@ -350,7 +369,7 @@ async fn users(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<Use
                 coalesce((select sum(sealed) from user_packs where user_id = u.id), 0)::bigint,
                 coalesce((select sum(opened) from user_packs where user_id = u.id), 0)::bigint,
                 (select count(*) from cards where user_id = u.id),
-                (select max(opened_at) from openings where user_id = u.id)
+                (select max(opened_at) from openings where user_id = u.id), u.badge
          from users u left join invites i on i.code = u.invite_code
          order by u.is_admin desc, u.username is null, lower(u.username), u.created_at",
     )
@@ -358,7 +377,7 @@ async fn users(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<Use
     .await?;
     Ok(Json(
         rows.into_iter()
-            .map(|(id, username, admin, disabled, created, invite, note, sealed, opened, cards, last)| UserOut {
+            .map(|(id, username, admin, disabled, created, invite, note, sealed, opened, cards, last, badge)| UserOut {
                 id,
                 username,
                 admin,
@@ -370,6 +389,7 @@ async fn users(State(s): State<Shared>, _admin: Admin) -> ApiResult<Json<Vec<Use
                 opened,
                 cards,
                 last_opened_at: last.map(ms),
+                badge,
             })
             .collect(),
     ))

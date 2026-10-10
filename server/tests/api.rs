@@ -978,23 +978,39 @@ async fn daily_missions_and_streak() {
     let (c, st) = player(&app, &db).await;
     let id = user_id(&db, &c).await;
     let m = |st: &Value, id: &str| st["missions"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
-    assert_eq!(m(&st, "open")["progress"], 0);
+    // Three missions a day, of different kinds, drawn from a bigger pool.
+    let todays = st["missions"].as_array().unwrap();
+    assert_eq!(todays.len(), 3);
+    let labels: std::collections::HashSet<&str> = todays.iter().map(|m| m["label"].as_str().unwrap()).collect();
+    assert_eq!(labels.len(), 3);
+    let mid = todays[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(m(&st, &mid)["progress"], 0);
     assert_eq!((st["streak"]["days"].as_i64(), st["streak"]["today"].as_bool()), (Some(0), Some(false)));
-    let early = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    let early = call(&app, "POST", &format!("/api/missions/{mid}/claim"), Some(&c), Some(json!({}))).await;
     assert_eq!((early.status, early.body["error"].as_str()), (StatusCode::CONFLICT, Some("mission_not_ready")));
     let mut last = Value::Null;
     for _ in 0..2 {
         last = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await.body;
     }
     let st = &last["state"];
-    assert_eq!(m(st, "open")["progress"], 2);
+    let opened: i32 = sqlx::query_scalar("select opened from daily where user_id = $1").bind(id).fetch_one(&db).await.unwrap();
+    assert_eq!(opened, 2);
     assert_eq!((st["streak"]["days"].as_i64(), st["streak"]["today"].as_bool()), (Some(1), Some(true)), "first pack starts the streak");
-    let parts = st["parts"].as_i64().unwrap();
-    let got = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
-    assert_eq!(got.status, StatusCode::OK);
-    assert_eq!(got.body["parts"].as_i64().unwrap(), parts + m(&got.body, "open")["reward"].as_i64().unwrap());
-    assert_eq!(m(&got.body, "open")["claimed"], true);
-    let again = call(&app, "POST", "/api/missions/open/claim", Some(&c), Some(json!({}))).await;
+    // Whatever today's first mission is, plenty of progress on every kind finishes it.
+    sqlx::query(
+        "update daily set opened = 99, scrapped = 99, traded = 99,
+           extra = '{\"new_teams\": 99, \"rare_plus\": 99, \"crafted\": 99, \"claimed_packs\": 99}' where user_id = $1",
+    )
+    .bind(id)
+    .execute(&db)
+    .await
+    .unwrap();
+    let parts: i64 = sqlx::query_scalar("select parts::bigint from users where id = $1").bind(id).fetch_one(&db).await.unwrap();
+    let got = call(&app, "POST", &format!("/api/missions/{mid}/claim"), Some(&c), Some(json!({}))).await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.body);
+    assert_eq!(got.body["parts"].as_i64().unwrap(), parts + m(&got.body, &mid)["reward"].as_i64().unwrap());
+    assert_eq!(m(&got.body, &mid)["claimed"], true);
+    let again = call(&app, "POST", &format!("/api/missions/{mid}/claim"), Some(&c), Some(json!({}))).await;
     assert_eq!(again.status, StatusCode::CONFLICT, "a mission pays once a day");
     assert_eq!(call(&app, "POST", "/api/missions/nope/claim", Some(&c), Some(json!({}))).await.status, StatusCode::NOT_FOUND);
 

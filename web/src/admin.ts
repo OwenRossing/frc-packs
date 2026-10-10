@@ -294,6 +294,23 @@ function manage(u: AdminUser): HTMLElement {
   }
 
   if (u.username) {
+    const tagIn = h("input", { class: "input", value: u.badge ?? "", "aria-label": `Tag for ${u.username}`, maxlength: "20", placeholder: "No tag" });
+    panel.append(
+      h("div", { class: "mrow" }, h("span", {}, "Tag"), tagIn,
+        button("Save", async (b) => {
+          b.disabled = true;
+          try {
+            await api.admin.badge(u.id, tagIn.value.trim());
+            say(tagIn.value.trim() ? `${u.username} now shows "${tagIn.value.trim()}".` : `Removed ${u.username}'s tag.`);
+            await loadUsers();
+          } catch (e) {
+            fail(e);
+          } finally {
+            b.disabled = false;
+          }
+        }, "cta small"),
+      ),
+    );
     const nameIn = h("input", { class: "input", value: u.username, "aria-label": `New username for ${u.username}`, maxlength: "20", autocapitalize: "none", spellcheck: "false" });
     panel.append(
       h("div", { class: "mrow" }, h("span", {}, "Rename"), nameIn,

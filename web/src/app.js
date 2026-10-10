@@ -1383,7 +1383,7 @@ export function start(RECIPE) {
       };
       var slots = ""; for (var i = p.showcase.length; i < 3; i++) slots += p.me ? '<button type="button" class="pf-empty pf-pin">Pin a card from your binder</button>' : '<div class="pf-empty">Empty</div>';
       modalIn.innerHTML = '<div class="profile">' +
-        '<div class="pf-head">' + avatar(p.username) + '<div><h2>' + esc(p.username) + '</h2><p>Joined ' + joined + (p.streak ? ' · ' + p.streak + '-day streak' : '') + '</p></div></div>' +
+        '<div class="pf-head">' + avatar(p.username) + '<div><h2>' + esc(p.username) + badgeHTML(p.badge) + '</h2><p>Joined ' + joined + (p.streak ? ' · ' + p.streak + '-day streak' : '') + '</p></div></div>' +
         '<div class="pf-stats"><div><b>' + pct + '%</b><small>collected</small></div><div><b>' + p.teams + '</b><small>teams</small></div><div><b>' + p.sets + '</b><small>sets</small></div><div><b>' + p.trades + '</b><small>trades</small></div></div>' +
         (p.me || p.showcase.length ? '<section class="pf-sec"><h3>Showcase' + (p.me && p.showcase.length > 1 ? ' <small>Drag to reorder</small>' : '') + '</h3><div class="pf-row pf-show">' + cards(p.showcase, "", 3) + (p.me ? slots : "") + '</div></section>' : '') +
         (p.me ? '<section class="pf-sec"><h3>Rarest pulls</h3><div class="pf-row">' + cards(p.rarest, '<p class="hint">No cards yet.</p>', 3) + '</div></section>' : '') +
@@ -1577,7 +1577,7 @@ export function start(RECIPE) {
   /* New layout, for testing: the admin can switch it on in Settings. It only changes how the Collection page is arranged. */
   var V2 = "frcpacks.v2", v2On = false;
   try { v2On = localStorage.getItem(V2) === "1"; } catch (e) {}
-  function paintV2() { document.body.classList.toggle("v2", v2On && isAdmin()); var l = $("#v2Line"); if (l) { l.hidden = !isAdmin(); $("#v2Btn").textContent = v2On ? "On" : "Off"; $("#v2Btn").setAttribute("aria-pressed", String(v2On)); } }
+  function paintV2() { document.body.classList.add("v2"); var l = $("#v2Line"); if (l) l.hidden = true; }
   $("#v2Btn").onclick = function () { v2On = !v2On; try { localStorage.setItem(V2, v2On ? "1" : "0"); } catch (e) {} paintV2(); };
   (function () {
     var head = document.querySelector("#viewBinder .binder-head"), search = $("#binderSearch"); if (!head || !search) return;
@@ -1994,7 +1994,8 @@ export function start(RECIPE) {
     var n = ++socReq;
     return api.social(PACK_ID).then(function (d) { if (n !== socReq) return; SOCIAL = d; if (!vSocial.hidden) paintSocial(); paintPeople(); }, function () {});
   }
-  function whoLabel(p) { return p.firstName ? esc(p.firstName) + ' <small>' + esc(p.name) + '</small>' : esc(p.name); }
+  function badgeHTML(b) { return b ? ' <span class="tagbadge">' + esc(b) + '</span>' : ""; }
+  function whoLabel(p) { return (p.firstName ? esc(p.firstName) + ' <small>' + esc(p.name) + '</small>' : esc(p.name)) + badgeHTML(p.badge); }
   function paintSocial() {
     var list = $("#socList"), feed = $("#socFeed"); if (!SOCIAL) { list.innerHTML = ""; feed.innerHTML = ""; return; }
     var rows = SOCIAL.players.slice().sort(function (a, b) { return (b[socBy] - a[socBy]) || (b.teams - a.teams); });
