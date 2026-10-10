@@ -286,10 +286,9 @@ export function start(RECIPE) {
   function attachTilt(slot) {
     var tilt = slot.querySelector(".tilt"), inner = slot.querySelector(".inner");
     slot.addEventListener("pointermove", function (e) {
-      /* Tilt follows a mouse. On touch it's the swipe's job; a finger can leave a card stuck at an angle. */
-      /* Tilt follows a mouse, and a finger on the card in its big view (it lets go on release). In the pack stack the swipe
-         is the job, and a finger there could leave a card stuck at an angle. */
-      if (slot.classList.contains("drag") || (e.pointerType && e.pointerType !== "mouse" && !slot.closest("#modal"))) return;
+      /* Hover tilt is for a mouse over cards in the lists. In the big card view you grab the card instead (below), and in the
+         pack stack the swipe is the job. */
+      if (slot.classList.contains("drag") || slot.closest("#modal") || (e.pointerType && e.pointerType !== "mouse")) return;
       var r = slot.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
       tilt.classList.remove("rest"); slot.classList.add("live");
       tilt.style.setProperty("--ry", ((px - .5) * 26) + "deg"); tilt.style.setProperty("--rx", ((.5 - py) * 22) + "deg");
@@ -297,9 +296,43 @@ export function start(RECIPE) {
       inner.style.setProperty("--mx", (px * 100).toFixed(1)); inner.style.setProperty("--my", (py * 100).toFixed(1));
     });
     function leave() { slot.classList.remove("live"); slot.style.setProperty("--sx", 0); slot.style.setProperty("--sy", 0); tilt.classList.add("rest"); tilt.style.setProperty("--ry", "0deg"); tilt.style.setProperty("--rx", "0deg"); inner.style.setProperty("--mx", 50); inner.style.setProperty("--my", 50); }
-    slot.addEventListener("pointerleave", leave); slot.addEventListener("pointercancel", leave); slot.addEventListener("pointerup", function (e) { if (e.pointerType && e.pointerType !== "mouse") leave(); });
-    slot.addEventListener("lostpointercapture", function (e) { if (e.pointerType && e.pointerType !== "mouse") leave(); });
-    slot.addEventListener("touchend", leave); slot.addEventListener("touchcancel", leave);
+    /* Grab and drag, in the big card view: the card turns the way your finger moves, eases off near the limit, and springs
+       back when you let go. It only reacts to a drag that starts on the card. */
+    var G = { held: false, rawX: 0, rawY: 0, rx: 0, ry: 0, vx: 0, vy: 0, lx: 0, ly: 0, lt: 0, id: null, raf: 0 }, MAXA = 30, GAIN = .36;
+    function soft(v) { return MAXA * Math.tanh(v / MAXA); }
+    function paintGrab() {
+      var cx = Math.max(0, Math.min(100, 50 + G.ry / MAXA * 50)), cy = Math.max(0, Math.min(100, 50 - G.rx / MAXA * 50));
+      tilt.style.setProperty("--ry", G.ry.toFixed(2) + "deg"); tilt.style.setProperty("--rx", G.rx.toFixed(2) + "deg");
+      inner.style.setProperty("--mx", cx.toFixed(1)); inner.style.setProperty("--my", cy.toFixed(1));
+    }
+    function springBack() {
+      cancelAnimationFrame(G.raf); var last = performance.now();
+      (function step(t) {
+        var dt = Math.min(.032, (t - last) / 1000); last = t;
+        G.vx += (-170 * G.rx - 15 * G.vx) * dt; G.vy += (-170 * G.ry - 15 * G.vy) * dt; G.rx += G.vx * dt; G.ry += G.vy * dt; G.rawX = G.rx; G.rawY = G.ry; paintGrab();
+        if (Math.abs(G.rx) + Math.abs(G.ry) + Math.abs(G.vx) + Math.abs(G.vy) > .06) G.raf = requestAnimationFrame(step);
+        else { G.rx = G.ry = G.vx = G.vy = G.rawX = G.rawY = 0; tilt.classList.remove("grab"); leave(); }
+      })(last);
+    }
+    slot.addEventListener("pointerdown", function (e) {
+      if (!slot.closest("#modal") || (e.pointerType === "mouse" && e.button)) return;
+      G.held = true; G.id = e.pointerId; G.lx = e.clientX; G.ly = e.clientY; G.lt = performance.now(); G.vx = G.vy = 0; cancelAnimationFrame(G.raf);
+      tilt.classList.remove("rest"); tilt.classList.add("grab"); slot.classList.add("live");
+      try { slot.setPointerCapture(e.pointerId); } catch (er) {}
+    });
+    slot.addEventListener("pointermove", function (e) {
+      if (!G.held || e.pointerId !== G.id) return;
+      var now = performance.now(), dx = e.clientX - G.lx, dy = e.clientY - G.ly; G.lx = e.clientX; G.ly = e.clientY;
+      G.rawY += dx * GAIN; G.rawX -= dy * GAIN;
+      var nry = soft(G.rawY), nrx = soft(G.rawX), dtm = Math.max(8, now - G.lt) / 1000; G.lt = now;
+      G.vy = (nry - G.ry) / dtm; G.vx = (nrx - G.rx) / dtm; G.ry = nry; G.rx = nrx; paintGrab();
+    });
+    function letGo(e) { if (!G.held || (e && e.pointerId !== G.id)) return; G.held = false; springBack(); }
+    slot.addEventListener("pointerup", letGo); slot.addEventListener("pointercancel", letGo); slot.addEventListener("lostpointercapture", letGo);
+    var gentle = function () { if (!slot.closest("#modal")) leave(); };
+    slot.addEventListener("pointerleave", gentle); slot.addEventListener("pointercancel", gentle); slot.addEventListener("pointerup", function (e) { if (e.pointerType && e.pointerType !== "mouse") gentle(); });
+    slot.addEventListener("lostpointercapture", function (e) { if (e.pointerType && e.pointerType !== "mouse") gentle(); });
+    slot.addEventListener("touchend", gentle); slot.addEventListener("touchcancel", gentle);
   }
   var EDGES = [-2, -1, 1, 2].map(function (z) { return '<i class="edge" style="--z:' + z + '"></i>'; }).join("") + '<i class="edge e0" style="--z:0"></i>';
   /* c = { num, tier, serial, isNew, copy } */
@@ -1283,6 +1316,7 @@ export function start(RECIPE) {
   function paintModal(dir) {
     modalIn.innerHTML = ""; modal.classList.remove("facts-on");
     var focus = mstack[mstack.length - 1]();
+    if (modal.hidden) { lockY = window.scrollY || 0; document.body.style.top = (-lockY) + "px"; document.body.classList.add("modal-lock"); }
     modal.hidden = false; document.body.classList.add("modal-open");
     modal.classList.toggle("card-view", !!modalIn.querySelector(".slot") && !modalIn.querySelector(".profile"));
     if (dir !== "") modal.scrollTop = 0;
@@ -1316,7 +1350,9 @@ export function start(RECIPE) {
   }
   /* Tap the dark area around a card or profile to close it, like Close. */
   modal.addEventListener("click", function (e) { if (e.target === modal || e.target === modalIn) closeModal(); });
+  var lockY = 0;
   function hideModal() {
+    if (document.body.classList.contains("modal-lock")) { document.body.classList.remove("modal-lock"); document.body.style.top = ""; window.scrollTo(0, lockY); }
     mstack = []; cardNav = null; modal.classList.remove("card-view", "facts-on"); modal.hidden = true; document.body.classList.remove("modal-open"); modalIn.innerHTML = "";
     if (lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
   }
@@ -2261,9 +2297,10 @@ export function start(RECIPE) {
 
   /* ---------- social: every player, and the latest trades ---------- */
   var SOCIAL = null, socBy = "teams", socReq = 0, seenEv = null;
+  var socSig = "";
   function loadSocial() {
     var n = ++socReq;
-    return api.social(PACK_ID).then(function (d) { if (n !== socReq) return; SOCIAL = d; if (!vSocial.hidden) { paintSocial(); paintActivity(); } paintPeople(); }, function () {});
+    return api.social(PACK_ID).then(function (d) { if (n !== socReq) return; var sig = JSON.stringify(d); if (SOCIAL && sig === socSig && !vSocial.hidden) return; socSig = sig; SOCIAL = d; if (!vSocial.hidden) { paintSocial(); paintActivity(); } paintPeople(); }, function () {});
   }
   function badgeHTML(b) { return b ? ' <span class="tagbadge">' + esc(b) + '</span>' : ""; }
   function whoLabel(p) { return (p.firstName ? esc(p.firstName) + ' <small>' + esc(p.name) + '</small>' : esc(p.name)) + badgeHTML(p.badge); }
