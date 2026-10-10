@@ -328,9 +328,8 @@ export function start(RECIPE) {
       '<div class="pk-hero"><div class="burst"></div>' + TROPHY + '</div>' +
       '<div class="pk-feat">Houston · 8 divisions</div></div></div></div>';
     var b = !back ? "" : '<div class="pk-face pk-back"><div class="pk-body"></div><div class="pk-info"><h3>2026 Championship</h3>' +
-      '<div>5 cards from the ' + TEAMS.length + ' teams in Houston. The last card is always Rare or better (Legendary ' + pct(OD.last.legendary) + ').</div>' +
       '<div class="odds"><span>Common</span><b>' + pct(OD.slots.common) + '</b><span>Uncommon</span><b>' + pct(OD.slots.uncommon) + '</b><span>Rare</span><b>' + pct(OD.slots.rare) + '</b><span>Legendary</span><b>' + pct(OD.slots.legendary) + '</b><span>Mythic</span><b>1 in ' + Math.round(1 / ((S.demo ? ODDS.demoMythic : ODDS.mythicBase) * mult)) + (S.demo ? "*" : "") + '</b></div>' +
-      '<small>Per card in slots 1 to 4, Mythic per pack. The Mythic meter guarantees one by pack ' + HARD + ', and Legendary or better comes at least every ' + LEG_EVERY + ' packs.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
+      '<small>Last card is Rare or better.' + (S.demo ? " *Demo luck is on." : "") + '</small></div></div>';
     var edges = [-3, -2, -1, 0, 1, 2, 3].map(function (z) { return '<i class="pk-edge" style="--z:' + z + '"></i>'; }).join("");
     return '<div class="pk" style="--h:' + PACK_HUE + '">' + edges + front + b + '</div>';
   }
