@@ -986,7 +986,7 @@ body.v2 #viewBinder .grid { gap: 10px; }
 .sp-thumb { flex: none; width: 128px; background: none; border: 0; padding: 0; cursor: pointer; }
 body.v2 #viewBinder.ws-open .sp-host { display: none; }
 .spc-wrap { width: min(300px, 78vw); perspective: 1200px; }
-.spc { --mx: 50%; --my: 50%; --rx: 0deg; --ry: 0deg; container-type: inline-size; width: 100%; aspect-ratio: 5 / 7; border-radius: 6cqw; position: relative; transform: rotateX(var(--rx)) rotateY(var(--ry)); transition: transform .15s ease-out; overflow: hidden; isolation: isolate; touch-action: none; cursor: grab;
+.spc { --mx: 50%; --my: 50%; --rx: 0deg; --ry: 0deg; container-type: inline-size; width: 100%; aspect-ratio: 5 / 7; border-radius: 6% / 4.3%; position: relative; transform: rotateX(var(--rx)) rotateY(var(--ry)); transition: transform .15s ease-out; overflow: hidden; isolation: isolate; touch-action: none; cursor: grab;
   background: linear-gradient(145deg, #e8fffb, #5be6d6 30%, #0a9d95 55%, #d6fff8 80%, #39d8c6); box-shadow: 0 24px 50px rgba(0,0,0,.55), 0 0 40px rgba(25,230,208,.28); color: #e8fffb; }
 .spc.rest { transition: transform .5s cubic-bezier(.2,.9,.3,1); }
 .sp-thumb .spc { pointer-events: none; }
@@ -1017,3 +1017,5 @@ body.v2 #viewBinder.ws-open .sp-host { display: none; }
 .mshock { position: fixed; z-index: 69; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; pointer-events: none; border: 5px solid rgba(255,255,255,.9); box-shadow: 0 0 40px 12px rgba(60,255,220,.65), inset 0 0 30px rgba(255,255,255,.6); animation: mshock 1.4s cubic-bezier(.1,.7,.3,1) forwards; }
 @keyframes mshock { from { transform: scale(.2); opacity: 1; } to { transform: scale(70); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mname, .mshock { display: none; } }
+.sp-row { padding: 6px 10px 16px; }
+.sp-thumb .spc { box-shadow: 0 8px 14px rgba(0,0,0,.45), 0 0 10px rgba(25,230,208,.3); }
