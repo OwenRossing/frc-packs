@@ -2136,7 +2136,7 @@ export function start(RECIPE) {
   (function () { var g = $("#grid"); g.parentNode.insertBefore(spHost, g); })();
 
   /* ---------- social: every player, and the latest trades ---------- */
-  var SOCIAL = null, socBy = "teams", socReq = 0;
+  var SOCIAL = null, socBy = "teams", socReq = 0, seenEv = null;
   function loadSocial() {
     var n = ++socReq;
     return api.social(PACK_ID).then(function (d) { if (n !== socReq) return; SOCIAL = d; if (!vSocial.hidden) { paintSocial(); paintActivity(); } paintPeople(); }, function () {});
@@ -2171,6 +2171,7 @@ export function start(RECIPE) {
     var ev = (SOCIAL.activity || []).slice();
     (SOCIAL.recent || []).forEach(function (t) { ev.push({ kind: "trade", who: t.from, other: t.to, at: t.at, gave: t.gave, got: t.got }); });
     ev.sort(function (a, b) { return b.at - a.at; });
+    var first = !seenEv, now = {};
     box.innerHTML = ev.length ? "" : '<p class="soc-none">Nothing yet. Open a pack!</p>';
     ev.slice(0, 30).forEach(function (e) {
       var d = document.createElement("div"); d.className = "soc-ev"; var html = "";
@@ -2186,10 +2187,14 @@ export function start(RECIPE) {
         html = '<span class="ev-i">\u21c4</span><span class="ev-t"><b>' + esc(e.who) + '</b> traded ' + esc(side(e.gave)) + ' to <b>' + esc(e.other) + '</b> for ' + esc(side(e.got)) + '</span>';
       } else return;
       d.innerHTML = html + '<time>' + ago(e.at) + '</time>';
+      var key = e.kind + ":" + e.who + ":" + e.at; now[key] = 1; if (!first && !seenEv[key]) d.classList.add("fresh");
       var c = d.querySelector(".ev-c"); if (c) c.onclick = function () { viewCard(e.team, { serial: e.serial, from: esc(e.who) + "'s pull.", locked: !(S.inv[e.team] || []).length }); };
       box.appendChild(d);
     });
+    seenEv = now;
   }
+  /* Live: while Social is open and the page is visible, check for new activity every few seconds. */
+  setInterval(function () { if (!document.hidden && !vSocial.hidden) loadSocial(); }, 8000);
   $("#socTabAct").onclick = function () { $("#socTabAct").setAttribute("aria-selected", "true"); $("#socTabPpl").setAttribute("aria-selected", "false"); $("#socAct").hidden = false; $("#socPpl").hidden = true; };
   $("#socTabPpl").onclick = function () { $("#socTabAct").setAttribute("aria-selected", "false"); $("#socTabPpl").setAttribute("aria-selected", "true"); $("#socAct").hidden = true; $("#socPpl").hidden = false; };
   Array.prototype.forEach.call(document.querySelectorAll(".soc-sort button"), function (b) {

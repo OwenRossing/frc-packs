@@ -1167,3 +1167,6 @@ body.signed-out .top { background: none; backdrop-filter: none; }
    shadow is a plain rounded box-shadow instead of a gradient layer that some GPUs draw as a square. */
 .card .inner, .card .front, .slot .face.front { isolation: isolate; }
 .shade { background: none !important; border-radius: 7% / 5%; box-shadow: 0 calc(var(--cw) * .08) calc(var(--cw) * .12) rgba(0,0,0,.5); }
+.soc-ev.fresh { animation: evin .7s cubic-bezier(.2,1.2,.3,1) both; border-color: var(--tide); }
+@keyframes evin { from { opacity: 0; transform: translateY(-14px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .soc-ev.fresh { animation: none; } }
