@@ -67,6 +67,10 @@ export interface PackState {
 export interface Account {
   username: string;
   admin: boolean;
+  firstName?: string | null;
+  badge?: string | null;
+  /** When the username can next be changed (ms), if not now. */
+  renameAt?: number | null;
 }
 
 export interface State {
@@ -338,6 +342,8 @@ export const api = {
     call<State>("POST", "/api/signup", { code, username, password, firstName }),
   login: (username: string, password: string) => call<State>("POST", "/api/login", { username, password }),
   logout: () => call<void>("POST", "/api/logout"),
+  changeUsername: (username: string, password: string) => call<State>("POST", "/api/account/username", { username, password }),
+  changeFirstName: (firstName: string) => call<State>("POST", "/api/account/name", { firstName }),
   changePassword: (current: string, next: string) => call<void>("POST", "/api/password", { current, new: next }),
   state: () => call<State>("GET", "/api/state"),
   claim: () => call<State>("POST", "/api/claim"),
@@ -425,6 +431,7 @@ export function explain(e: unknown): string {
     bad_invite: "That invite code doesn't exist. Check it and try again.",
     invite_used: "That invite code has already been used.",
     username_taken: "That username is taken. Try another.",
+    rename_too_soon: "You can change your username once every 14 days.",
     bad_username: "Usernames are 3 to 20 letters, numbers or underscores.",
     bad_password: "Passwords need at least 8 characters.",
     bad_first_name: "Enter your first name.",

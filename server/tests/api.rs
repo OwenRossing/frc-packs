@@ -1580,3 +1580,27 @@ async fn collector_level_pays_parts_once_per_level() {
     let again = call(&app, "POST", "/api/level/claim", Some(&c), Some(json!({}))).await;
     assert_eq!(again.body["error"], "nothing_to_claim", "each level pays once");
 }
+
+#[tokio::test]
+async fn username_and_first_name_can_be_changed() {
+    let (app, db) = need_db!(setup(false));
+    let (who, cookie, _) = signup(&app, &db, &name()).await;
+    let (_, _, _) = signup(&app, &db, &name()).await;
+    let new = name();
+    let bad_pw = call(&app, "POST", "/api/account/username", Some(&cookie), Some(json!({ "username": new, "password": "wrong-password" }))).await;
+    assert_eq!(bad_pw.body["error"], "bad_login");
+    let bad_name = call(&app, "POST", "/api/account/username", Some(&cookie), Some(json!({ "username": "no spaces", "password": "hunter22!" }))).await;
+    assert_eq!(bad_name.body["error"], "bad_username");
+    let ok = call(&app, "POST", "/api/account/username", Some(&cookie), Some(json!({ "username": new, "password": "hunter22!" }))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    assert_eq!(ok.body["account"]["username"], new.as_str());
+    assert!(ok.body["account"]["renameAt"].is_i64(), "the next change is a while away");
+    let again = call(&app, "POST", "/api/account/username", Some(&cookie), Some(json!({ "username": name(), "password": "hunter22!" }))).await;
+    assert_eq!(again.body["error"], "rename_too_soon");
+    let old_login = call(&app, "POST", "/api/login", None, Some(json!({ "username": who, "password": "hunter22!" }))).await;
+    assert_eq!(old_login.body["error"], "bad_login", "the old name no longer signs in");
+    let fname = call(&app, "POST", "/api/account/name", Some(&cookie), Some(json!({ "firstName": "Riley" }))).await;
+    assert_eq!(fname.body["account"]["firstName"], "Riley");
+    let empty = call(&app, "POST", "/api/account/name", Some(&cookie), Some(json!({ "firstName": "  " }))).await;
+    assert_eq!(empty.body["error"], "bad_first_name");
+}

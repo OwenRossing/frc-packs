@@ -73,6 +73,8 @@ pub fn routes() -> Router<Shared> {
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/password", post(change_password))
+        .route("/account/username", post(change_username))
+        .route("/account/name", post(change_first_name))
         .route("/state", get(state))
         .route("/claim", post(claim))
         .route("/hand", post(hand))
@@ -210,9 +212,14 @@ pub struct StateOut {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AccountOut {
     username: String,
     admin: bool,
+    first_name: Option<String>,
+    badge: Option<String>,
+    /// When the username can next be changed (ms), if it can't be right now.
+    rename_at: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -349,8 +356,18 @@ async fn load_opening(
 }
 
 pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResult<StateOut> {
-    let (next, demo, username, admin, parts): (DateTime<Utc>, bool, Option<String>, bool, i32) =
-        sqlx::query_as("select next_claim_at, demo, username, is_admin, parts from users where id = $1")
+    let (next, demo, username, admin, parts, first_name, badge, renamed): (
+        DateTime<Utc>,
+        bool,
+        Option<String>,
+        bool,
+        i32,
+        Option<String>,
+        Option<String>,
+        Option<DateTime<Utc>>,
+    ) = sqlx::query_as(
+        "select next_claim_at, demo, username, is_admin, parts, first_name, badge, username_changed_at from users where id = $1",
+    )
             .bind(user)
             .fetch_one(&mut *c)
             .await?;
@@ -387,7 +404,13 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
     // If the admin shortened the timer, nobody waits longer than one new timer.
     let next = next.min(Utc::now() + Duration::milliseconds(r.claim_ms()));
     Ok(StateOut {
-        account: AccountOut { username: username.unwrap_or_default(), admin },
+        account: AccountOut {
+            username: username.unwrap_or_default(),
+            admin,
+            first_name,
+            badge,
+            rename_at: renamed.map(|t| (t + Duration::days(RENAME_DAYS)).timestamp_millis()).filter(|t| *t > Utc::now().timestamp_millis()),
+        },
         now: Utc::now().timestamp_millis(),
         next_claim_at: next.timestamp_millis(),
         claim_ms: r.claim_ms(),
@@ -632,6 +655,67 @@ async fn change_password(
     tx.commit().await?;
     s.limiter.clear(&key);
     Ok(StatusCode::NO_CONTENT)
+}
+
+const RENAME_DAYS: i64 = 14;
+
+#[derive(Deserialize)]
+struct UsernameReq {
+    username: String,
+    password: String,
+}
+
+/// Changes your username (needs your password, and only once every 14 days). Cards, trades and everything else stay.
+async fn change_username(State(s): State<Shared>, user: User, Json(req): Json<UsernameReq>) -> ApiResult<Json<StateOut>> {
+    let key = format!("rename:{}", user.id);
+    if s.limiter.blocked(&key, USER_FAILS) {
+        return Err(too_many());
+    }
+    let name = req.username.trim();
+    if !accounts::valid_username(name) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_username"));
+    }
+    if !accounts::decent_username(name) {
+        return Err(err(StatusCode::BAD_REQUEST, "username_not_allowed"));
+    }
+    let (hash, renamed): (Option<String>, Option<DateTime<Utc>>) =
+        sqlx::query_as("select password_hash, username_changed_at from users where id = $1").bind(user.id).fetch_one(&s.db).await?;
+    if renamed.is_some_and(|t| t + Duration::days(RENAME_DAYS) > Utc::now()) {
+        return Err(err(StatusCode::CONFLICT, "rename_too_soon"));
+    }
+    if !accounts::verify(req.password, hash.unwrap_or_default()).await {
+        s.limiter.fail(&key);
+        return Err(err(StatusCode::UNAUTHORIZED, "bad_login"));
+    }
+    let mut tx = s.db.begin().await?;
+    match sqlx::query("update users set username = $2, username_changed_at = now() where id = $1").bind(user.id).bind(name).execute(&mut *tx).await {
+        Ok(_) => {}
+        Err(e) if accounts::is_unique_violation(&e) => return Err(err(StatusCode::CONFLICT, "username_taken")),
+        Err(e) => return Err(e.into()),
+    }
+    let out = load_state(&s, &mut tx, user.id).await?;
+    tx.commit().await?;
+    s.limiter.clear(&key);
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+struct FirstNameReq {
+    #[serde(rename = "firstName")]
+    first_name: String,
+}
+
+/// Changes the first name other players see next to your username.
+async fn change_first_name(State(s): State<Shared>, user: User, Json(req): Json<FirstNameReq>) -> ApiResult<Json<StateOut>> {
+    let name = req.first_name.trim();
+    if name.is_empty() || name.chars().count() > 30 || name.chars().any(|c| c.is_control()) {
+        return Err(err(StatusCode::BAD_REQUEST, "bad_first_name"));
+    }
+    let mut tx = s.db.begin().await?;
+    sqlx::query("update users set first_name = $2 where id = $1").bind(user.id).bind(name).execute(&mut *tx).await?;
+    let out = load_state(&s, &mut tx, user.id).await?;
+    tx.commit().await?;
+    Ok(Json(out))
 }
 
 async fn state(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {

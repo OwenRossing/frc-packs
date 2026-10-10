@@ -67,7 +67,7 @@ export function start(RECIPE) {
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
     S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
-    S.level = st.level || null; S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
+    S.account = st.account || S.account; S.level = st.level || null; S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
     if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
     /* The donation link only shows when the admin set one (always https, checked by the server). */
@@ -1635,7 +1635,32 @@ export function start(RECIPE) {
   addEventListener("hashchange", function () { var h = (location.hash || "").replace("#", ""); if (h === "open" || h === "binder" || h === "trade" || h === "social") show(h); });
   tabOpen.onclick = function () { show("open"); }; tabBinder.onclick = function () { show("binder"); }; tabTrade.onclick = function () { show("trade"); }; tabSocial.onclick = function () { show("social"); };
   var gear = $("#gear"), settings = $("#settings");
-  gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); };
+  gear.onclick = function () { var open = settings.hidden; settings.hidden = !open; gear.setAttribute("aria-expanded", String(open)); document.body.classList.toggle("settings-open", open); if (open) { paintAccount(); settings.scrollTop = 0; } };
+  $("#setBack").onclick = function () { gear.click(); };
+  /* The account card at the top of Settings: who you are, and where you change your name. */
+  function paintAccount() {
+    var a = (S.account || {}), box = $("#setAv"); if (!box) return;
+    box.innerHTML = avatar(a.username || ME || "?", "big");
+    $("#setName").textContent = a.firstName || a.username || ME || "";
+    $("#setTag").innerHTML = badgeHTML(a.badge);
+    $("#setUser").textContent = a.username ? "@" + a.username : "";
+    var nf = $("#nameIn"); if (nf && document.activeElement !== nf) nf.value = a.firstName || "";
+    var uf = $("#userIn"); if (uf && document.activeElement !== uf) uf.value = a.username || "";
+    var wait = a.renameAt && a.renameAt > Date.now(), btn = $("#userBtn");
+    if (btn) { btn.disabled = !!wait; btn.textContent = wait ? "Next change " + new Date(a.renameAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Change username"; }
+  }
+  function setMsg(t, bad) { var m = $("#setMsg"); m.hidden = !t; m.textContent = t || ""; m.classList.toggle("bad", !!bad); }
+  $("#nameForm").addEventListener("submit", function (e) {
+    e.preventDefault(); var v = $("#nameIn").value.trim(); if (!v) return setMsg("Enter your first name.", true);
+    api.changeFirstName(v).then(function (st) { applyState(st); paintAccount(); setMsg("Saved.", false); }, function (er) { setMsg(explain(er), true); });
+  });
+  $("#userForm").addEventListener("submit", function (e) {
+    e.preventDefault(); var f = e.target, nu = f.username.value.trim(), pw = f.password.value;
+    if (!nu || !pw) return setMsg("Enter the new username and your current password.", true);
+    if (nu === ME) return setMsg("That's already your username.", true);
+    api.changeUsername(nu, pw).then(function (st) { f.password.value = ""; ME = st.account.username; applyState(st); paintAccount(); paintSocialAfterRename(); setMsg("Username changed to " + st.account.username + ".", false); }, function (er) { setMsg(explain(er), true); });
+  });
+  function paintSocialAfterRename() { SOCIAL = null; var mb = $("#meBtn"); if (mb) mb.innerHTML = avatar(ME); }
   var muteBtn = $("#mute"), demoBtn = $("#demoLuck"), wheelBtn = $("#wheelAgain");
   wheelBtn.onclick = function () { S.wheel = S.wheel !== true; save(); paintToggles(); };
   function paintToggles() { paintV2(); muteBtn.textContent = S.muted ? "Off" : "On"; muteBtn.setAttribute("aria-pressed", String(!S.muted)); demoBtn.textContent = S.demo ? "On" : "Off"; demoBtn.setAttribute("aria-pressed", String(S.demo)); wheelBtn.textContent = S.wheel === true ? "On" : "Off"; wheelBtn.setAttribute("aria-pressed", String(S.wheel === true));

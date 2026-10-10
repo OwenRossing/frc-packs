@@ -68,6 +68,15 @@
   </div>
 
   <div class="settings" id="settings" hidden>
+    <div class="set-bar"><button type="button" class="back" id="setBack" aria-label="Back">‹ Back</button><h2>Settings</h2></div>
+    <section class="set-card set-acct"><span id="setAv"></span><div><b id="setName"></b><span id="setTag"></span><small id="setUser"></small></div></section>
+    <section class="set-card">
+      <h3>Your name</h3>
+      <form class="set-form" id="nameForm" novalidate><label>First name<input name="firstName" id="nameIn" autocomplete="given-name" maxlength="30"></label><button type="submit" class="cta small">Save</button></form>
+      <form class="set-form" id="userForm" novalidate><label>Username<input name="username" id="userIn" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20"></label>
+        <label>Current password<input name="password" type="password" autocomplete="current-password" maxlength="128"></label><button type="submit" class="cta small" id="userBtn">Change username</button></form>
+      <div class="msg" id="setMsg" role="status" hidden></div>
+    </section>
     <div class="line"><span>Account<small id="acctTxt">Signed in.</small></span><button type="button" class="chip" id="signOut">Sign out</button></div>
     <div class="line"><span>Password<small>Change it here. Your other devices get signed out.</small></span><button type="button" class="chip" id="pwBtn" aria-expanded="false" aria-controls="pwForm">Change</button></div>
     <form class="pwform" id="pwForm" hidden novalidate>
