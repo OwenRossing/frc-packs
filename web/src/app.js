@@ -1178,9 +1178,9 @@ export function start(RECIPE) {
      Remembered on this device. */
   var scrapPick = { common: true, uncommon: true, rare: true, legendary: false, mythic: false }, scrapArmed = 0;
   try { var sp = JSON.parse(localStorage.getItem("frcpacks.scrap") || "null"); if (sp && typeof sp === "object") ORDER.forEach(function (t) { if (typeof sp[t] === "boolean") scrapPick[t] = sp[t]; }); } catch (e) {}
-  /* Legendary and Mythic copies are never scrapped. */
-  scrapPick.legendary = scrapPick.mythic = false;
-  var NOSCRAP = { legendary: 1, mythic: 1 };
+  /* Extra Legendary copies can be scrapped (off by default in the bulk button); Mythic copies never are. */
+  scrapPick.mythic = false;
+  var NOSCRAP = { mythic: 1 };
   var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
   /* A small (i) that shows its text on tap or hover, for explanations that used to sit on the page. */
   function infoTip(text) {
