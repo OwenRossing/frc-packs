@@ -1263,3 +1263,13 @@ body.takeover .bg i, body.mythic-dark .bg i, body.mythic-aura .bg i { animation-
 html, body, button, a, input, select, label, [role="button"] { touch-action: manipulation; }
 .ringwrap, .tr-browse .tr-grid { touch-action: pan-y; }
 .inspect, .stack, .spc, .modal-in .slot, .modal.card-view, .modal.card-view .modal-in, .modal.card-view .modal-in * { touch-action: none; }
+
+/* Owner notice: always on top, can't be dismissed (only the full-screen message can, and it comes back). */
+.notice-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 400; min-height: 34px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; background: #d62839; color: #fff; font: 700 13px/1.25 var(--body); text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,.45); }
+body.has-notice { padding-top: calc(36px + env(safe-area-inset-top)); }
+body.has-notice .app > .top { top: calc(36px + env(safe-area-inset-top)); }
+.notice-overlay { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 20px; background: rgba(2,8,12,.92); }
+.notice-box { width: min(420px, 100%); background: #14252c; border: 2px solid #d62839; border-radius: 22px; padding: 26px 22px; text-align: center; display: grid; gap: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.notice-box h2 { margin: 0; font: 400 34px var(--display); color: #ff6b78; }
+.notice-box p { margin: 0; font-size: 18px; line-height: 1.4; color: var(--foam, #eaf7f5); }
+.notice-time { font: 400 26px var(--display); color: #ffd34d; }

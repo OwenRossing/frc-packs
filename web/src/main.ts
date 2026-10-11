@@ -4,10 +4,12 @@ import { accountSettings } from "./account";
 import { signIn } from "./auth";
 import { start } from "./app.js";
 import { setupPwa } from "./pwa";
+import { startNotice } from "./notice";
 
 const PACK = "cmp26";
 
 async function main() {
+  startNotice();
   try {
     const recipe = api.recipe(PACK);
     let state: State;
