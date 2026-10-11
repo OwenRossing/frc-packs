@@ -28,6 +28,8 @@ pub struct Opts {
     pub pity: Pity,
     /// A boosted pack, crafted from parts: the recipe's boosted odds.
     pub boosted: bool,
+    /// A Mythic pack: boosted, with its last three cards guaranteed Mythic.
+    pub mythic: bool,
 }
 
 /// Chance the last card is a Mythic when this is the `n`th pack since the last one.
@@ -63,7 +65,9 @@ pub fn roll<R: Rng + ?Sized>(pack: &Pack, rng: &mut R, o: &Opts) -> Vec<Rolled> 
         if o.boosted { (&odds.boosted.slots, &odds.boosted.last, odds.boosted.mythic_mult) } else { (&odds.slots, &odds.last, 1.0) };
     let mut cards: Vec<Rolled> = Vec::with_capacity(5);
     for slot in 0..5 {
-        let tier = if slot < 4 {
+        let tier = if o.mythic && slot >= 2 {
+            Tier::Mythic
+        } else if slot < 4 {
             weighted(rng, slots)
         } else if rng.random::<f64>() < (mythic_chance(odds, o.demo, pm) * mult).min(1.0) {
             Tier::Mythic
@@ -144,6 +148,20 @@ mod tests {
         // Without the pity meter, Legendary+ is about 8.9% of packs (0.25% + 7% last slot + 2% from slots 1-4).
         let rate = f64::from(leg_plus) / f64::from(n);
         assert!((0.08..0.10).contains(&rate), "legendary+ rate {rate}");
+    }
+
+    #[test]
+    fn mythic_packs_hold_three_different_mythics() {
+        let pack = cmp26();
+        let mut rng = StdRng::seed_from_u64(3);
+        for _ in 0..2000 {
+            let c = roll(&pack, &mut rng, &Opts { boosted: true, mythic: true, ..Default::default() });
+            assert_eq!(c.len(), 5);
+            let mythics: HashSet<i32> = c.iter().filter(|x| x.tier == Tier::Mythic).map(|x| x.num).collect();
+            assert!(mythics.len() >= 3, "three different Mythics, got {mythics:?}");
+            let all: HashSet<i32> = c.iter().map(|x| x.num).collect();
+            assert_eq!(all.len(), 5, "no team twice");
+        }
     }
 
     #[test]

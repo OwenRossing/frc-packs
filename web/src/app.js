@@ -46,7 +46,7 @@ export function start(RECIPE) {
   /* S mirrors the server: sealed packs, the free-pack timer, pity, the collection and the pack being revealed.
      Only display preferences (sound, the wheel setting, which cards are marked new) are kept in this browser. */
   var PREFS = "frcpacks.prefs";
-  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, boosted: 0, parts: 0, boostCost: 250, scrapParts: {}, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
+  var S = { packs: 0, nextClaimAt: Date.now(), inv: {}, pending: null, opened: 0, demo: false, devTools: false, pity: { m: 0, l: 0 }, boosted: 0, mythic: 0, openMythic: false, parts: 0, boostCost: 250, scrapParts: {}, sets: {}, team: 0, teamAsked: true, muted: false, wheel: true, unseen: {} };
   try {
     var prefs = JSON.parse(localStorage.getItem(PREFS) || "{}");
     if (prefs && typeof prefs === "object") {
@@ -66,7 +66,7 @@ export function start(RECIPE) {
     S.account = st.account || null;
     var skew = st.now - Date.now(); CLAIM_MS = st.claimMs; BANK = st.bank; PER = st.claimPacks || 1;
     var p = st.packs.filter(function (x) { return x.id === PACK_ID; })[0] || { sealed: 0, boosted: 0, opened: 0, pity: { m: 0, l: 0 } };
-    S.packs = p.sealed; S.boosted = p.boosted || 0; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
+    S.mythic = p.mythic || 0; S.packs = p.sealed; S.boosted = (p.boosted || 0) - S.mythic; S.opened = p.opened; S.pity = p.pity; S.nextClaimAt = st.nextClaimAt - skew;
     S.account = st.account || S.account; S.level = st.level || null; S.parts = st.parts || 0; S.boostCost = st.boostCost || 250; S.scrapParts = st.scrapParts || {};
     if (st.missions) { S.missions = st.missions; S.streak = st.streak; dailyDirty = true; }
     S.favorites = st.favorites || S.favorites || []; if (st.wishlist) { S.wishlist = st.wishlist; S.showcase = st.showcase || []; }
@@ -534,19 +534,19 @@ export function start(RECIPE) {
   /* Pack inventory: standard and boosted packs are separate stacks; S.openKind is the one being opened (true =
      boosted). */
   S.openKind = false;
-  function kindCount(k) { return k ? S.boosted : Math.max(0, S.packs - S.boosted); }
+  function kindCount(k) { return k ? S.boosted : Math.max(0, S.packs - S.boosted - S.mythic); }
   /* The admin's test pack: unlimited, rolled like a real one, and nothing about it is saved (no pack used, no serial
      number, nothing in the binder). S.testMode says that's the stack being opened. */
   S.testMode = false;
   function isAdmin() { return !!(S.account && S.account.admin); }
-  function have() { return S.testMode ? 999 : kindCount(S.openKind); }
+  function have() { return S.testMode ? 999 : S.openMythic ? S.mythic : kindCount(S.openKind); }
   function packsLeftHud(title, more) {
     if (S.packs > 0 || S.testMode) setHud(title, more);
     else { var left = S.nextClaimAt - Date.now(); setHud("Out of packs", left <= 0 ? "Claim your pack above" : fmt(left)); }
   }
   function paintSelectHud() {
-    if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · " + (S.boosted ? "pick a stack" : "tap to open"));
-    else packsLeftHud(S.testMode ? "Choose a test pack" : S.openKind ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
+    if (state === "home") packsLeftHud("Your packs", (S.packs === 1 ? "1 pack" : S.packs + " packs") + " to open · " + (S.boosted || S.mythic ? "pick a stack" : "tap to open"));
+    else packsLeftHud(S.testMode ? "Choose a test pack" : S.openMythic ? "Choose a Mythic pack" : S.openKind ? "Choose a boosted pack" : "Choose a pack", SWIPE + " to spin · " + TAP.toLowerCase() + " one to take it");
     ringwrap.classList.toggle("out", have() < 1);
     ringwrap.classList.toggle("boosted", S.openKind && !S.testMode);
     ringwrap.classList.toggle("test", S.testMode);
@@ -554,33 +554,33 @@ export function start(RECIPE) {
     Array.prototype.forEach.call(collectionEl.querySelectorAll(".ptype"), function (tile) { paintTile(tile, PACKS[0]); });
     var kr = $("#kindRow"); if (kr && state === "home") homeKinds().forEach(function (k, i) { var c = kr.children[i]; if (!c) return; var n = k === "test" ? "∞" : kindCount(k === true); var em = c.querySelector("em"); if (em && em.textContent !== String(n)) em.textContent = n; c.classList.toggle("empty", k !== "test" && !n); });
     var inv = $("#packInv");
-    if (inv) setHTML(inv, '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') +
+    if (inv) setHTML(inv, '<span><b>' + kindCount(false) + '</b> standard</span>' + (S.boosted ? '<span class="gold"><b>' + S.boosted + '</b> boosted</span>' : '') + (S.mythic ? '<span class="gold"><b>' + S.mythic + '</b> mythic</span>' : '') +
       '<span><b>' + S.parts + '</b> parts</span><span><b>' + Math.max(0, S.boostCost - S.parts) + '</b> to next boosted</span>');
   }
   /* ---------- home: your pack collection ---------- */
   function paintTile(b, pk) {
     if (b._test) { setText(b.querySelector(".cnt"), "∞"); setText(b.querySelector(".pt-sub"), "Admin · saves nothing"); b.setAttribute("aria-label", "Test " + pk.name + " pack, unlimited, nothing is saved"); return; }
-    var boosted = b._boosted, n = kindCount(boosted);
+    var boosted = b._boosted, n = b._mythic ? S.mythic : kindCount(boosted);
     if (b.classList.contains("empty") !== (n < 1)) b.classList.toggle("empty", n < 1); setText(b.querySelector(".cnt"), "×" + n);
-    setText(b.querySelector(".pt-sub"), n ? (boosted ? "Better odds" : "Tap to open") : "None left");
-    var al = (boosted ? "Boosted " : "") + pk.name + " pack, " + n + " to open"; if (b.getAttribute("aria-label") !== al) b.setAttribute("aria-label", al);
+    setText(b.querySelector(".pt-sub"), n ? (b._mythic ? "3 Mythics inside" : boosted ? "Better odds" : "Tap to open") : "None left");
+    var al = (b._mythic ? "Mythic " : boosted ? "Boosted " : "") + pk.name + " pack, " + n + " to open"; if (b.getAttribute("aria-label") !== al) b.setAttribute("aria-label", al);
   }
   /* Home: one hero pack inside the Mythic-meter ring, and a row of every pack type you own under it. */
   var homeKind = null;
   function homeKinds() {
-    var k = [false]; if (S.boosted > 0) k.push(true); if (isAdmin()) k.push("test"); return k;
+    var k = [false]; if (S.boosted > 0) k.push(true); if (S.mythic > 0) k.push("mythic"); if (isAdmin()) k.push("test"); return k;
   }
-  function kindName(kind) { return kind === "test" ? "Test" : kind === true ? "Boosted" : "Standard"; }
+  function kindName(kind) { return kind === "mythic" ? "Mythic" : kind === "test" ? "Test" : kind === true ? "Boosted" : "Standard"; }
   function paintHome() {
     state = "home"; showOnly("home");
     var kinds = homeKinds();
-    if (kinds.indexOf(homeKind) < 0) homeKind = (kindCount(false) < 1 && S.boosted > 0) ? true : false;
+    if (kinds.indexOf(homeKind) < 0) homeKind = kindCount(false) < 1 ? (S.boosted > 0 ? true : S.mythic > 0 ? "mythic" : false) : false;
     collectionEl.innerHTML = "";
-    var kind = homeKind, pk = PACKS[0], test = kind === "test", boosted = kind === true;
-    var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted ? " boosted" : "") + (test ? " test" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted; b._test = test;
-    b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (test ? "Test " : boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
+    var kind = homeKind, pk = PACKS[0], test = kind === "test", boosted = kind === true, myth = kind === "mythic";
+    var b = document.createElement("button"); b.type = "button"; b.className = "ptype" + (boosted || myth ? " boosted" : "") + (myth ? " mythic" : "") + (test ? " test" : ""); b.setAttribute("role", "listitem"); b._boosted = boosted || myth; b._mythic = myth; b._test = test;
+    b.innerHTML = '<span class="cnt"></span>' + packHTML(false) + '<span class="pt-name">' + (test ? "Test " : myth ? "Mythic " : boosted ? "Boosted " : "") + esc(pk.name) + '</span><span class="pt-sub"></span>';
     paintTile(b, pk);
-    b.addEventListener("click", function () { S.testMode = test; S.openKind = boosted; openRing(b); });
+    b.addEventListener("click", function () { S.testMode = test; S.openKind = boosted || myth; S.openMythic = myth; openRing(b); });
     b.addEventListener("pointermove", function (e) {
       var r = b.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
       b.style.setProperty("--gx", ((px - .5) * 2).toFixed(3)); b.style.setProperty("--gy", ((py - .5) * 2).toFixed(3));
@@ -589,11 +589,11 @@ export function start(RECIPE) {
     collectionEl.appendChild(b); collectionEl.classList.add("one");
     var row = $("#kindRow"); row.innerHTML = "";
     kinds.forEach(function (k) {
-      var t = k === "test", g = k === true, n = t ? "∞" : kindCount(g);
-      var c = document.createElement("button"); c.type = "button"; c.className = "kind" + (k === kind ? " on" : "") + (g ? " gold" : "") + (t ? " test" : "") + (t || n ? "" : " empty");
+      var t = k === "test", g = k === true, m = k === "mythic", n = t ? "∞" : m ? S.mythic : kindCount(g);
+      var c = document.createElement("button"); c.type = "button"; c.className = "kind" + (k === kind ? " on" : "") + (g || m ? " gold" : "") + (t ? " test" : "") + (t || n ? "" : " empty");
       c.setAttribute("role", "option"); c.setAttribute("aria-selected", String(k === kind)); c.setAttribute("aria-label", kindName(k) + " packs, " + n);
       c.innerHTML = '<i></i><em>' + n + '</em><span>' + kindName(k) + '</span>';
-      c.onclick = function () { homeKind = k; S.testMode = t; S.openKind = g; sfx.tick(); paintHome(); };
+      c.onclick = function () { homeKind = k; S.testMode = t; S.openKind = g || m; S.openMythic = m; sfx.tick(); paintHome(); };
       row.appendChild(c);
     });
     row.hidden = kinds.length < 2;
@@ -728,7 +728,7 @@ export function start(RECIPE) {
       }, offline);
       return;
     }
-    api.hand(PACK_ID, S.openKind).then(function (r) {
+    api.hand(PACK_ID, S.openKind, S.openMythic).then(function (r) {
       if (n !== holdN || state !== "inspect") return;
       nextBest = r.best; inspectEl.style.setProperty("--tell", TIERS[r.best === "mythic" ? "legendary" : r.best].color);
       inspectEl.classList.toggle("boosted", !!r.boosted);
@@ -792,7 +792,7 @@ export function start(RECIPE) {
           opening: { id: 0, pack: PACK_ID, revealed: 0, sets: [], cards: cards.map(function (c) { return { num: c.num, tier: c.tier, serial: "TEST", isNew: false, copy: 0, inGame: 0, test: true }; }) },
           state: null, streakReward: false }) : Promise.reject(new Error("test pack not ready"));
         testHand = null;
-      } else openReq = api.open(PACK_ID, S.openKind);
+      } else openReq = api.open(PACK_ID, S.openKind, S.openMythic);
       openReq.catch(function () {});
     }
     return openReq;
@@ -1083,7 +1083,7 @@ export function start(RECIPE) {
   /* With packs left, go straight to a fresh pack in hand; "Pick another" there goes back to the wheel. */
   againBtn.addEventListener("click", function () {
     if (state !== "summary") return;
-    if (!have()) S.openKind = !S.openKind; // that stack ran out: carry on with the other one
+    if (!have()) { if (S.openMythic) { S.openMythic = false; S.openKind = kindCount(true) > 0; } else S.openKind = !S.openKind; } // that stack ran out: carry on with the other one
     if (!S.testMode && S.packs < 1) return paintHome();
     if (have() > 0 && S.wheel === true) { sfx.pick(); paintSelect(true); }
     else if (have() > 0) { paintSelect(false); choose(Math.floor(SHELF_N / 2)); } else paintHome();
@@ -1181,7 +1181,7 @@ export function start(RECIPE) {
   /* Extra Legendary copies can be scrapped (off by default in the bulk button); Mythic copies never are. */
   scrapPick.mythic = false;
   var NOSCRAP = { mythic: 1 };
-  var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn");
+  var craftBtn = $("#craftBtn"), scrapBtn = $("#scrapBtn"), craftMythicBtn = $("#craftMythicBtn"), MYTHIC_COST = 10000;
   /* A small (i) that shows its text on tap or hover, for explanations that used to sit on the page. */
   function infoTip(text) {
     var w = document.createElement("span"); w.className = "tipwrap";
@@ -1229,6 +1229,7 @@ export function start(RECIPE) {
     $("#partsBar").style.width = Math.min(100, S.parts / cost * 100) + "%";
     $("#partsTxt").textContent = S.parts >= cost ? Math.floor(S.parts / cost) + " boosted pack" + (S.parts >= cost * 2 ? "s" : "") + " ready to craft" : (cost - S.parts) + " more for a boosted pack";
     craftBtn.disabled = S.parts < cost; craftBtn.textContent = "Craft boosted pack · " + cost;
+    craftMythicBtn.disabled = S.parts < MYTHIC_COST; craftMythicBtn.textContent = "Mythic pack · " + MYTHIC_COST.toLocaleString() + " (3 Mythics)";
     var row = $("#scrapTiers"); row.innerHTML = "";
     ORDER.slice().reverse().filter(function (t) { return !NOSCRAP[t]; }).forEach(function (t) {
       var b = document.createElement("button"); b.type = "button"; b.className = "chip" + (scrapPick[t] ? " on" : "");
@@ -1268,6 +1269,15 @@ export function start(RECIPE) {
       applyState(st); paintStatus(); paintWorkshop(); sfx.promote();
       var r = craftBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 40, "#ffd34d", 7);
       say("Boosted pack crafted. It waits in its own gold stack on the Open tab.", 2800);
+      if (state === "home" || state === "select") paintSelectHud();
+    }, function (e) { offline(e); paintWorkshop(); });
+  });
+  craftMythicBtn.addEventListener("click", function () {
+    if (S.parts < MYTHIC_COST) return; actx(); craftMythicBtn.disabled = true;
+    api.craftMythic().then(function (st) {
+      applyState(st); paintStatus(); paintWorkshop(); sfx.promote();
+      var r = craftMythicBtn.getBoundingClientRect(); burst(r.left + r.width / 2, r.top + r.height / 2, 60, "#3cffdc", 8);
+      say("Mythic pack crafted. Open it from its own stack on the Open tab.", 3200);
       if (state === "home" || state === "select") paintSelectHud();
     }, function (e) { offline(e); paintWorkshop(); });
   });

@@ -167,7 +167,7 @@ async fn has_goods(c: &mut PgConnection, user: Uuid, pack: &str, packs: i32, boo
             .fetch_one(&mut *c)
             .await?;
     let have_boosted: i32 =
-        sqlx::query_scalar(&format!("select coalesce((select boosted from user_packs where user_id = $1 and pack_id = $2{lock}), 0)"))
+        sqlx::query_scalar(&format!("select coalesce((select boosted - mythic from user_packs where user_id = $1 and pack_id = $2{lock}), 0)"))
             .bind(user)
             .bind(pack)
             .fetch_one(&mut *c)

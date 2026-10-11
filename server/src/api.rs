@@ -81,6 +81,7 @@ pub fn routes() -> Router<Shared> {
         .route("/open", post(open))
         .route("/openings/{id}/progress", post(progress))
         .route("/collection/{pack}", get(collection))
+        .route("/craft/mythic", post(craft_mythic))
         .route("/scrap", post(scrap))
         .route("/scrap/extras", post(scrap_extras))
         .route("/craft", post(craft))
@@ -231,6 +232,8 @@ struct PackState {
     sealed: i32,
     /// How many of the sealed packs are boosted (they open first).
     boosted: i32,
+    /// How many of the boosted packs are Mythic packs (three Mythics each).
+    mythic: i32,
     opened: i32,
     pity: PityOut,
 }
@@ -267,6 +270,7 @@ struct OpeningOut {
 struct UserPack {
     sealed: i32,
     boosted: i32,
+    mythic: i32,
     pity_m: i32,
     pity_l: i32,
 }
@@ -278,15 +282,20 @@ struct PackReq {
     /// first.
     #[serde(default)]
     boosted: Option<bool>,
+    /// Open a Mythic pack (a boosted pack with three Mythics) instead.
+    #[serde(default)]
+    mythic: bool,
 }
 
 /// The kind of pack to pick up or open (true = boosted), if the player has one of that kind.
 fn pack_kind(up: &UserPack, asked: Option<bool>) -> ApiResult<bool> {
     let standard = up.sealed - up.boosted;
+    // Mythic packs are counted inside `boosted` but are opened on purpose, never by default.
+    let boosted = up.boosted - up.mythic;
     match asked {
-        Some(true) if up.boosted > 0 => Ok(true),
+        Some(true) if boosted > 0 => Ok(true),
         Some(false) if standard > 0 => Ok(false),
-        None if up.sealed > 0 => Ok(up.boosted > 0),
+        None if standard + boosted > 0 => Ok(boosted > 0),
         _ => Err(err(StatusCode::CONFLICT, "no_packs")),
     }
 }
@@ -304,14 +313,14 @@ async fn lock_user_pack(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResu
         .bind(pack)
         .execute(&mut *c)
         .await?;
-    Ok(sqlx::query_as("select sealed, boosted, pity_m, pity_l from user_packs where user_id = $1 and pack_id = $2 for update")
+    Ok(sqlx::query_as("select sealed, boosted, mythic, pity_m, pity_l from user_packs where user_id = $1 and pack_id = $2 for update")
         .bind(user)
         .bind(pack)
         .fetch_one(&mut *c)
         .await?)
 }
 
-async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack, boosted: bool) -> ApiResult<Vec<Rolled>> {
+async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack, boosted: bool, mythic: bool) -> ApiResult<Vec<Rolled>> {
     let demo: bool = sqlx::query_scalar("select demo from users where id = $1").bind(user).fetch_one(&mut *c).await?;
     let opened_any: i64 =
         sqlx::query_scalar("select coalesce(sum(opened), 0)::bigint from user_packs where user_id = $1")
@@ -319,7 +328,7 @@ async fn roll_for(c: &mut PgConnection, user: Uuid, pack: &Pack, up: &UserPack, 
             .fetch_one(&mut *c)
             .await?;
     let opts =
-        Opts { demo, first: opened_any == 0, pity: Pity { m: up.pity_m.max(0) as u32, l: up.pity_l.max(0) as u32 }, boosted };
+        Opts { demo, first: opened_any == 0, pity: Pity { m: up.pity_m.max(0) as u32, l: up.pity_l.max(0) as u32 }, boosted, mythic };
     let mut rng = rand::rng();
     Ok(roll::roll(pack, &mut rng, &opts))
 }
@@ -373,8 +382,8 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
             .bind(user)
             .fetch_one(&mut *c)
             .await?;
-    let rows: Vec<(String, i32, i32, i32, i32, i32)> =
-        sqlx::query_as("select pack_id, sealed, opened, pity_m, pity_l, boosted from user_packs where user_id = $1")
+    let rows: Vec<(String, i32, i32, i32, i32, i32, i32)> =
+        sqlx::query_as("select pack_id, sealed, opened, pity_m, pity_l, boosted, mythic from user_packs where user_id = $1")
             .bind(user)
             .fetch_all(&mut *c)
             .await?;
@@ -384,8 +393,8 @@ pub async fn load_state(s: &Shared, c: &mut PgConnection, user: Uuid) -> ApiResu
         .iter()
         .map(|p| {
             let r = rows.iter().find(|r| r.0 == p.id());
-            let (sealed, opened, m, l, boosted) = r.map_or((0, 0, 0, 0, 0), |r| (r.1, r.2, r.3, r.4, r.5));
-            PackState { id: p.id().to_string(), sealed, boosted, opened, pity: PityOut { m, l } }
+            let (sealed, opened, m, l, boosted, mythic) = r.map_or((0, 0, 0, 0, 0, 0), |r| (r.1, r.2, r.3, r.4, r.5, r.6));
+            PackState { id: p.id().to_string(), sealed, boosted, mythic, opened, pity: PityOut { m, l } }
         })
         .collect();
     let pend: Option<(i64, String, i32, Vec<String>)> = sqlx::query_as(
@@ -782,6 +791,13 @@ async fn hand(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
     let pack = pack(&s, &req.pack)?;
     let mut tx = s.db.begin().await?;
     let up = lock_user_pack(&mut tx, user.id, pack.id()).await?;
+    if req.mythic {
+        // A Mythic pack's best card is always a Mythic; nothing to keep in hand.
+        if up.mythic < 1 {
+            return Err(err(StatusCode::CONFLICT, "no_packs"));
+        }
+        return Ok(Json(HandOut { best: Tier::Mythic, boosted: true }));
+    }
     let kind = pack_kind(&up, req.boosted)?;
     let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
         sqlx::query_as("select cards, boosted from hands where user_id = $1 and pack_id = $2 and boosted = $3")
@@ -794,7 +810,7 @@ async fn hand(State(s): State<Shared>, user: User, Json(req): Json<PackReq>) -> 
         Some((c, b)) => (c.0, b),
         None => {
             let boosted = kind;
-            let cards = roll_for(&mut tx, user.id, pack, &up, boosted).await?;
+            let cards = roll_for(&mut tx, user.id, pack, &up, boosted, false).await?;
             sqlx::query("insert into hands (user_id, pack_id, cards, boosted) values ($1, $2, $3, $4)")
                 .bind(user.id)
                 .bind(pack.id())
@@ -865,18 +881,25 @@ async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json
     reason(&mut tx, "open").await?;
     lock_user(&mut tx, user.id).await?;
     let up = lock_user_pack(&mut tx, user.id, pack.id()).await?;
-    let kind = pack_kind(&up, req.boosted)?;
-    let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> =
+    let mythic = req.mythic;
+    if mythic && up.mythic < 1 {
+        return Err(err(StatusCode::CONFLICT, "no_packs"));
+    }
+    let kind = if mythic { true } else { pack_kind(&up, req.boosted)? };
+    let held: Option<(sqlx::types::Json<Vec<Rolled>>, bool)> = if mythic {
+        None
+    } else {
         sqlx::query_as("delete from hands where user_id = $1 and pack_id = $2 and boosted = $3 returning cards, boosted")
             .bind(user.id)
             .bind(pack.id())
             .bind(kind)
             .fetch_optional(&mut *tx)
-            .await?;
+            .await?
+    };
     let valid = |c: &[Rolled]| c.len() == 5 && c.iter().all(|x| pack.team_tier.get(&x.num) == Some(&x.tier));
     let (mut cards, boosted) = match held {
         Some((c, b)) if valid(&c.0) => (c.0, b),
-        _ => (roll_for(&mut tx, user.id, pack, &up, kind).await?, kind),
+        _ => (roll_for(&mut tx, user.id, pack, &up, kind, mythic).await?, kind),
     };
     roll::sort_best_last(&mut cards);
     // Only one pack can be mid-reveal at a time; an older unfinished one counts as seen.
@@ -958,7 +981,7 @@ async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json
     let nums: Vec<i32> = cards.iter().map(|c| c.num).collect();
     let sets = award_sets(&mut tx, user.id, pack, &nums).await?;
     sqlx::query(
-        "update user_packs set sealed = sealed - 1 + $3, boosted = boosted - $6, opened = opened + 1, pity_m = $4,
+        "update user_packs set sealed = sealed - 1 + $3, boosted = boosted - $6, mythic = mythic - $7, opened = opened + 1, pity_m = $4,
          pity_l = $5 where user_id = $1 and pack_id = $2",
     )
     .bind(user.id)
@@ -967,6 +990,7 @@ async fn open(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json
     .bind(pity.m as i32)
     .bind(pity.l as i32)
     .bind(i32::from(boosted))
+    .bind(i32::from(mythic))
     .execute(&mut *tx)
     .await?;
     sqlx::query("update openings set sets = $2 where id = $1").bind(opening_id).bind(&sets).execute(&mut *tx).await?;
@@ -1217,6 +1241,39 @@ async fn craft(State(s): State<Shared>, user: User, key: IdemKey) -> ApiResult<R
         .execute(&mut *tx)
         .await?;
     crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Crafted, 1).await?;
+    let out = load_state(&s, &mut tx, user.id).await?;
+    idem_end(&mut tx, user.id, &key, &out).await?;
+    tx.commit().await?;
+    Ok(Json(out).into_response())
+}
+
+/// What a Mythic pack costs in parts.
+pub(crate) const MYTHIC_PACK_COST: i32 = 10_000;
+
+/// Spends parts on a Mythic pack: a boosted pack holding three Mythics.
+async fn craft_mythic(State(s): State<Shared>, user: User, key: IdemKey) -> ApiResult<Response> {
+    let mut tx = s.db.begin().await?;
+    if let Some(done) = idem_begin(&mut tx, user.id, &key, "craft_mythic").await? {
+        return Ok(done);
+    }
+    reason(&mut tx, "craft mythic").await?;
+    lock_user(&mut tx, user.id).await?;
+    let paid = sqlx::query("update users set parts = parts - $2 where id = $1 and parts >= $2")
+        .bind(user.id)
+        .bind(MYTHIC_PACK_COST)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if paid == 0 {
+        return Err(err(StatusCode::CONFLICT, "not_enough_parts"));
+    }
+    let p = s.catalog.claimable().id();
+    lock_user_pack(&mut tx, user.id, p).await?;
+    sqlx::query("update user_packs set sealed = sealed + 1, boosted = boosted + 1, mythic = mythic + 1 where user_id = $1 and pack_id = $2")
+        .bind(user.id)
+        .bind(p)
+        .execute(&mut *tx)
+        .await?;
     let out = load_state(&s, &mut tx, user.id).await?;
     idem_end(&mut tx, user.id, &key, &out).await?;
     tx.commit().await?;

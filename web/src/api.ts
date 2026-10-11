@@ -60,6 +60,8 @@ export interface PackState {
   sealed: number;
   /** How many of the sealed packs are boosted (they have their own stack). */
   boosted: number;
+  /** How many of the boosted packs are Mythic packs (three Mythics each). */
+  mythic: number;
   opened: number;
   pity: { m: number; l: number };
 }
@@ -350,8 +352,8 @@ export const api = {
   claim: () => call<State>("POST", "/api/claim"),
   /** Pick up a pack: its cards are decided now; only the best rarity comes back, for the glow. */
   /** `boosted` picks the kind: true for a boosted pack, false for a standard one; left out, boosted goes first. */
-  hand: (pack: string, boosted?: boolean) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack, boosted }),
-  open: (pack: string, boosted?: boolean) => act<{ opening: Opening; state: State; streakReward: boolean }>("/api/open", { pack, boosted }),
+  hand: (pack: string, boosted?: boolean, mythic = false) => call<{ best: Tier; boosted: boolean }>("POST", "/api/hand", { pack, boosted, mythic }),
+  open: (pack: string, boosted?: boolean, mythic = false) => act<{ opening: Opening; state: State; streakReward: boolean }>("/api/open", { pack, boosted, mythic }),
   progress: (id: number, revealed: number) => call<void>("POST", `/api/openings/${id}/progress`, { revealed }),
   collection: (pack: string) => call<Collection>("GET", `/api/collection/${encodeURIComponent(pack)}`),
   /** Scrap extra copies of one team (the first copy is always kept). */
@@ -391,6 +393,8 @@ export const api = {
   claimMission: (id: string) => call<State>("POST", `/api/missions/${encodeURIComponent(id)}/claim`),
   /** Spend parts on a boosted pack. */
   craft: () => act<State>("/api/craft"),
+  /** Spend 10,000 parts on a Mythic pack (three Mythics). */
+  craftMythic: () => act<State>("/api/craft/mythic"),
   recipe: (pack: string) => call<Recipe>("GET", `/packs/${encodeURIComponent(pack)}.json`),
   dev: {
     demo: (on: boolean) => call<State>("POST", "/api/dev/demo", { on }),

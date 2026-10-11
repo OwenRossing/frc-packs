@@ -113,7 +113,7 @@ async fn profile(State(s): State<Shared>, user: User, Path((name, pack)): Path<(
         .bind(pack.id())
         .fetch_one(&mut *c)
         .await?;
-    let boosted: i32 = sqlx::query_scalar("select coalesce((select boosted from user_packs where user_id = $1 and pack_id = $2), 0)")
+    let boosted: i32 = sqlx::query_scalar("select coalesce((select boosted - mythic from user_packs where user_id = $1 and pack_id = $2), 0)")
         .bind(id)
         .bind(pack.id())
         .fetch_one(&mut *c)

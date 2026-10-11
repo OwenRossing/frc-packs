@@ -810,6 +810,38 @@ async fn scrap_extras_for_parts_and_craft_a_boosted_pack() {
     assert_eq!(h.body["boosted"], false);
 }
 
+#[tokio::test]
+async fn a_mythic_pack_costs_10000_parts_and_holds_three_mythics() {
+    let (app, db) = need_db!(setup(true));
+    let (c, st) = player(&app, &db).await;
+    let name = st["account"]["username"].as_str().unwrap().to_string();
+    let id: uuid::Uuid = sqlx::query_scalar("select id from users where username = $1").bind(&name).fetch_one(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/craft/mythic", Some(&c), Some(json!({}))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::CONFLICT, Some("not_enough_parts")));
+    sqlx::query("update users set parts = 10000 where id = $1").bind(id).execute(&db).await.unwrap();
+    let r = call(&app, "POST", "/api/craft/mythic", Some(&c), Some(json!({}))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["parts"], 0);
+    let p = r.body["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!((p["boosted"].as_i64(), p["mythic"].as_i64()), (Some(st["packs"][0]["boosted"].as_i64().unwrap_or(0) + 1), Some(1)));
+    // It is never opened by accident: a plain open takes a standard pack, not the Mythic one.
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26" }))).await;
+    assert_eq!(o.status, StatusCode::OK, "{}", o.body);
+    let p = o.body["state"]["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!(p["mythic"], 1, "the Mythic pack is still there");
+    let h = call(&app, "POST", "/api/hand", Some(&c), Some(json!({ "pack": "cmp26", "mythic": true }))).await;
+    assert_eq!(h.body["best"], "mythic");
+    let o = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26", "mythic": true }))).await;
+    assert_eq!(o.status, StatusCode::OK, "{}", o.body);
+    let cards = o.body["opening"]["cards"].as_array().unwrap();
+    assert_eq!(cards.len(), 5);
+    assert!(cards.iter().filter(|c| c["tier"] == "mythic").count() >= 3);
+    let p = o.body["state"]["packs"].as_array().unwrap().iter().find(|p| p["id"] == "cmp26").unwrap();
+    assert_eq!(p["mythic"], 0);
+    let again = call(&app, "POST", "/api/open", Some(&c), Some(json!({ "pack": "cmp26", "mythic": true }))).await;
+    assert_eq!(again.body["error"], "no_packs");
+}
+
 fn rand_serial() -> i32 {
     (uuid::Uuid::new_v4().as_u128() % 1_000_000) as i32
 }
