@@ -8,8 +8,11 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use crate::Shared;
+use crate::accounts;
 use crate::auth::User;
+use crate::db::{get_n, key, n, pad, s};
 use crate::error::{ApiError, ApiResult};
+use crate::model::now_ms;
 
 pub const REASONS: [&str; 4] = ["username", "cheating", "harassment", "other"];
 
@@ -25,32 +28,40 @@ struct ReportReq {
     details: String,
 }
 
-async fn report(State(s): State<Shared>, user: User, Json(req): Json<ReportReq>) -> ApiResult<StatusCode> {
+async fn report(State(st): State<Shared>, user: User, Json(req): Json<ReportReq>) -> ApiResult<StatusCode> {
     if !REASONS.contains(&req.reason.as_str()) || req.details.chars().count() > 500 {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request"));
     }
-    let target: Option<uuid::Uuid> = sqlx::query_scalar("select id from users where lower(username) = lower($1)")
-        .bind(req.username.trim())
-        .fetch_optional(&s.db)
-        .await?;
-    let target = target.ok_or(ApiError::new(StatusCode::NOT_FOUND, "unknown_player"))?;
-    if target == user.id {
+    let db = &st.db;
+    let target =
+        accounts::by_name(db, &req.username).await?.ok_or(ApiError::new(StatusCode::NOT_FOUND, "unknown_player"))?;
+    if target.id == user.id {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "not_yourself"));
     }
     // Ten reports a day per player is plenty, and stops anyone flooding the admin.
-    let today: i64 = sqlx::query_scalar("select count(*) from reports where reporter = $1 and created_at > now() - interval '1 day'")
-        .bind(user.id)
-        .fetch_one(&s.db)
-        .await?;
+    let now = now_ms();
+    let today = db
+        .index("gsi2", &format!("RB#{}", user.id), None, false)
+        .await?
+        .iter()
+        .filter(|it| get_n(it, "created_at").is_some_and(|t| t > now - 86_400_000))
+        .count();
     if today >= 10 {
         return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "too_many_reports"));
     }
-    sqlx::query("insert into reports (reporter, target, reason, details) values ($1, $2, $3, $4)")
-        .bind(user.id)
-        .bind(target)
-        .bind(&req.reason)
-        .bind(req.details.trim())
-        .execute(&s.db)
-        .await?;
+    let id = db.ids("report", 1).await?;
+    let mut it = key(format!("REPORT#{id}"), "REPORT");
+    it.insert("id".into(), n(id));
+    it.insert("reporter".into(), s(user.id.to_string()));
+    it.insert("target".into(), s(target.id.to_string()));
+    it.insert("reason".into(), s(req.reason.clone()));
+    it.insert("details".into(), s(req.details.trim()));
+    it.insert("created_at".into(), n(now));
+    // Open reports are in the REPORTS index until resolved; a player's reports in RB#<them>.
+    it.insert("gsi1pk".into(), s("REPORTS"));
+    it.insert("gsi1sk".into(), s(pad(now, 15)));
+    it.insert("gsi2pk".into(), s(format!("RB#{}", user.id)));
+    it.insert("gsi2sk".into(), s(pad(now, 15)));
+    db.put(it).await?;
     Ok(StatusCode::NO_CONTENT)
 }

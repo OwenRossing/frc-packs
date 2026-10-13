@@ -1,0 +1,157 @@
+# FRC Packs on AWS: DynamoDB for the data, Lambda for the API, S3 + CloudFront for the site.
+# Deploy with ./deploy.sh (see docs/aws.md). One stack, on-demand billing everywhere, so an idle site costs close to nothing.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: FRC Packs (DynamoDB + Lambda + S3 + CloudFront)
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: packs.owenrossing.me
+  CertificateArn:
+    Type: String
+    Description: ACM certificate for DomainName, created in us-east-1 (CloudFront only accepts that region).
+  CodeBucket:
+    Type: String
+    Description: Bucket holding the Lambda zip (deploy.sh uploads it).
+  CodeKey:
+    Type: String
+    Default: frc-packs-lambda.zip
+  AdminOnly:
+    Type: String
+    Default: "1"
+    AllowedValues: ["0", "1"]
+    Description: 1 = only admin accounts can sign in (testing mode).
+
+Resources:
+  # ---- data ----
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+        - { AttributeName: gsi1pk, AttributeType: S }
+        - { AttributeName: gsi1sk, AttributeType: S }
+        - { AttributeName: gsi2pk, AttributeType: S }
+        - { AttributeName: gsi2sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema: [{ AttributeName: gsi1pk, KeyType: HASH }, { AttributeName: gsi1sk, KeyType: RANGE }]
+          Projection: { ProjectionType: ALL }
+        - IndexName: gsi2
+          KeySchema: [{ AttributeName: gsi2pk, KeyType: HASH }, { AttributeName: gsi2sk, KeyType: RANGE }]
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification: { AttributeName: expires_at, Enabled: true }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+
+  # ---- site files ----
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig: { Name: !Sub "${AWS::StackName}-site", OriginAccessControlOriginType: s3, SigningBehavior: always, SigningProtocol: sigv4 }
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition: { StringEquals: { "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}" } }
+
+  # ---- API ----
+  FnRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: [{ Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: table
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:Scan, dynamodb:BatchGetItem, dynamodb:BatchWriteItem]
+                Resource: [!GetAtt Table.Arn, !Sub "${Table.Arn}/index/*"]
+  Fn:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      Handler: bootstrap
+      MemorySize: 512
+      Timeout: 20
+      Role: !GetAtt FnRole.Arn
+      Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          DATA_DIR: /var/task/data
+          COOKIE_SECURE: "1"
+          ADMIN_ONLY: !Ref AdminOnly
+  FnUrl:
+    Type: AWS::Lambda::Url
+    Properties: { TargetFunctionArn: !GetAtt Fn.Arn, AuthType: AWS_IAM }
+  # CloudFront reaches the function URL with a signed request (origin access control), so the URL isn't open to the world.
+  FnOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig: { Name: !Sub "${AWS::StackName}-api", OriginAccessControlOriginType: lambda, SigningBehavior: always, SigningProtocol: sigv4 }
+  FnInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Fn
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      FunctionUrlAuthType: AWS_IAM
+      SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # ---- front door ----
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Aliases: [!Ref DomainName]
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        ViewerCertificate: { AcmCertificateArn: !Ref CertificateArn, SslSupportMethod: sni-only, MinimumProtocolVersion: TLSv1.2_2021 }
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            S3OriginConfig: { OriginAccessIdentity: "" }
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+          - Id: api
+            DomainName: !Select [2, !Split ["/", !GetAtt FnUrl.FunctionUrl]]
+            CustomOriginConfig: { OriginProtocolPolicy: https-only }
+            OriginAccessControlId: !GetAtt FnOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6   # CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad   # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac   # AllViewerExceptHostHeader
+
+Outputs:
+  SiteBucketName: { Value: !Ref SiteBucket }
+  DistributionId: { Value: !Ref Distribution }
+  DistributionDomain: { Value: !GetAtt Distribution.DomainName, Description: "Point DOMAIN's CNAME here (Cloudflare proxy off)." }
+  TableName: { Value: !Ref Table }

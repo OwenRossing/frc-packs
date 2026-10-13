@@ -6,12 +6,14 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::Shared;
+use crate::accounts;
 use crate::auth::{Admin, User};
+use crate::db::{Cond, Db, DbError, Item, Tx, get_n, get_s, key, n, pad, s};
 use crate::error::{ApiError, ApiResult};
+use crate::model::upk;
 
 pub struct Edition {
     pub id: &'static str,
@@ -43,57 +45,92 @@ pub struct SpecialOut {
     pub total: i32,
 }
 
-pub async fn load(c: &mut PgConnection, user: Uuid) -> ApiResult<Vec<SpecialOut>> {
-    let rows: Vec<(i64, String, i32)> =
-        sqlx::query_as("select id, edition, serial from special_cards where user_id = $1 order by edition, serial").bind(user).fetch_all(&mut *c).await?;
-    Ok(out(rows))
+fn sp_pk(id: i64) -> String {
+    format!("SP#{id}")
 }
 
-fn out(rows: Vec<(i64, String, i32)>) -> Vec<SpecialOut> {
-    rows.into_iter()
-        .filter_map(|(id, edition, serial)| {
-            EDITIONS.iter().find(|e| e.id == edition).map(|e| SpecialOut { id, edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total })
+fn out(rows: &[Item]) -> Vec<SpecialOut> {
+    rows.iter()
+        .filter_map(|it| {
+            let edition = get_s(it, "edition")?;
+            let e = EDITIONS.iter().find(|e| e.id == edition)?;
+            Some(SpecialOut {
+                id: get_n(it, "id")?,
+                edition: e.id,
+                team: e.team,
+                name: e.name,
+                title: e.title,
+                serial: get_n(it, "serial")? as i32,
+                total: e.total,
+            })
         })
         .collect()
 }
 
+/// A player's special cards, by edition and number.
+pub async fn load(db: &Db, user: Uuid) -> ApiResult<Vec<SpecialOut>> {
+    let ids: Vec<i64> = db
+        .index("gsi2", &upk(user), None, false)
+        .await?
+        .iter()
+        .filter(|it| get_s(it, "sk").as_deref() == Some("SPECIAL"))
+        .filter_map(|it| get_n(it, "id"))
+        .collect();
+    // Read each card itself: the index can lag a moment behind a trade.
+    let rows: Vec<Item> = db.batch_get(ids.iter().map(|id| key(sp_pk(*id), "SPECIAL")).collect()).await?;
+    let mut all: Vec<Item> =
+        rows.into_iter().filter(|it| get_s(it, "owner").as_deref() == Some(user.to_string().as_str())).collect();
+    all.sort_by_key(|it| (get_s(it, "edition"), get_n(it, "serial")));
+    Ok(out(&all))
+}
+
 /// These special cards, in the order asked for.
-pub async fn by_ids(c: &mut PgConnection, ids: &[i64]) -> ApiResult<Vec<SpecialOut>> {
+pub async fn by_ids(db: &Db, ids: &[i64]) -> ApiResult<Vec<SpecialOut>> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
-    let rows: Vec<(i64, String, i32)> =
-        sqlx::query_as("select id, edition, serial from special_cards where id = any($1)").bind(ids).fetch_all(&mut *c).await?;
-    let mut all = out(rows);
+    let rows = db.batch_get(ids.iter().map(|id| key(sp_pk(*id), "SPECIAL")).collect()).await?;
+    let mut all = out(&rows);
     all.sort_by_key(|s| ids.iter().position(|i| *i == s.id).unwrap_or(usize::MAX));
     Ok(all)
 }
 
 /// How many of these special cards the player owns (for checking an offer).
-pub async fn owned_count(c: &mut PgConnection, ids: &[i64], user: Uuid, lock: bool) -> ApiResult<i64> {
+pub async fn owned_count(db: &Db, ids: &[i64], user: Uuid) -> ApiResult<usize> {
     if ids.is_empty() {
         return Ok(0);
     }
-    let lock = if lock { " for update" } else { "" };
-    let ids: Vec<i64> = sqlx::query_scalar(&format!("select id from special_cards where id = any($1) and user_id = $2{lock}"))
-        .bind(ids)
-        .bind(user)
-        .fetch_all(&mut *c)
-        .await?;
-    Ok(ids.len() as i64)
+    let rows = db.batch_get(ids.iter().map(|id| key(sp_pk(*id), "SPECIAL")).collect()).await?;
+    Ok(rows.iter().filter(|it| get_s(it, "owner").as_deref() == Some(user.to_string().as_str())).count())
+}
+
+/// Moves special cards in a trade's transaction; each must still belong to `from` (label "special").
+pub fn move_all(tx: &mut Tx, ids: &[i64], from: Uuid, to: Uuid) {
+    for id in ids {
+        tx.update(
+            "special",
+            &sp_pk(*id),
+            "SPECIAL",
+            Cond::new("SET #o = :to, gsi2pk = :tpk")
+                .name("#o", "owner")
+                .val(":to", s(to.to_string()))
+                .val(":tpk", s(upk(to)))
+                .val(":from", s(from.to_string())),
+            Some("#o = :from"),
+        );
+    }
 }
 
 async fn mine(State(s): State<Shared>, user: User) -> ApiResult<Json<Vec<SpecialOut>>> {
-    let mut c = s.db.acquire().await?;
-    Ok(Json(load(&mut c, user.id).await?))
+    Ok(Json(load(&s.db, user.id).await?))
 }
 
-async fn theirs(State(s): State<Shared>, _user: User, Path(name): Path<String>) -> ApiResult<Json<Vec<SpecialOut>>> {
-    let mut c = s.db.acquire().await?;
-    let id: Option<Uuid> =
-        sqlx::query_scalar("select id from users where lower(username) = lower($1) and not disabled").bind(name.trim()).fetch_optional(&mut *c).await?;
-    let id = id.ok_or(ApiError::new(StatusCode::NOT_FOUND, "unknown_player"))?;
-    Ok(Json(load(&mut c, id).await?))
+async fn theirs(State(st): State<Shared>, _user: User, Path(name): Path<String>) -> ApiResult<Json<Vec<SpecialOut>>> {
+    let p = accounts::by_name(&st.db, &name)
+        .await?
+        .filter(|p| !p.disabled)
+        .ok_or(ApiError::new(StatusCode::NOT_FOUND, "unknown_player"))?;
+    Ok(Json(load(&st.db, p.id).await?))
 }
 
 #[derive(Deserialize)]
@@ -104,29 +141,48 @@ struct GrantReq {
     serial: Option<i32>,
 }
 
-/// Gives a player a copy of an edition.
-async fn grant(State(s): State<Shared>, _admin: Admin, Json(req): Json<GrantReq>) -> ApiResult<Json<SpecialOut>> {
+/// Gives a player a copy of an edition. Each number exists once: it's claimed with a write that fails if it's taken.
+async fn grant(State(st): State<Shared>, _admin: Admin, Json(req): Json<GrantReq>) -> ApiResult<Json<SpecialOut>> {
     let Some(e) = EDITIONS.iter().find(|e| e.id == req.edition) else {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown_edition"));
     };
-    let mut tx = s.db.begin().await?;
-    sqlx::query("select pg_advisory_xact_lock(hashtext($1))").bind(e.id).execute(&mut *tx).await?;
-    let to: Option<Uuid> =
-        sqlx::query_scalar("select id from users where lower(username) = lower($1) and not disabled").bind(req.username.trim()).fetch_optional(&mut *tx).await?;
-    let to = to.ok_or(ApiError::new(StatusCode::NOT_FOUND, "unknown_player"))?;
+    let db = &st.db;
+    let to = accounts::by_name(db, &req.username)
+        .await?
+        .filter(|p| !p.disabled)
+        .ok_or(ApiError::new(StatusCode::NOT_FOUND, "unknown_player"))?;
+    let taken: Vec<i32> = db
+        .query(&format!("SPSER#{}", e.id), "")
+        .await?
+        .iter()
+        .filter_map(|it| get_n(it, "serial"))
+        .map(|v| v as i32)
+        .collect();
     let serial = match req.serial {
         Some(n) => n,
-        None => sqlx::query_scalar::<_, i32>("select coalesce(max(serial), 0) + 1 from special_cards where edition = $1").bind(e.id).fetch_one(&mut *tx).await?,
+        None => (1..=e.total).find(|n| !taken.contains(n)).unwrap_or(e.total + 1),
     };
     if serial < 1 || serial > e.total {
         return Err(ApiError::new(StatusCode::CONFLICT, "edition_full"));
     }
-    let taken: bool = sqlx::query_scalar("select exists (select 1 from special_cards where edition = $1 and serial = $2)").bind(e.id).bind(serial).fetch_one(&mut *tx).await?;
-    if taken {
-        return Err(ApiError::new(StatusCode::CONFLICT, "serial_taken"));
+    let id = db.ids("special", 1).await?;
+    let mut num = key(format!("SPSER#{}", e.id), pad(i64::from(serial), 6));
+    num.insert("serial".into(), n(serial));
+    num.insert("id".into(), n(id));
+    let mut card = key(sp_pk(id), "SPECIAL");
+    card.insert("id".into(), n(id));
+    card.insert("edition".into(), s(e.id));
+    card.insert("serial".into(), n(serial));
+    card.insert("owner".into(), s(to.id.to_string()));
+    card.insert("gsi2pk".into(), s(upk(to.id)));
+    card.insert("gsi2sk".into(), s(format!("SP#{}#{}", e.id, pad(i64::from(serial), 6))));
+    let mut tx = Tx::new();
+    tx.put_if("serial_taken", num, Some(Cond::absent()));
+    tx.put_if("", card, Some(Cond::absent()));
+    match tx.commit(db).await {
+        Ok(()) => {}
+        Err(DbError::Conflict("serial_taken")) => return Err(ApiError::new(StatusCode::CONFLICT, "serial_taken")),
+        Err(err) => return Err(err.into()),
     }
-    let new_id: i64 =
-        sqlx::query_scalar("insert into special_cards (edition, serial, user_id) values ($1, $2, $3) returning id").bind(e.id).bind(serial).bind(to).fetch_one(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(Json(SpecialOut { id: new_id, edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total }))
+    Ok(Json(SpecialOut { id, edition: e.id, team: e.team, name: e.name, title: e.title, serial, total: e.total }))
 }

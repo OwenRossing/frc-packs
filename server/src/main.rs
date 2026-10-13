@@ -1,7 +1,6 @@
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
 fn flag(name: &str) -> bool {
@@ -11,7 +10,8 @@ fn flag(name: &str) -> bool {
 const USAGE: &str = "usage:
   frc-packs-server                         run the site
   frc-packs-server create-admin [name]     make the admin account (default name: admin) and print its password
-  frc-packs-server reset-password <name>   give an account a new password and print it";
+  frc-packs-server reset-password <name>   give an account a new password and print it
+  frc-packs-server ready-check             send \"free pack ready\" notifications once (for a schedule on AWS)";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,17 +27,19 @@ async fn main() -> anyhow::Result<()> {
         None => true,
         Some("create-admin") => args.len() <= 2,
         Some("reset-password") => args.len() == 2,
+        Some("ready-check") => args.len() == 1,
         _ => false,
     };
     if !known {
         eprintln!("{USAGE}");
         std::process::exit(2);
     }
-    let url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("set DATABASE_URL, e.g. postgres://frc:frc@localhost/frcpacks"))?;
+    // The DynamoDB table: on AWS, credentials and region come from the environment (the Lambda's role); locally, set
+    // DYNAMODB_ENDPOINT to a local DynamoDB (it makes the table itself).
+    let table = std::env::var("TABLE_NAME").unwrap_or_else(|_| "frc-packs".into());
     let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "../data".into()));
-    let db = PgPoolOptions::new().max_connections(16).connect(&url).await?;
-    frc_packs_server::migrate(&db).await?;
+    let db = frc_packs_server::db::connect(&table).await;
+    frc_packs_server::prepare(&db).await?;
     match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         [] => serve(db, data_dir).await,
         ["create-admin", ref rest @ ..] if rest.len() <= 1 => {
@@ -63,11 +65,12 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        ["ready-check"] => frc_packs_server::push::ready_check(&db).await,
         _ => unreachable!("checked above"),
     }
 }
 
-async fn serve(db: sqlx::PgPool, data_dir: PathBuf) -> anyhow::Result<()> {
+async fn serve(db: frc_packs_server::db::Db, data_dir: PathBuf) -> anyhow::Result<()> {
     let bind = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let web_dir = PathBuf::from(std::env::var("WEB_DIR").unwrap_or_else(|_| "../web/dist".into()));
     let cfg = frc_packs_server::Config {
@@ -75,9 +78,13 @@ async fn serve(db: sqlx::PgPool, data_dir: PathBuf) -> anyhow::Result<()> {
         web_dir: web_dir.join("index.html").exists().then_some(web_dir),
         dev_tools: flag("DEV_TOOLS"),
         cookie_secure: flag("COOKIE_SECURE"),
+        admin_only: flag("ADMIN_ONLY"),
     };
     if cfg.dev_tools {
         tracing::warn!("DEV_TOOLS is on: anyone can give themselves packs and demo luck");
+    }
+    if cfg.admin_only {
+        tracing::warn!("ADMIN_ONLY is on: only admin accounts can sign in");
     }
     let app = frc_packs_server::app(db.clone(), cfg)?;
     // On AWS Lambda (built with --features lambda), the same app answers Lambda's HTTP events instead of a port.

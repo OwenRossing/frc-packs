@@ -1,0 +1,53 @@
+# Builds the server for Lambda on Linux and updates AWS. Runs when you push to main, or by hand from the Actions tab.
+# One-time setup (see docs/aws.md, "Deploying from GitHub"): an IAM role GitHub can assume, stored as the repository
+# variable AWS_ROLE_ARN, plus the variables AWS_REGION and CODE_BUCKET.
+name: deploy
+on:
+  workflow_dispatch:
+    inputs:
+      what:
+        description: "What to deploy"
+        type: choice
+        options: [all, server, site]
+        default: all
+  push:
+    branches: [main]
+    paths: ["server/**", "web/**", "data/**", "deploy/aws/**"]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    if: vars.AWS_ROLE_ARN != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tools
+        run: pip install cargo-lambda
+      - name: Server tests (against a local DynamoDB)
+        if: inputs.what != 'site'
+        run: |
+          docker run -d -p 8765:8765 amazon/dynamodb-local:latest -jar DynamoDBLocal.jar -sharedDb -inMemory -port 8765
+          sleep 5
+          cd server && DYNAMODB_ENDPOINT=http://localhost:8765 AWS_REGION=us-east-1 cargo test
+      - name: Deploy
+        env:
+          CODE_BUCKET: ${{ vars.CODE_BUCKET }}
+          REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          STACK: ${{ vars.STACK || 'frc-packs' }}
+        run: ./deploy/aws/deploy.sh ${{ inputs.what || 'all' }}

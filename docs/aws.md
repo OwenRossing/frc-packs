@@ -1,62 +1,87 @@
-# Moving FRC Packs to AWS
-
-Today the site runs on one machine: the Rust server serves the site and the API, and Postgres holds the data, behind Cloudflare Tunnel. This is how it moves to AWS when it outgrows that, and what's already in place for it.
-
-## The shape
+# FRC Packs on AWS
 
 ```
-             CloudFront (packs.<domain>)
-              ├── /api/*  ──►  Lambda (the same Rust server, built with --features lambda)  ──►  RDS Proxy  ──►  Postgres (Aurora Serverless v2 or RDS)
+             CloudFront (packs.owenrossing.me)
+              ├── /api/*  ──►  Lambda (the Rust server, built with --features lambda)  ──►  DynamoDB (one table)
               └── everything else  ──►  S3 (the built site, robot photos, pack recipes)
 ```
 
-- **S3 + CloudFront** serve everything that isn't the API. Nothing about the site changes: it already asks for `/photos/…`, `/packs/…` and `/api/…` on its own domain, so one CloudFront distribution with two behaviors covers it.
-- **Lambda** runs the unchanged server. `cargo build --release --features lambda` adds the Lambda runtime; when Lambda starts the binary it answers Lambda's HTTP events instead of opening a port. Locally and on the laptop it still runs as a normal server.
-- **Postgres stays.** See "Why not DynamoDB" below.
+Everything is pay-per-use, so a quiet site costs close to nothing: DynamoDB on-demand, Lambda per request, S3 and
+CloudFront per byte. The data layout and how cheating is kept out are in [dynamodb.md](dynamodb.md).
 
-## What's already done
+The whole setup is one CloudFormation stack, `deploy/aws/template.yaml`, and `deploy/aws/deploy.sh` does each kind of
+change in one command.
 
-- `--features lambda` (server/Cargo.toml, server/src/main.rs): the same binary runs on Lambda.
-- Sign-in rate limiting reads the visitor's IP from CloudFront (`CloudFront-Viewer-Address`) as well as Cloudflare.
-- `deploy/aws/sync-static.sh <bucket>` uploads the site, photos and recipes to S3 with the same cache rules the server uses.
-- The server doesn't need to serve the site (it already skips it when `WEB_DIR` has no build), so on Lambda it's API only.
+## What you need
 
-## Steps
+- The AWS CLI, signed in to the account (`aws configure sso`, or `aws sso login` once it's set up).
+- Rust with `cargo lambda` (`pip install cargo-lambda`), which builds the server for Lambda's ARM Linux.
+- Node 20+ for the site.
+- An HTTPS certificate for the domain in **us-east-1** (CloudFront only takes certificates from there).
 
-1. **Database.** Create Aurora Serverless v2 (Postgres) or a small RDS Postgres, and an RDS Proxy in front of it (Lambda opens many short connections; the proxy pools them). Move the data with `pg_dump`/`pg_restore` from the laptop's nightly backup (see deploy/README.md, Backups). The server runs its own migrations on start.
-2. **Lambda.** Build for Lambda's Linux:
+## First time
+
+1. **Certificate.** In AWS Certificate Manager (region us-east-1), request a public certificate for
+   `packs.owenrossing.me` with DNS validation. ACM shows a CNAME record; add it in Cloudflare (DNS only, proxy off).
+   When the certificate says Issued, copy its ARN.
+2. **A bucket for the server's code.** Any private bucket, e.g. `aws s3 mb s3://frc-packs-code-<something> --region us-east-1`.
+3. **Settings.** Make `deploy/aws/.env` (it isn't committed):
    ```sh
-   cargo install cargo-lambda
-   cd server && cargo lambda build --release --features lambda --arm64
+   STACK=frc-packs
+   REGION=us-east-1
+   DOMAIN=packs.owenrossing.me
+   CERT_ARN=arn:aws:acm:us-east-1:...:certificate/...
+   CODE_BUCKET=frc-packs-code-<something>
+   ADMIN_ONLY=1          # only admin accounts can sign in while you test; set 0 to open it up
    ```
-   Make a function from `target/lambda/frc-packs-server/bootstrap` (runtime `provided.al2023`, arm64, 512 MB is plenty), in the database's VPC. Environment: `DATABASE_URL` (through the proxy), `DATA_DIR=/var/task/data` with `data/packs` bundled into the zip (the server reads the recipes; it doesn't need the photos), `COOKIE_SECURE=1`. Give it a function URL, or an API Gateway HTTP API.
-3. **S3.** Make a private bucket; run `deploy/aws/sync-static.sh <bucket>` after each site build.
-4. **CloudFront.** One distribution for `packs.<domain>`: default behavior → the S3 bucket (origin access control), default root object `index.html`; behavior `/api/*` → the Lambda URL with caching off and all headers, cookies and query strings forwarded. Point the domain at CloudFront (if DNS stays on Cloudflare, a CNAME with the proxy off).
-5. **Cut over** the same way as moving machines in deploy/README.md: take the old site offline, take a final backup, restore it into AWS, then switch DNS. Same hostname, so everyone stays signed in and keeps their cards.
+4. **Deploy.**
+   ```sh
+   ./deploy/aws/deploy.sh server   # builds the server and uploads it
+   ./deploy/aws/deploy.sh infra    # makes the stack: table, Lambda, bucket, CloudFront (CloudFront takes a few minutes)
+   ./deploy/aws/deploy.sh site     # builds the site and uploads it
+   ```
+   `infra` prints the CloudFront address. In Cloudflare, point `packs` at it with a CNAME, **DNS only (proxy off)**.
+5. **The admin account.** Run the server's command against the AWS table from your computer:
+   ```sh
+   cd server && TABLE_NAME=<the TableName output> AWS_REGION=us-east-1 cargo run -- create-admin
+   ```
+   It prints the password once.
 
-Things to know on Lambda:
-- Failed sign-in counting lives in memory, so each warm Lambda counts separately. It still slows guessing; for a hard limit, add AWS WAF rate rules on `/api/login`.
-- A cold start is roughly a quarter second (Rust is quick; most of it is the database connection).
-- Nightly backups become RDS automated backups; the systemd backup timer doesn't come along.
-- "Free pack ready" notifications come from a once-a-minute check that runs inside the server. Lambda only runs while answering requests, so on Lambda that check needs an EventBridge schedule (or a small always-on task) instead. Trade notifications are sent while answering the request and work as is.
+## Every change after that
 
-## Why not DynamoDB
+| Changed | Run |
+| --- | --- |
+| The site (`web/`), photos or pack recipes | `./deploy/aws/deploy.sh site` |
+| The server (`server/`) | `./deploy/aws/deploy.sh server` |
+| Both | `./deploy/aws/deploy.sh all` |
+| The template, or `ADMIN_ONLY` | `./deploy/aws/deploy.sh infra` |
 
-DynamoDB would mean rewriting the server's data layer, not configuring it. The game leans on things Postgres does in one transaction:
+Each takes about a minute. Nothing is down while it runs: Lambda switches to the new code between requests, and
+CloudFront's cache is cleared after the site upload.
 
-- **Opening a pack** mints five serial numbers (a counter per team), writes five cards, updates pity, checks division sets and can award bonus packs, all or nothing.
-- **Trades** check that both players still hold every card, swap owners and call off other offers that promised those cards, all or nothing.
-- **Scrapping** picks "every extra copy except the first" with a window query.
-- **The binder, admin panel and stats** are joins and counts.
+## Things to know
 
-DynamoDB can do some of this (`TransactWriteItems` handles up to 100 items, atomic counters work for serials), but each feature needs its own key design and access patterns, the admin queries become scans or extra indexes, and a schema change later is a migration script, not a SQL file. Estimate two to four weeks of rewrite and retesting for no gain at this size.
+- **Admin-only mode.** With `ADMIN_ONLY=1` nobody but admin accounts can sign in, sign up or play. Flip it to `0` and
+  run `deploy.sh infra` to open the site.
+- **Free-pack notifications.** On a normal server a loop checks every minute. Lambda only runs while answering
+  requests, so that check needs a schedule: an EventBridge rule that runs the function's `ready-check` (not set up
+  yet; trade notifications work without it).
+- **Sign-in limits** count failed guesses in memory, so each warm Lambda counts separately. It still slows guessing; for
+  a hard cap, add AWS WAF rate rules on `/api/login`.
+- **Backups.** The table has point-in-time recovery on: it can be restored to any second in the last 35 days.
+- **Cost.** At a team's scale: DynamoDB on-demand is cents a month, Lambda and CloudFront stay in or near the free tier,
+  and S3 is under a dollar. Check the AWS pricing pages before relying on that.
 
-Aurora Serverless v2 gives the AWS-managed, scale-to-demand part without the rewrite: it scales with load, and the code stays as it is. DynamoDB starts to pay off at millions of players or when you want per-request pricing near zero at idle; neither is the case for a team's card game.
+## Deploying from GitHub
 
-## Rough cost (us-east-1, small team)
+`.github/workflows/deploy.yml` does the same on a Linux machine whenever you push to `main` (or from the Actions tab):
+it runs the server tests against a local DynamoDB first, and only then updates AWS. This is also the reliable way to
+build the Lambda package: building it on Windows needs Zig, which can be fussy there.
 
-- Lambda + API Gateway/function URL: likely free tier, a few dollars at most.
-- S3 + CloudFront: under a dollar a month for photos and the site.
-- The database is the main cost. Aurora Serverless v2 held at 0.5 ACU is roughly $45 a month; it can also pause to zero when idle, but the first request after a pause waits several seconds. A `db.t4g.micro` RDS Postgres is about $12 a month plus storage. RDS Proxy bills for at least 2 database vCPUs, about $22 a month. For a small community, plain RDS without the proxy, with the Lambda's concurrency capped, is the cheap option.
+One-time setup:
 
-These are list prices as of 2026; check the AWS pricing pages before deciding.
+1. In AWS IAM, add GitHub as an identity provider (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`).
+2. Make a role that `repo:OwenRossing/frc-packs:ref:refs/heads/main` can assume, allowed to update the stack, the
+   function, the code bucket and the site bucket, and to clear the CloudFront cache.
+3. In the repository's Settings → Secrets and variables → Actions → Variables, set `AWS_ROLE_ARN`, `CODE_BUCKET`
+   and (if not us-east-1) `AWS_REGION`. Until `AWS_ROLE_ARN` is set the workflow does nothing.

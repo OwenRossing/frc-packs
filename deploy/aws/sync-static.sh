@@ -18,4 +18,5 @@ aws s3 sync "$repo/web/dist/" "s3://$bucket/" --exclude "assets/*" --cache-contr
   --exclude "photos/*" --exclude "packs/*"
 # /admin is admin.html (the server routes it; on S3 it needs its own key).
 aws s3 cp "$repo/web/dist/admin.html" "s3://$bucket/admin" --content-type text/html --cache-control "no-cache"
+aws s3 cp "$repo/web/dist/privacy.html" "s3://$bucket/privacy" --content-type text/html --cache-control "no-cache" 2>/dev/null || true
 echo "Uploaded to s3://$bucket. Invalidate CloudFront if pages look stale: aws cloudfront create-invalidation --distribution-id <id> --paths '/*'"
