@@ -1273,3 +1273,50 @@ body.has-notice .app > .top { top: calc(36px + env(safe-area-inset-top)); }
 .notice-box h2 { margin: 0; font: 400 34px var(--display); color: #ff6b78; }
 .notice-box p { margin: 0; font-size: 18px; line-height: 1.4; color: var(--foam, #eaf7f5); }
 .notice-time { font: 400 26px var(--display); color: #ffd34d; }
+
+/* ---------- Card layout, every tier ----------
+   Pills sit on the frame (team, name and EPA on top; stars and serial on the bottom), the robot photo and the champs box
+   share the same side margin, and the photo takes whatever height is left so the gaps match on every card. */
+:root { --dam: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cdefs%3E%3Cfilter id='d' x='-30%25' y='-30%25' width='160%25' height='160%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.005 0.02' numOctaves='3' seed='11' result='n'/%3E%3CfeDisplacementMap in='SourceGraphic' in2='n' scale='170' xChannelSelector='R' yChannelSelector='G'/%3E%3C/filter%3E%3Cpattern id='p' width='600' height='26' patternUnits='userSpaceOnUse'%3E%3Crect width='600' height='26' fill='%2316313a'/%3E%3Crect y='0' width='600' height='5' fill='%23dcecf0'/%3E%3Crect y='7' width='600' height='4' fill='%236fa3b2'/%3E%3Crect y='13' width='600' height='5' fill='%230c2027'/%3E%3Crect y='19' width='600' height='2' fill='%233cffdc' opacity='.6'/%3E%3Crect y='22' width='600' height='3' fill='%23a9c9d3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect x='-200' y='-200' width='1000' height='1000' fill='url(%23p)' filter='url(%23d)'/%3E%3C/svg%3E"); }
+.card .front { padding: calc(var(--cw) * .088) calc(var(--cw) * .0215); }
+.card[data-tier="common"] { --ring: #dbe5ea; --pill: rgba(12,26,34,.9); --acc: #e8f1f5; --acc2: #ffffff; --pane: linear-gradient(180deg, #1d3039, #0e1c23); }
+.card[data-tier="uncommon"] { --ring: #a8f0e2; --pill: rgba(4,36,38,.9); --acc: #3cffdc; --acc2: #d4fff6; --pane: linear-gradient(180deg, #0f3b3f, #072226); }
+.card[data-tier="rare"] { --ring: #ffd884; --pill: rgba(40,26,4,.9); --acc: #ffd884; --acc2: #fff0c4; --pane: linear-gradient(180deg, #3a2a0a, #1d1404); }
+.card[data-tier="legendary"] { --ring: #d7b8ff; --pill: rgba(28,12,64,.9); --acc: #d7b8ff; --acc2: #ffffff; --pane: linear-gradient(180deg, #2c1760, #150a38); }
+.card[data-tier="mythic"] { --ring: #9fe9de; --pill: rgba(5,26,36,.9); --acc: #3cffdc; --acc2: #ffd884; --pane: linear-gradient(180deg, #0a2a35, #05161d); }
+.inner.v2 { background: var(--pane); padding: 0; gap: 0; display: flex; flex-direction: column; }
+.inner.v2 .fwrap { position: relative; flex: 1 1 0; min-height: 0; display: flex; margin: calc(var(--cw) * .05) calc(var(--cw) * .04) 0; }
+.inner.v2 .fphoto { flex: 1; margin: 0; aspect-ratio: auto; height: auto; box-sizing: border-box; border: calc(var(--cw) * .014) solid var(--ring); border-radius: calc(var(--cw) * .03); overflow: hidden; background: var(--pane);
+  box-shadow: 0 0 calc(var(--cw) * .06) var(--glow), 0 calc(var(--cw) * .03) calc(var(--cw) * .06) rgba(0,0,0,.6); }
+.inner.v2 .fphoto .ph { object-fit: cover; object-position: 50% 100%; }
+.inner.v2 .fphoto .ph-bg { display: none; }
+.inner.v2 .ph-fallback { position: absolute; inset: 0; width: 100%; height: 100%; }
+.card[data-tier="mythic"] .fphoto { border-color: transparent; background: var(--dam) 40% 20% / 260px border-box; }
+.inner.v2 .loc { position: absolute; bottom: calc(var(--cw) * .02); z-index: 5; display: inline-flex; align-items: center; justify-content: center; height: calc(var(--cw) * .05); padding: 0 calc(var(--cw) * .026);
+  background: var(--pill); box-shadow: 0 0 0 calc(var(--cw) * .005) var(--ring); border-radius: 99px; font: 700 calc(var(--cw) * .03) / 1 var(--body); color: #fff; letter-spacing: .04em; white-space: nowrap; }
+.inner.v2 .loc.l { left: calc(var(--cw) * .02); max-width: 66%; overflow: hidden; text-overflow: ellipsis; display: block; line-height: calc(var(--cw) * .05); padding-top: 0; }
+.inner.v2 .loc.r { right: calc(var(--cw) * .02); }
+.inner.v2 .crest { left: 50%; top: 0; z-index: 6; transform: translate(-50%, -55%); background: var(--pill); color: var(--acc); padding: calc(var(--cw) * .008) calc(var(--cw) * .04); line-height: 1.15;
+  box-shadow: 0 0 0 calc(var(--cw) * .008) var(--ring), 0 0 calc(var(--cw) * .05) var(--glow), 0 2px 4px rgba(0,0,0,.5); }
+.card[data-tier="mythic"] .inner.v2 .crest { background: linear-gradient(rgba(5,26,36,.82), rgba(5,26,36,.82)), var(--dam) 60% 50% / 260px; }
+.inner.v2 .fine2 { flex: none; margin: calc(var(--cw) * .014) calc(var(--cw) * .04); text-align: center; font: 500 calc(var(--cw) * .0155) / 1.2 var(--body); letter-spacing: .02em; color: rgba(255,255,255,.5); }
+.inner.v2 .moves { flex: none; margin: 0 calc(var(--cw) * .04) calc(var(--cw) * .04); padding: calc(var(--cw) * .008) calc(var(--cw) * .035); background: rgba(4,16,22,.62); border: 1px solid rgba(255,255,255,.18); border-radius: calc(var(--cw) * .03); }
+.inner.v2 .mv span, .inner.v2 .mv b { color: #fff; }
+.inner.v2 .mv { border-color: rgba(255,255,255,.14); }
+.inner.v2 .mv i { background: var(--acc2); }
+.ttb, .ftb { position: absolute; left: calc(var(--cw) * .045); right: calc(var(--cw) * .045); z-index: 6; pointer-events: none; }
+.ttb { top: calc(var(--cw) * .02); display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: calc(var(--cw) * .02); }
+.ftb { bottom: calc(var(--cw) * .02); display: flex; justify-content: space-between; align-items: center; }
+.ttb > span, .ftb > span { display: inline-flex; align-items: center; justify-content: center; gap: .35em; height: calc(var(--cw) * .05); padding: 0 calc(var(--cw) * .028); background: var(--pill); box-shadow: 0 0 0 calc(var(--cw) * .005) var(--ring);
+  border-radius: 99px; line-height: 1; white-space: nowrap; overflow: hidden; }
+.ttb > span { font-family: var(--display); font-size: calc(var(--cw) * .043); color: #fff; }
+.ttb small { font: 700 calc(var(--cw) * .026) / 1 var(--body); letter-spacing: .06em; opacity: .85; }
+.ttb .a { justify-self: start; color: var(--acc2); }
+.ttb .c { justify-self: end; color: var(--acc); }
+.ttb .nmp { justify-self: center; max-width: calc(var(--cw) * .46); font-size: calc(var(--cw) * .043 * var(--nl, 1)); display: block; line-height: calc(var(--cw) * .05); text-overflow: ellipsis; }
+.ftb > span { font-family: var(--body); font-weight: 700; }
+.ftb .sn { font-family: var(--display); font-size: calc(var(--cw) * .034); color: #e9f6f4; letter-spacing: .04em; }
+.ftb .rar { font-size: calc(var(--cw) * .038); color: var(--acc); letter-spacing: .06em; }
+.ftb .sn.low { color: #ffd34d; text-shadow: 0 0 8px rgba(255,211,77,.7); }
+.ftb .sn.match { color: var(--tide); text-shadow: 0 0 8px rgba(39,211,195,.8); }
+.card[data-tier="mythic"] .inner.v2::after { display: none; }
