@@ -1,0 +1,16 @@
+/* Battler robot card: the FRC Packs card look (frame, pills, photo window, dark panel), laid out for the game.
+   Needs ../../web/src/style.css loaded first. A tier's palette is just a color theme here, so a set can pick any of them. */
+.inner.bt .fwrap { margin: calc(var(--cw) * .05) calc(var(--cw) * .04) 0; }
+.inner.bt .loc.c { left: 50%; right: auto; transform: translateX(-50%); max-width: 80%; }
+.inner.bt .statrow, .inner.bt .rprow { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: calc(var(--cw) * .02); margin: calc(var(--cw) * .02) calc(var(--cw) * .04) 0; }
+.inner.bt .stat { display: grid; justify-items: center; align-content: center; gap: calc(var(--cw) * .002); padding: calc(var(--cw) * .012) 0; background: rgba(4,16,22,.62); border: 1px solid rgba(255,255,255,.18); border-radius: calc(var(--cw) * .03); }
+.inner.bt .stat small { font: 700 calc(var(--cw) * .028) / 1 var(--body); letter-spacing: .14em; color: var(--acc); }
+.inner.bt .stat b { font: 400 calc(var(--cw) * .09) / 1 var(--display); color: #fff; font-variant-numeric: tabular-nums; }
+.inner.bt .rp { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: calc(var(--cw) * .01); padding: calc(var(--cw) * .01) calc(var(--cw) * .022); background: rgba(4,16,22,.62); border: 1px solid rgba(255,255,255,.18); border-radius: calc(var(--cw) * .03); }
+.inner.bt .rp small { grid-column: 1 / -1; font: 700 calc(var(--cw) * .022) / 1 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--acc2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; margin-bottom: calc(var(--cw) * .006); }
+.inner.bt .rp i { font: 700 calc(var(--cw) * .026) / 1 var(--body); font-style: normal; letter-spacing: .06em; color: var(--acc); }
+.inner.bt .rp b { font: 400 calc(var(--cw) * .05) / 1 var(--display); color: #fff; text-align: right; }
+.inner.bt .effect { flex: none; margin: calc(var(--cw) * .02) calc(var(--cw) * .04) calc(var(--cw) * .04); padding: calc(var(--cw) * .014) calc(var(--cw) * .035) calc(var(--cw) * .02); background: rgba(4,16,22,.62); border: 1px solid rgba(255,255,255,.18); border-radius: calc(var(--cw) * .03); text-align: center; height: calc(var(--cw) * .165); display: flex; flex-direction: column; justify-content: center; }
+.inner.bt .effect small { display: block; font: 700 calc(var(--cw) * .026) / 1 var(--body); letter-spacing: .14em; color: var(--acc2); margin-bottom: calc(var(--cw) * .012); }
+.inner.bt .effect p { margin: 0; font: 600 calc(var(--cw) * .04) / 1.25 var(--body); color: #fff; text-wrap: balance; }
+.ftb .type { font-size: calc(var(--cw) * .03); letter-spacing: .16em; color: var(--acc); }
