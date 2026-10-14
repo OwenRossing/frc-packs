@@ -85,6 +85,5 @@ One-time setup:
 
 1. Configure GitHub OIDC in AWS with provider `token.actions.githubusercontent.com` and audience `sts.amazonaws.com`.
 2. Create a role trusted by `repo:OwenRossing/frc-packs:ref:refs/heads/main`. Grant it permission to deploy the CDK
-   stacks and use their bootstrapped assets in both `us-east-1` and `us-east-2`.
-3. Add the role ARN as the repository Actions variable `AWS_ROLE_ARN`; optionally set `AWS_REGION` for the credentials
-   action (it defaults to `us-east-1`).
+   stacks and use their bootstrapped assets in both `us-east-1` and `us-east-2`. Its ARN is configured directly in
+   `.github/workflows/deploy.yml`.

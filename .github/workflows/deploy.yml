@@ -16,7 +16,6 @@ concurrency: deploy
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    if: vars.AWS_ROLE_ARN != ''
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
