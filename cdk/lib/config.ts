@@ -14,7 +14,7 @@ export const config = {
   lambda: {
     memorySize: 512,
     timeoutSeconds: 28,
-    adminOnly: true,
+    adminOnly: false,
   },
 } as const;
 
