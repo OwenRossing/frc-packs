@@ -2,8 +2,9 @@
   "name": "frc-packs-infrastructure",
   "private": true,
   "scripts": {
-    "build:artifacts": "bash ./build.sh",
+    "build": "tsc",
     "synth": "cdk synth",
+    "deploy": "cdk deploy --all",
     "test": "ts-node test/stacks.test.ts"
   },
   "devDependencies": {

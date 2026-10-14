@@ -40,6 +40,7 @@ certificateTemplate.hasResourceProperties("AWS::CertificateManager::Certificate"
 const backendTemplate = Template.fromStack(backendStack);
 backendTemplate.resourceCountIs("AWS::ApiGatewayV2::Api", 1);
 backendTemplate.resourceCountIs("AWS::ApiGatewayV2::Route", 2);
+backendTemplate.resourceCountIs("AWS::DynamoDB::Table", 1);
 backendTemplate.resourceCountIs("AWS::RDS::DBInstance", 0);
 backendTemplate.resourceCountIs("AWS::RDS::DBCluster", 0);
 backendTemplate.resourceCountIs("AWS::EC2::VPC", 0);
@@ -49,10 +50,45 @@ const server = Object.values(backendResources).find((resource) =>
   resource.Type === "AWS::Lambda::Function" && resource.Properties?.Runtime === "provided.al2023");
 assert.ok(server);
 assert.deepEqual(server.Properties?.Architectures, ["arm64"]);
-const environment = (server.Properties?.Environment as { Variables: Record<string, string> }).Variables;
+const environment = (server.Properties?.Environment as { Variables: Record<string, unknown> }).Variables;
 assert.equal(environment.COOKIE_SECURE, "1");
 assert.equal(environment.DATA_DIR, "/var/task/data");
+assert.deepEqual(environment.TABLE_NAME, { Ref: backendTemplate.getResourceId("AWS::DynamoDB::Table") });
+assert.equal(environment.ADMIN_ONLY, "1");
 assert.equal("DATABASE_URL" in environment, false);
+backendTemplate.hasResourceProperties("AWS::DynamoDB::Table", {
+  BillingMode: "PAY_PER_REQUEST",
+  KeySchema: [
+    { AttributeName: "pk", KeyType: "HASH" },
+    { AttributeName: "sk", KeyType: "RANGE" },
+  ],
+  GlobalSecondaryIndexes: [
+    {
+      IndexName: "gsi1",
+      KeySchema: [
+        { AttributeName: "gsi1pk", KeyType: "HASH" },
+        { AttributeName: "gsi1sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+    {
+      IndexName: "gsi2",
+      KeySchema: [
+        { AttributeName: "gsi2pk", KeyType: "HASH" },
+        { AttributeName: "gsi2sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+  ],
+  TimeToLiveSpecification: { AttributeName: "expires_at", Enabled: true },
+  PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+});
+const tableResource = Object.values(backendTemplate.toJSON().Resources as Record<string, { Type: string; DeletionPolicy?: string; UpdateReplacePolicy?: string }>)
+  .find(({ Type }) => Type === "AWS::DynamoDB::Table");
+assert.equal(tableResource?.DeletionPolicy, "Retain");
+assert.equal(tableResource?.UpdateReplacePolicy, "Retain");
+assert.match(JSON.stringify(backendResources), /dynamodb:TransactWriteItems/);
+assert.match(JSON.stringify(backendResources), /dynamodb:DescribeTable/);
 
 const frontendTemplate = Template.fromStack(frontendStack);
 frontendTemplate.resourceCountIs("AWS::S3::Bucket", 1);

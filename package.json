@@ -16,9 +16,13 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "npm run build --workspace=web && rm -rf cdk/.build/site && mkdir -p cdk/.build/site && cp -a web/dist/. cdk/.build/site/ && cp -a data/photos cdk/.build/site/photos && cp -a data/packs cdk/.build/site/packs",
+    "build:backend": "bash server/build.sh",
     "cdk:synth": "npm run synth --workspace=cdk",
     "cdk:diff": "npm exec -w cdk -- cdk diff --",
-    "cdk:deploy": "npm run deploy --workspace=cdk"
+    "cdk:deploy": "npm run build && npm run deploy --workspace=cdk",
+    "cdk:test": "npm run test --workspace=cdk"
   },
   "workspaces": [
     "cdk",

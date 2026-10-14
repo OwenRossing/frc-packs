@@ -63,7 +63,7 @@ DYNAMODB_ENDPOINT=http://localhost:8765 cargo run -- create-admin
 
 ## Host it
 
-On AWS: DynamoDB, a Lambda for the API, and S3 + CloudFront for the site, each change one command. See [docs/aws.md](docs/aws.md).
+On AWS: CDK manages DynamoDB, the API Lambda, and S3 + CloudFront. See [docs/aws.md](docs/aws.md).
 
 ## Tests
 
