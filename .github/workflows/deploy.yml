@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: 24
       - name: Install cargo-lambda
-        run: pip install cargo-lambda==1.8.5
+        run: pip install cargo-lambda==1.9.2
       - name: Install Node dependencies
         run: npm ci
       - name: Build
