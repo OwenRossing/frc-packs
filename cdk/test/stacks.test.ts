@@ -95,7 +95,10 @@ frontendTemplate.resourceCountIs("AWS::S3::Bucket", 1);
 frontendTemplate.resourceCountIs("AWS::CloudFront::Distribution", 1);
 frontendTemplate.resourceCountIs("AWS::CloudFront::Function", 1);
 frontendTemplate.resourceCountIs("AWS::Route53::RecordSet", config.hostedZoneId ? 1 : 0);
-const frontendResources = frontendTemplate.toJSON().Resources as Record<string, { Type: string; Properties?: Record<string, unknown> }>;
+const frontendResources = frontendTemplate.toJSON().Resources as Record<
+  string,
+  { Type: string; Properties?: Record<string, unknown>; DependsOn?: string | string[] }
+>;
 const distribution = Object.values(frontendResources).find((resource) => resource.Type === "AWS::CloudFront::Distribution");
 assert.ok(distribution);
 const distributionConfig = distribution.Properties?.DistributionConfig as {
@@ -114,7 +117,7 @@ const distributionConfig = distribution.Properties?.DistributionConfig as {
 };
 assert.deepEqual(distributionConfig.Aliases, [fqdn]);
 assert.ok(distributionConfig.ViewerCertificate.AcmCertificateArn);
-assert.equal(distributionConfig.DefaultCacheBehavior.CachePolicyId, cloudfront.CachePolicy.CACHING_DISABLED.cachePolicyId);
+assert.equal(distributionConfig.DefaultCacheBehavior.CachePolicyId, cloudfront.CachePolicy.CACHING_OPTIMIZED.cachePolicyId);
 assert.ok(distributionConfig.DefaultCacheBehavior.FunctionAssociations.some(({ EventType }) => EventType === "viewer-request"));
 for (const pathPattern of ["/api", "/api/*"]) {
   const behavior = distributionConfig.CacheBehaviors.find((candidate) => candidate.PathPattern === pathPattern);
@@ -127,9 +130,40 @@ for (const pathPattern of ["/assets/*", "/photos/*"]) {
   const behavior = distributionConfig.CacheBehaviors.find((candidate) => candidate.PathPattern === pathPattern);
   assert.equal(behavior?.CachePolicyId, cloudfront.CachePolicy.CACHING_OPTIMIZED.cachePolicyId);
 }
-assert.equal(
-  distributionConfig.CacheBehaviors.find(({ PathPattern }) => PathPattern === "/packs/*")?.CachePolicyId,
-  cloudfront.CachePolicy.CACHING_DISABLED.cachePolicyId,
-);
+const packsBehavior = distributionConfig.CacheBehaviors.find(({ PathPattern }) => PathPattern === "/packs/*");
+assert.ok(packsBehavior);
+const packsCachePolicyEntry = Object.entries(frontendResources).find(([, resource]) => {
+  const cachePolicyConfig = resource.Properties?.CachePolicyConfig as { MaxTTL?: number } | undefined;
+  return resource.Type === "AWS::CloudFront::CachePolicy" && cachePolicyConfig?.MaxTTL === 14400;
+});
+const packsCachePolicy = packsCachePolicyEntry?.[1];
+assert.ok(packsCachePolicy);
+const packsCachePolicyConfig = (packsCachePolicy.Properties as {
+  CachePolicyConfig: { MinTTL: number; DefaultTTL: number; MaxTTL: number };
+}).CachePolicyConfig;
+assert.equal(packsCachePolicyConfig.MinTTL, 0);
+assert.equal(packsCachePolicyConfig.DefaultTTL, 14400);
+assert.equal(packsCachePolicyConfig.MaxTTL, 14400);
+assert.deepEqual(packsBehavior.CachePolicyId, { Ref: packsCachePolicyEntry?.[0] });
+
+const deployments = Object.entries(frontendResources).filter(([, resource]) => resource.Type === "Custom::CDKBucketDeployment");
+const siteDeploymentEntry = deployments.find(([, resource]) => JSON.stringify(resource.Properties).includes("s-maxage=86400"));
+const siteDeployment = siteDeploymentEntry?.[1];
+assert.ok(siteDeployment);
+assert.match(JSON.stringify(siteDeployment.Properties), /DistributionId/);
+assert.match(JSON.stringify(siteDeployment.Properties), /\/\*/);
+assert.deepEqual(siteDeployment.Properties?.DistributionPaths, ["/*"]);
+const siteDependencies = Array.isArray(siteDeployment.DependsOn) ? siteDeployment.DependsOn : [siteDeployment.DependsOn];
+for (const cacheControl of [
+  "max-age=31536000, immutable",
+  "max-age=86400",
+  "max-age=14400",
+]) {
+  const deployment = deployments.find(([, resource]) => JSON.stringify(resource.Properties).includes(cacheControl));
+  assert.ok(deployment, `Missing deployment with Cache-Control ${cacheControl}`);
+  assert.ok(siteDependencies.includes(deployment[0]), `Site invalidation must wait for ${deployment[0]}`);
+}
+const packsDeployment = deployments.find(([, resource]) => JSON.stringify(resource.Properties).includes("max-age=14400"));
+assert.ok(packsDeployment);
 
 console.log("CDK stack synthesis checks passed.");

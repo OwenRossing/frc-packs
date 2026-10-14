@@ -40,6 +40,13 @@ export class PacksFrontendStack extends cdk.Stack {
         "function handler(event) { var request = event.request; if (request.uri === '/admin') request.uri = '/admin.html'; if (request.uri === '/privacy') request.uri = '/privacy.html'; return request; }",
       ),
     });
+    const packsCachePolicy = new cloudfront.CachePolicy(this, "PacksCachePolicy", {
+      minTtl: cdk.Duration.seconds(0),
+      defaultTtl: cdk.Duration.hours(4),
+      maxTtl: cdk.Duration.hours(4),
+      enableAcceptEncodingBrotli: true,
+      enableAcceptEncodingGzip: true,
+    });
     const distribution = new cloudfront.Distribution(this, "Distribution", {
       domainNames: [fqdn],
       certificate: props.certificate,
@@ -47,7 +54,7 @@ export class PacksFrontendStack extends cdk.Stack {
       defaultBehavior: {
         origin: siteOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         functionAssociations: [{
           function: pathRewrite,
           eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
@@ -83,39 +90,42 @@ export class PacksFrontendStack extends cdk.Stack {
         "/packs/*": {
           origin: siteOrigin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          cachePolicy: packsCachePolicy,
         },
       },
     });
 
-    new s3deploy.BucketDeployment(this, "DeploySite", {
-      sources: [s3deploy.Source.asset(path.join(BUILD_DIR, "site"))],
-      destinationBucket: siteBucket,
-      exclude: ["assets/*", "photos/*", "packs/*"],
-      cacheControl: [s3deploy.CacheControl.noCache()],
-      prune: true,
-    });
-    new s3deploy.BucketDeployment(this, "DeployAssets", {
+    const deployAssets = new s3deploy.BucketDeployment(this, "DeployAssets", {
       sources: [s3deploy.Source.asset(path.join(BUILD_DIR, "site", "assets"))],
       destinationBucket: siteBucket,
       destinationKeyPrefix: "assets",
       cacheControl: [s3deploy.CacheControl.fromString("public, max-age=31536000, immutable")],
       prune: true,
     });
-    new s3deploy.BucketDeployment(this, "DeployPhotos", {
+    const deployPhotos = new s3deploy.BucketDeployment(this, "DeployPhotos", {
       sources: [s3deploy.Source.asset(path.join(BUILD_DIR, "site", "photos"))],
       destinationBucket: siteBucket,
       destinationKeyPrefix: "photos",
       cacheControl: [s3deploy.CacheControl.fromString("public, max-age=86400")],
       prune: true,
     });
-    new s3deploy.BucketDeployment(this, "DeployPacks", {
+    const deployPacks = new s3deploy.BucketDeployment(this, "DeployPacks", {
       sources: [s3deploy.Source.asset(path.join(BUILD_DIR, "site", "packs"))],
       destinationBucket: siteBucket,
       destinationKeyPrefix: "packs",
-      cacheControl: [s3deploy.CacheControl.noCache()],
+      cacheControl: [s3deploy.CacheControl.fromString("public, max-age=14400")],
       prune: true,
     });
+    const deploySite = new s3deploy.BucketDeployment(this, "DeploySite", {
+      sources: [s3deploy.Source.asset(path.join(BUILD_DIR, "site"))],
+      destinationBucket: siteBucket,
+      exclude: ["assets/*", "photos/*", "packs/*"],
+      cacheControl: [s3deploy.CacheControl.fromString("public, max-age=0, s-maxage=86400, must-revalidate")],
+      distribution,
+      distributionPaths: ["/*"],
+      prune: true,
+    });
+    deploySite.node.addDependency(deployAssets, deployPhotos, deployPacks);
 
     if (config.hostedZoneId) {
       const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, "HostedZone", {
