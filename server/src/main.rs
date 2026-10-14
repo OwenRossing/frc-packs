@@ -40,6 +40,21 @@ async fn main() -> anyhow::Result<()> {
     let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "../data".into()));
     let db = frc_packs_server::db::connect(&table).await;
     frc_packs_server::prepare(&db).await?;
+    // The scheduled copy of the function (see cdk/lib/packs-backend-stack.ts) runs the "free pack ready" check on a
+    // timer instead of answering web requests.
+    #[cfg(feature = "lambda")]
+    if std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok() && std::env::var("LAMBDA_TASK").as_deref() == Ok("ready-check") {
+        use lambda_http::lambda_runtime::{LambdaEvent, run, service_fn};
+        let db = db.clone();
+        return run(service_fn(move |_: LambdaEvent<serde_json::Value>| {
+            let db = db.clone();
+            async move {
+                frc_packs_server::push::ready_check(&db).await.map_err(|e| lambda_http::Error::from(e.to_string()))
+            }
+        }))
+        .await
+        .map_err(|e| anyhow::anyhow!(e));
+    }
     match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         [] => serve(db, data_dir).await,
         ["create-admin", ref rest @ ..] if rest.len() <= 1 => {

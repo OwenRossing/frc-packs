@@ -104,6 +104,13 @@ fn verify_password(pw: &str, hash: &str) -> bool {
     PasswordHash::new(hash).is_ok_and(|h| Argon2::default().verify_password(pw.as_bytes(), &h).is_ok())
 }
 
+/// A valid hash of a password nobody has, to check against when a username doesn't exist (so sign-in takes as long
+/// either way).
+pub fn decoy_hash() -> &'static str {
+    static DECOY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DECOY.get_or_init(|| hash_password("no account has this password"))
+}
+
 /// Password hashing is slow on purpose (so stolen hashes are slow to crack); keep it off the request threads.
 pub async fn hash(pw: String) -> String {
     tokio::task::spawn_blocking(move || hash_password(&pw)).await.expect("hashing doesn't panic")

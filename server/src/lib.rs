@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::State;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -55,6 +56,7 @@ pub type Shared = Arc<AppState>;
 
 pub fn app(db: Db, cfg: Config) -> anyhow::Result<Router> {
     let catalog = packs::Catalog::load(&cfg.data_dir.join("packs"))?;
+    let https = cfg.cookie_secure;
     let state = Arc::new(AppState {
         db,
         catalog,
@@ -87,10 +89,30 @@ pub fn app(db: Db, cfg: Config) -> anyhow::Result<Router> {
             .fallback_service(ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html"))));
     }
     Ok(router
+        .layer(middleware::from_fn_with_state(https, security_headers))
         .layer(middleware::from_fn(json_only_writes))
         .layer(middleware::from_fn(cache_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state))
+}
+
+/// What the site may load: its own files, Google Fonts for the two typefaces, and nothing else. Keep in step with the
+/// response headers policy in cdk/lib/packs-frontend-stack.ts, which sends the same headers for the pages CloudFront
+/// serves from S3.
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self';     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com;     img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; manifest-src 'self';     worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
+/// Adds the standard protective headers to every response (HSTS only when the site is on HTTPS).
+async fn security_headers(State(https): State<bool>, req: Request<Body>, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CONTENT_SECURITY_POLICY));
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin"));
+    if https {
+        h.insert(header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=31536000"));
+    }
+    res
 }
 
 /// Tell browsers and Cloudflare what they may keep. The page and pack recipes are checked on every visit so an update
@@ -136,4 +158,27 @@ pub async fn prepare(db: &Db) -> anyhow::Result<()> {
         db.ensure_table().await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn every_response_carries_the_security_headers() {
+        for https in [false, true] {
+            let app = Router::new()
+                .route("/", get(|| async { "hi" }))
+                .layer(middleware::from_fn_with_state(https, security_headers));
+            let res = app.oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()).await.unwrap();
+            let h = res.headers();
+            assert!(h[header::CONTENT_SECURITY_POLICY].to_str().unwrap().contains("frame-ancestors 'none'"));
+            assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+            assert_eq!(h[header::X_FRAME_OPTIONS], "DENY");
+            assert_eq!(h.contains_key(header::STRICT_TRANSPORT_SECURITY), https);
+        }
+    }
 }

@@ -82,7 +82,11 @@ async fn load(db: &Db) -> anyhow::Result<Pusher> {
         }
     };
     let public = URL_SAFE_NO_PAD.encode(keys.public_key().public_key().to_bytes_uncompressed());
-    let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
+    // No redirects: a push service answers directly, and following one could lead somewhere it shouldn't.
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
     let contact = std::env::var("PUSH_CONTACT").unwrap_or_else(|_| "https://github.com/OwenRossing/frc-packs".into());
     Ok(Pusher { keys, public, http, contact })
 }
@@ -112,10 +116,32 @@ fn bad() -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "bad_request")
 }
 
+/// Hosts of the browsers' push services. Subscriptions are only accepted for these, so a player can't point the server at
+/// some other address.
+const PUSH_HOSTS: [&str; 6] = [
+    "fcm.googleapis.com",
+    "android.googleapis.com",
+    "push.services.mozilla.com",
+    "push.apple.com",
+    "notify.windows.com",
+    "push.microsoft.com",
+];
+
+/// True for an https address on one of the real push services (or a sub-domain of one).
+pub fn is_push_service(endpoint: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint) else { return false };
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.host_str().is_some_and(|h| {
+            PUSH_HOSTS.iter().any(|ok| h == *ok || h.strip_suffix(ok).is_some_and(|rest| rest.ends_with('.')))
+        })
+}
+
 /// Turns notifications on for this browser. A browser's subscription belongs to whoever signed in on it last.
 async fn subscribe(State(s): State<Shared>, user: User, Json(req): Json<SubscribeReq>) -> ApiResult<StatusCode> {
     // Only real push services, over HTTPS; keys must decode.
-    let ok_url = req.endpoint.len() < 1000 && req.endpoint.starts_with("https://");
+    let ok_url = req.endpoint.len() < 1000 && is_push_service(&req.endpoint);
     let ok_keys = URL_SAFE_NO_PAD.decode(req.keys.p256dh.trim_end_matches('=')).is_ok_and(|k| k.len() == 65)
         && URL_SAFE_NO_PAD.decode(req.keys.auth.trim_end_matches('=')).is_ok_and(|k| k.len() == 16);
     if !ok_url || !ok_keys {
@@ -164,15 +190,23 @@ pub struct Note {
     pub tag: String,
 }
 
-/// Sends a notification to every device the account turned them on for, in the background. Subscriptions the push
-/// service says are gone are deleted.
-pub fn notify(db: &Db, user: Uuid, note: Note) {
+/// Sends a notification to every device the account turned them on for. Subscriptions the push service says are gone
+/// are deleted. On a server it goes out in the background; on AWS Lambda nothing runs after the response is sent, so it
+/// is sent before returning (for at most a few seconds).
+pub async fn notify(db: &Db, user: Uuid, note: Note) {
     let db = db.clone();
-    tokio::spawn(async move {
+    let job = async move {
         if let Err(e) = send(&db, user, &note).await {
             tracing::warn!("push to {user} failed: {e:#}");
         }
-    });
+    };
+    if std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok() {
+        if tokio::time::timeout(Duration::from_secs(4), job).await.is_err() {
+            tracing::warn!("push to {user} took too long and was dropped");
+        }
+    } else {
+        tokio::spawn(job);
+    }
 }
 
 async fn send(db: &Db, user: Uuid, note: &Note) -> anyhow::Result<()> {
@@ -276,8 +310,39 @@ pub async fn ready_check(db: &Db) -> anyhow::Result<()> {
                     url: "/#open".into(),
                     tag: "pack-ready".into(),
                 },
-            );
+            )
+            .await;
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_push_service;
+
+    #[test]
+    fn only_real_push_services_are_accepted() {
+        for ok in [
+            "https://fcm.googleapis.com/fcm/send/abc",
+            "https://updates.push.services.mozilla.com/wpush/v2/abc",
+            "https://web.push.apple.com/QGx",
+            "https://wns2-par02p.notify.windows.com/w/?token=x",
+        ] {
+            assert!(is_push_service(ok), "{ok}");
+        }
+        for bad in [
+            "http://fcm.googleapis.com/x",
+            "https://evil.example/x",
+            "https://fcm.googleapis.com.evil.example/x",
+            "https://evilfcm.googleapis.com/x",
+            "https://user@fcm.googleapis.com/x",
+            "https://fcm.googleapis.com:8443/x",
+            "https://127.0.0.1/x",
+            "https://localhost/x",
+            "not a url",
+        ] {
+            assert!(!is_push_service(bad), "{bad}");
+        }
+    }
 }

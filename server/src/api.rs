@@ -571,9 +571,13 @@ async fn login(
         return Err(too_many());
     }
     let p = accounts::by_name(&s.db, &user_name).await?;
+    // An unknown name still pays for a hash check, so the answer takes as long as for a real account.
     let ok = match p.as_ref().and_then(|p| p.password_hash.clone()) {
         Some(hash) => accounts::verify(req.password, hash).await,
-        None => false,
+        None => {
+            accounts::verify(req.password, accounts::decoy_hash().to_string()).await;
+            false
+        }
     };
     let Some(p) = p.filter(|_| ok) else {
         s.limiter.fail(&name);

@@ -417,7 +417,8 @@ async fn offer(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Jso
             url: "/#trade".into(),
             tag: format!("trade-{me}"),
         },
-    );
+    )
+    .await;
     Ok(Json(out).into_response())
 }
 
@@ -808,7 +809,8 @@ async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
             url: "/#binder".into(),
             tag: format!("trade-done-{id}"),
         },
-    );
+    )
+    .await;
     let state = api::load_state(&s, user.id).await?;
     let collection = api::load_collection(db, user.id, pack).await?;
     let trades = list_in(db, user.id).await?;

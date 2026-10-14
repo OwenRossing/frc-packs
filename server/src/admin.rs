@@ -46,8 +46,6 @@ fn err(status: StatusCode, code: &'static str) -> ApiError {
 #[derive(Deserialize)]
 struct TestPackReq {
     pack: String,
-    #[serde(default)]
-    boosted: bool,
 }
 
 #[derive(Serialize)]
@@ -76,7 +74,6 @@ async fn test_pack(
         })
         .collect();
     crate::roll::sort_best_last(&mut cards);
-    let _ = req.boosted;
     Ok(Json(TestPackOut { cards }))
 }
 

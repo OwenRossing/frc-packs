@@ -27,7 +27,7 @@ pub fn hash(token: &str) -> Vec<u8> {
 }
 
 /// Sessions last this long after signing in.
-pub const SESSION_DAYS: i64 = 400;
+pub const SESSION_DAYS: i64 = 90;
 
 /// Where a session is kept: only the token's hash, never the token.
 pub fn session_pk(token: &str) -> String {
@@ -36,7 +36,8 @@ pub fn session_pk(token: &str) -> String {
 
 pub fn cookie(token: &str, secure: bool) -> String {
     format!(
-        "{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=34560000{}",
+        "{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
+        SESSION_DAYS * 86_400,
         if secure { "; Secure" } else { "" }
     )
 }
@@ -53,13 +54,15 @@ pub fn token_from(headers: &HeaderMap) -> Option<String> {
     })
 }
 
-/// Who is asking, for counting failed sign-ins: the visitor's IP as Cloudflare or AWS CloudFront reports it. Run
-/// directly (local development) everyone counts as one visitor.
+/// Who is asking, for counting failed sign-ins: the visitor's IP as CloudFront reports it (the site is only reachable
+/// through CloudFront, which sets this header itself). Headers a visitor can set freely, like `X-Forwarded-For` or
+/// `CF-Connecting-IP`, are not trusted. Run directly (local development) everyone counts as one visitor.
 pub fn visitor(headers: &HeaderMap) -> String {
-    let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    get("cf-connecting-ip")
+    headers
+        .get("cloudfront-viewer-address")
+        .and_then(|v| v.to_str().ok())
         // CloudFront sends "ip:port"; the port changes per connection, so drop it.
-        .or_else(|| get("cloudfront-viewer-address").and_then(|v| v.rsplit_once(':').map(|(ip, _)| ip)))
+        .and_then(|v| v.rsplit_once(':').map(|(ip, _)| ip))
         .unwrap_or("direct")
         .to_string()
 }
@@ -118,5 +121,28 @@ impl FromRequestParts<Shared> for Admin {
     async fn from_request_parts(parts: &mut Parts, state: &Shared) -> Result<Admin, ApiError> {
         let user = User::from_request_parts(parts, state).await?;
         if user.is_admin { Ok(Admin { id: user.id }) } else { Err(ApiError::new(StatusCode::FORBIDDEN, "not_admin")) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visitor_is_the_cloudfront_address_and_ignores_spoofable_headers() {
+        let mut h = HeaderMap::new();
+        assert_eq!(visitor(&h), "direct");
+        h.insert("cf-connecting-ip", "1.1.1.1".parse().unwrap());
+        h.insert("x-forwarded-for", "2.2.2.2".parse().unwrap());
+        assert_eq!(visitor(&h), "direct", "a visitor can set these headers to anything");
+        h.insert("cloudfront-viewer-address", "198.51.100.7:46532".parse().unwrap());
+        assert_eq!(visitor(&h), "198.51.100.7");
+        h.insert("cloudfront-viewer-address", "2001:db8::1:46532".parse().unwrap());
+        assert_eq!(visitor(&h), "2001:db8::1");
+    }
+
+    #[test]
+    fn cookie_lasts_as_long_as_the_session() {
+        assert!(cookie("t", true).contains(&format!("Max-Age={}", SESSION_DAYS * 86_400)));
     }
 }
