@@ -62,9 +62,13 @@ After a change to the server, site, photos, pack recipes, or CDK, run this from 
 npm run cdk:deploy
 ```
 
-This rebuilds the Lambda and website assets before deploying all stacks. Use `npm run cdk:synth` to synthesize the
-CloudFormation templates locally, `npm run cdk:diff` to review the proposed changes, and `npm run cdk:test` to run the
-CDK synthesis checks.
+This rebuilds the Lambda and website assets before deploying all stacks. CDK runs the site deployment after the assets,
+photos, and packs have uploaded, then invalidates `/*` on CloudFront so the updated site is visible immediately; no
+separate GitHub Actions invalidation step is needed.
+Mutable root-level app files are cached at CloudFront for up to a day but are not cached by browsers; hashed `/assets/*`
+files are cached for a year. Photos are cached for a day, packs for four hours, and `/api/*` is not cached.
+Use `npm run cdk:synth` to synthesize the CloudFormation templates locally, `npm run cdk:diff` to review the proposed
+changes, and `npm run cdk:test` to run the CDK synthesis checks.
 
 ## What protects the site
 
