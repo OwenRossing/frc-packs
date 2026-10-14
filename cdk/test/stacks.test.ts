@@ -54,7 +54,7 @@ const environment = (server.Properties?.Environment as { Variables: Record<strin
 assert.equal(environment.COOKIE_SECURE, "1");
 assert.equal(environment.DATA_DIR, "/var/task/data");
 assert.deepEqual(environment.TABLE_NAME, { Ref: backendTemplate.getResourceId("AWS::DynamoDB::Table") });
-assert.equal(environment.ADMIN_ONLY, "1");
+assert.equal(environment.ADMIN_ONLY, "0");
 assert.equal("DATABASE_URL" in environment, false);
 backendTemplate.hasResourceProperties("AWS::DynamoDB::Table", {
   BillingMode: "PAY_PER_REQUEST",
