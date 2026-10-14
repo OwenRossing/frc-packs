@@ -1,0 +1,19 @@
+{
+  "name": "frc-packs-infrastructure",
+  "private": true,
+  "scripts": {
+    "build:artifacts": "bash ./build.sh",
+    "synth": "cdk synth",
+    "test": "ts-node test/stacks.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "aws-cdk": "^2.1033.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.220.0",
+    "constructs": "^10.4.2"
+  }
+}

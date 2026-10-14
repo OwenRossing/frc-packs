@@ -1,0 +1,31 @@
+{
+  "name": "frc-packs",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "homepage": "https://github.com/STMARobotics/frc-packs#readme",
+  "bugs": {
+    "url": "https://github.com/STMARobotics/frc-packs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/STMARobotics/frc-packs.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "cdk:synth": "npm run synth --workspace=cdk",
+    "cdk:diff": "npm exec -w cdk -- cdk diff --",
+    "cdk:deploy": "npm run deploy --workspace=cdk"
+  },
+  "workspaces": [
+    "cdk",
+    "server",
+    "web"
+  ],
+  "dependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
