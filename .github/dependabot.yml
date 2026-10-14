@@ -1,7 +1,7 @@
-# Weekly pull requests for out-of-date dependencies and GitHub Actions.
+# Monthly pull requests for out-of-date dependencies and GitHub Actions.
 version: 2
 updates:
-- package-ecosystem: cargo
+  - package-ecosystem: cargo
     directory: /server
     schedule:
       interval: "monthly"
@@ -12,7 +12,7 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-  
+
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
