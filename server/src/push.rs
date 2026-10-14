@@ -87,7 +87,7 @@ async fn load(db: &Db) -> anyhow::Result<Pusher> {
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let contact = std::env::var("PUSH_CONTACT").unwrap_or_else(|_| "https://github.com/OwenRossing/frc-packs".into());
+    let contact = std::env::var("PUSH_CONTACT").unwrap_or_else(|_| "https://github.com/STMARobotics/frc-packs".into());
     Ok(Pusher { keys, public, http, contact })
 }
 

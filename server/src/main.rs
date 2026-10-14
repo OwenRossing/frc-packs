@@ -16,7 +16,7 @@ const USAGE: &str = "usage:
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        // Logs go to stderr (the system journal when run as a service), so command output stays clean. No color codes
+        // Logs go to stderr (CloudWatch on AWS), so command output stays clean. No color codes
         // unless it's a terminal.
         .with_writer(std::io::stderr)
         .with_ansi(std::io::stderr().is_terminal())
@@ -116,7 +116,7 @@ async fn serve(db: frc_packs_server::db::Db, data_dir: PathBuf) -> anyhow::Resul
     Ok(())
 }
 
-/// Finish in-flight requests on Ctrl-C, or when systemd stops or restarts the service (SIGTERM).
+/// Finish in-flight requests on Ctrl-C, or on SIGTERM when run as a service.
 async fn shutdown() {
     let ctrl_c = async {
         tokio::signal::ctrl_c().await.ok();

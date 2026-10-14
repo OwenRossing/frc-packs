@@ -203,7 +203,7 @@ export function start(RECIPE) {
   function say(msg, ms) { banner.textContent = msg; banner.classList.add("show"); clearTimeout(say.t); say.t = setTimeout(function () { banner.classList.remove("show"); }, ms || 3200); }
 
   /* ---------- art ---------- */
-  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   var GEAR = (function () {
     var d = "", n = 12, R = 46, r = 38;
     for (var i = 0; i < n; i++) {

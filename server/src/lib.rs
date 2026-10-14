@@ -140,7 +140,7 @@ async fn security_headers(State(https): State<bool>, req: Request<Body>, next: N
     res
 }
 
-/// Tell browsers and Cloudflare what they may keep. The page and pack recipes are checked on every visit so an update
+/// Tell browsers and CloudFront what they may keep. The page and pack recipes are checked on every visit so an update
 /// shows up at once; the built JS/CSS have the content hash in their names, so they can be kept forever.
 async fn cache_headers(req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path().to_owned();

@@ -12,7 +12,7 @@ one DynamoDB transaction that also sets `ver = ver + 1` **on condition that `ver
 else changed that player in between (a second tab, a retry, a double tap, a script), the condition fails, nothing is
 written, and the request starts over from a fresh read (or answers `409 busy` after a few tries).
 
-So a player's changes happen one at a time, exactly as the Postgres version's `lock_user` made them, but without locks.
+So a player's changes happen one at a time, without locks.
 A trade includes both players' versions, so it lines up with everything either of them does.
 
 On top of that, writes carry the conditions that the database constraints used to check:
@@ -28,7 +28,7 @@ On top of that, writes carry the conditions that the database constraints used t
 | Special edition numbers are unique | A `SPSER#<edition>#<serial>` item, written with `attribute_not_exists`. |
 | Packs, parts never go negative | The player version condition plus the amounts checked on the fresh read, and `>=` conditions on the pack item. |
 
-The ledger is written by the same transactions (Postgres used triggers): every change to packs, boosted packs, parts
+The ledger is written by the same transactions: every change to packs, boosted packs, parts
 or cards adds a `LED#` item with the change and the reason, so the admin audit can still prove each player's holdings
 add up.
 

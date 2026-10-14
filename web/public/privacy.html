@@ -25,7 +25,7 @@
 <main>
   <a href="/">← Back to FRC Packs</a>
   <h1>Privacy</h1>
-  <p class="dim">Last updated October 9, 2026</p>
+  <p class="dim">Last updated October 13, 2026</p>
 
   <p>FRC Packs is a free card game for the FIRST Robotics community, run by volunteers. We collect only what the game needs to work. There are no ads, no tracking or analytics scripts, and we never sell or share your information.</p>
 
@@ -37,6 +37,7 @@
       <tr><td>Your password, stored only as a one-way hash (argon2)</td><td>To check it when you sign in. Nobody, including the admin, can read it.</td></tr>
       <tr><td>Your packs, cards, serial numbers, parts, trades, missions, streak, wishlist and showcase</td><td>That's the game. Your profile (showcase, stats, wishlist) is visible to other signed-in players.</td></tr>
       <tr><td>Reports you send about other players</td><td>So the admin can deal with them. Only the admin sees reports.</td></tr>
+      <tr><td>Feedback you send from Settings: its title and details, plus the page, app version and device type the game adds</td><td>So the admin can fix bugs and read ideas. Only the admin sees it; you can see your own and its status.</td></tr>
       <tr><td>A push subscription for each device where you turn on notifications</td><td>To send "free pack ready" and trade notifications. Turn them off in Settings to delete it.</td></tr>
     </table>
   </div>
@@ -45,7 +46,7 @@
   <p>One cookie keeps you signed in. It's only used by FRC Packs. Your browser also stores a few preferences (sound, which tips you've seen, which rarities to scrap) on your device only.</p>
 
   <h2>Your IP address</h2>
-  <p>To slow down password guessing, the server counts failed sign-ins per address for 15 minutes, in memory only. It isn't saved. The site is served through Cloudflare, which handles connections under <a href="https://www.cloudflare.com/privacypolicy/">its privacy policy</a>.</p>
+  <p>To slow down password guessing, the server counts failed sign-ins per address for 15 minutes, in memory only. It isn't saved. The site is hosted on Amazon Web Services (CloudFront, Lambda and DynamoDB), which handle connections under <a href="https://aws.amazon.com/privacy/">its privacy notice</a>, and keep short-lived technical logs of requests.</p>
 
   <h2>Other services the page uses</h2>
   <ul>
@@ -55,7 +56,7 @@
   </ul>
 
   <h2>Deleting your account</h2>
-  <p>Ask the person who invited you or the site admin, and your account and all its cards are deleted. Serial numbers aren't reused. Database backups are kept for two weeks and then deleted.</p>
+  <p>Ask the person who invited you or the site admin, and your account and all its cards are deleted. Serial numbers aren't reused. Database backups are kept for up to 35 days and then deleted.</p>
 
   <h2>Young players</h2>
   <p>FRC Packs is made for FIRST teams, and many players are students. We don't ask for real names, emails, ages or locations. Usernames are filtered for offensive words, and any player can be reported.</p>

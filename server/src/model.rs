@@ -1,6 +1,5 @@
 //! The game's items in DynamoDB and the few writes everything else is built from. Anything that changes a player's
-//! packs, parts or cards goes through the helpers here, which write the ledger line in the same transaction (the
-//! Postgres version did this with triggers), so no code path can change holdings without the ledger seeing it.
+//! packs, parts or cards goes through the helpers here, which write the ledger line in the same transaction, so no code path can change holdings without the ledger seeing it.
 
 use std::collections::HashMap;
 

@@ -66,24 +66,81 @@ This rebuilds the Lambda and website assets before deploying all stacks. Use `np
 CloudFormation templates locally, `npm run cdk:diff` to review the proposed changes, and `npm run cdk:test` to run the
 CDK synthesis checks.
 
+## What protects the site
+
+- **Front door.** CloudFront sends every request to the API with a secret header (`X-Origin-Secret`, generated in AWS
+  Secrets Manager by the backend stack), and the server refuses requests without it, so the API can't be used by calling
+  API Gateway directly. This is checked by the server only when `ORIGIN_SECRET` is set, which the stack does.
+- **Who is asking.** The server counts failed sign-ins per visitor using the `CloudFront-Viewer-Address` header, which
+  CloudFront sets itself. `cf-connecting-ip` and `X-Forwarded-For` are ignored because visitors can send anything in them.
+- **Headers.** CloudFront adds a content security policy, HSTS, `nosniff`, frame blocking and a referrer policy to
+  everything; the server adds the same to its own responses. The policy text lives in `cdk/lib/config.ts` and
+  `server/src/lib.rs` and a CDK test fails if they differ.
+- **Throttle.** API Gateway accepts `apiThrottle.rate` requests a second in total (`cdk/lib/config.ts`), so a script
+  can't run up the Lambda bill unnoticed.
+- **Failed-sign-in counting** is still kept in each warm Lambda's memory, so a determined attacker spreads guesses across
+  instances. It slows guessing a lot (50 tries a visitor and 10 a username every 15 minutes, per instance) but is not a
+  hard cap. For one, add an AWS WAF web ACL with a rate rule on `/api/login` and `/api/signup` to the CloudFront
+  distribution (about $6 a month); it must be created in `us-east-1`, next to the certificate.
+
+## Notifications
+
+- **Free pack ready:** a second copy of the function (`ReadyCheckFunction`) runs every `readyCheckMinutes`
+  (`cdk/lib/config.ts`) on an EventBridge schedule and sends the notifications. It is the same program started with
+  `LAMBDA_TASK=ready-check`.
+- **Trade offers and accepted trades:** sent before the API answers (for at most a few seconds), because Lambda stops
+  running as soon as it has replied.
+
+## Alerts and cost
+
+Set `alertEmail` in `cdk/lib/config.ts` and redeploy to get CloudWatch alarms (function errors, throttles, API 5xx, the
+notification check failing) and a monthly budget warning (`monthlyBudgetUsd`) by email. AWS first sends a confirmation
+email to that address; click its link. Logs are kept one week in CloudWatch (log groups `ServerLogs` and
+`ReadyCheckLogs` in the backend stack).
+
+## Running the site
+
+- **Lost admin password:** from a computer signed in to AWS,
+  `cd server && TABLE_NAME=<TableName output> AWS_REGION=us-east-2 cargo run -- reset-password <username>`. It prints a
+  new password once and signs that account out everywhere.
+- **Opening to everyone / closing again:** change `adminOnly` in `cdk/lib/config.ts`, merge to `main`, and approve the
+  deploy. With it on, only admin accounts can sign in, sign up or play.
+- **Restoring data:** the table has point-in-time recovery (the preceding 35 days). In the DynamoDB console choose the
+  table, Backups, Restore to point in time, and restore into a **new** table. Check it (the admin panel's audit), then
+  point the function at it by changing the table in `cdk/lib/packs-backend-stack.ts`, or copy the items you need back.
+  The live table has deletion protection and a retain policy, so deleting the stack never deletes player data.
+- **Rolling back a bad deploy:** revert the commit on `main`; the deploy workflow rebuilds and redeploys the previous
+  version. If the deploy itself is stuck, CloudFormation rolls the failed stack back on its own.
+- **Reading logs:** CloudWatch > Log groups > the backend stack's `ServerLogs`. Failed writes show as `warn`/`error`
+  lines; every request is traced at `info`.
+- **Health check:** `GET /api/health` answers `{"ok":true}` when the API can reach the database. Point an uptime monitor
+  at `https://<your domain>/api/health`.
+
 ## Notes
 
-- **Free-pack notifications:** the normal server checks once a minute. Lambda only runs while answering requests, so
-  scheduled `ready-check` notifications still need an EventBridge schedule; trade notifications work without it.
-- **Sign-in limits:** failed guesses are counted in each warm Lambda's memory. AWS WAF rate rules on `/api/login` can
-  provide a hard cap.
 - **Backups:** point-in-time recovery can restore the DynamoDB table to a point in time in the preceding 35 days.
 - **Cost:** the table is pay-per-request and the rest of the stack is largely usage-based. Review AWS pricing before
   relying on estimates.
+- **Admin audit and deleting accounts** run inside one API request (28 seconds at most). They are fine for hundreds of
+  players; much larger games should move them to a command run from a laptop.
 
 ## Deploying from GitHub
 
-`.github/workflows/deploy.yml` runs server tests against DynamoDB Local and deploys the CDK app after pushes to `main`.
-It builds the Lambda package on Linux, avoiding cross-compilation issues on developer machines.
+Pull requests run `.github/workflows/ci.yml`: formatting, lint, the server tests against DynamoDB Local, the site build
+and the CDK checks. Pushing to `main` runs the same checks and, only if they pass, `.github/workflows/deploy.yml` builds
+the Lambda package on Linux (avoiding cross-compilation problems on developer machines) and deploys the CDK stacks.
+`.github/workflows/audit.yml` looks weekly for known vulnerabilities, and Dependabot opens update pull requests.
+
+To make every deploy wait for a person to approve it, add `environment: production` under the `deploy` job in
+`deploy.yml` and add required reviewers in the repository's Settings > Environments > production. **Changing this changes
+the identity GitHub presents to AWS** (from `ref:refs/heads/main` to `environment:production`), so update the role's
+trust policy in the same change or the deploy will stop working. Also turn on branch protection for `main` (require pull
+requests and the `ci` checks).
 
 One-time setup:
 
 1. Configure GitHub OIDC in AWS with provider `token.actions.githubusercontent.com` and audience `sts.amazonaws.com`.
-2. Create a role trusted by `repo:OwenRossing/frc-packs:ref:refs/heads/main`. Grant it permission to deploy the CDK
-   stacks and use their bootstrapped assets in both `us-east-1` and `us-east-2`. Its ARN is configured directly in
+2. Create a role trusted only by this repository's `main` branch (for the STMA fork,
+   `repo:STMARobotics/frc-packs:ref:refs/heads/main`). Grant it permission to deploy the CDK stacks and use their
+   bootstrapped assets in both `us-east-1` and `us-east-2`. Its ARN is configured directly in
    `.github/workflows/deploy.yml`.

@@ -60,6 +60,9 @@ DYNAMODB_ENDPOINT=http://localhost:8765 cargo run -- create-admin
 | `WEB_DIR` | `../web/dist` | The built site; skipped if it isn't there |
 | `DEV_TOOLS` | off | Testing helpers in Settings (demo luck, +1 pack, skip timer, reset) and free invite codes for the browser test. **Never turn on in production.** |
 | `COOKIE_SECURE` | off | Mark the session cookie HTTPS-only. Turn on when hosted over HTTPS. |
+| `ORIGIN_SECRET` | off | When set, requests must carry it in `X-Origin-Secret` (CloudFront adds it on AWS). |
+| `LAMBDA_TASK` | off | On AWS only: `ready-check` makes a function run the "free pack ready" check instead of serving the API. |
+| `PUSH_CONTACT` | this repository's URL | Who push services can contact about notifications (an `https:` or `mailto:` address). |
 
 ## Host it
 
@@ -82,5 +85,5 @@ Set `ADMIN_USER` and `ADMIN_PASSWORD` to the admin account to check the admin pa
 ## Not done yet
 
 - Signing in with Google (needs a Google Cloud OAuth client) or the 7028 portal.
-- Rate limiting on pack opening (sign-in and invite codes are limited already).
+- Rate limiting on pack opening (sign-in and invite codes are limited, and API Gateway caps total requests).
 - More packs.

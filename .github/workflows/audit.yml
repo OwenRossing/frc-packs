@@ -1,0 +1,24 @@
+# Weekly look for known vulnerabilities in the Rust and npm dependencies. A failure here is a reminder to update.
+name: audit
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+        working-directory: server
+      - run: npm ci
+      - run: npm audit
