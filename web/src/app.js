@@ -508,7 +508,7 @@ export function start(RECIPE) {
     summary: [function () { return tabBinder; }, "Every card lands in your Binder. Come back daily for free packs, missions and your streak!"]
   };
   var ORDER_TIPS = ["home", "select", "inspect", "stack", "summary"];
-  function endTour() { tourOn = false; coachEl.hidden = true; try { localStorage.setItem(TOUR, "done"); } catch (e) {} }
+  function endTour() { tourOn = false; coachEl.hidden = true; try { localStorage.setItem(TOUR, "done"); } catch (e) {} setTimeout(function () { if (typeof betaWelcome === "function") betaWelcome(); }, 1200); }
   $("#coachSkip").onclick = endTour;
   function coach() {
     coachEl.hidden = true; return; // no tutorial tips: the app should speak for itself
@@ -1638,6 +1638,67 @@ export function start(RECIPE) {
       api.report(name, f.reason.value, f.details.value).then(function () { closeAll(function () { say("Thanks. The admin will take a look.", 3000); }); }, function (er) { btn.disabled = false; offline(er); });
     };
     return f.querySelector("input");
+  }
+  /* ---------- feedback and the beta welcome ---------- */
+  var FB_KINDS = [["bug", "Bug"], ["idea", "Idea"], ["other", "Other"]], FB_STATUS = { open: "Open", planned: "Planned", done: "Done", wontfix: "Won't do" };
+  /* Where you were and on what, sent with the feedback so a bug can be found: the page, the app version, the screen and the browser. */
+  function fbContext() {
+    var cur = document.querySelector('script[type="module"][src*="/assets/"]'), v = cur ? (cur.getAttribute("src").match(/\/(?:main|index)-([\w-]+)\./) || [])[1] : "dev";
+    return [location.hash || "home", "v " + (v || "?"), innerWidth + "x" + innerHeight, navigator.userAgent.replace(/\s+/g, " ")].join(" | ").slice(0, 290);
+  }
+  function feedbackForm() { present(feedbackScreen); }
+  function feedbackScreen() {
+    modalIn.innerHTML = '<form class="profile feedback" novalidate><div class="pf-sec"><h3>Send feedback</h3>' +
+      '<div class="fb-kinds" role="radiogroup" aria-label="What kind of feedback">' + FB_KINDS.map(function (k, i) { return '<label><input type="radio" name="kind" value="' + k[0] + '"' + (i ? '' : ' checked') + '> ' + k[1] + '</label>'; }).join("") + '</div>' +
+      '<input class="input" type="text" name="title" maxlength="80" placeholder="In a few words (a bug, or what you wish it did)" aria-label="Title" autocomplete="off">' +
+      '<textarea class="input" name="details" maxlength="1500" placeholder="Tell us more. For a bug: what you did, what you expected, and what happened instead."></textarea>' +
+      '<span class="fb-count" id="fbCount">0 / 1500</span>' +
+      '<p class="hint">We also send the page you are on, the app version and your device, so we can find the problem. Nothing else.</p>' +
+      '<div class="msg" id="fbMsg" role="status" hidden></div></div>' +
+      '<div class="cta-row"><button type="submit" class="cta">Send</button><button type="button" class="cta ghost" id="fbCancel">Cancel</button></div>' +
+      '<div class="pf-sec"><h3>Your feedback</h3><div class="fb-mine" id="fbMine"><p class="hint">Loading...</p></div></div></form>';
+    var f = modalIn.querySelector("form"), msg = $("#fbMsg");
+    f.details.oninput = function () { $("#fbCount").textContent = f.details.value.length + " / 1500"; };
+    $("#fbCancel").onclick = closeModal;
+    function paintMine(list) {
+      var box = $("#fbMine"); if (!box) return;
+      if (!list.length) { box.innerHTML = '<p class="hint">Nothing yet. Thank you for helping!</p>'; return; }
+      box.innerHTML = list.map(function (x) {
+        return '<div class="fb-item"><div class="row"><b>' + esc(x.title) + '</b><span class="fb-st ' + x.status + '">' + (FB_STATUS[x.status] || x.status) + '</span></div>' +
+          (x.note ? '<small>' + esc(x.note) + '</small>' : '') + '</div>';
+      }).join("");
+    }
+    function loadMine() { api.myFeedback().then(paintMine, function () { var b = $("#fbMine"); if (b) b.innerHTML = '<p class="hint">Could not load your feedback.</p>'; }); }
+    loadMine();
+    f.onsubmit = function (e) {
+      e.preventDefault();
+      var title = f.title.value.trim(); msg.hidden = true;
+      if (title.length < 3) { msg.textContent = "Add a short title."; msg.hidden = false; return; }
+      var btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+      api.sendFeedback(f.kind.value, title, f.details.value, fbContext()).then(function () {
+        say("Thanks! We read everything.", 3000); f.title.value = ""; f.details.value = ""; $("#fbCount").textContent = "0 / 1500"; btn.disabled = false; loadMine();
+      }, function (er) { btn.disabled = false; msg.textContent = explain(er); msg.hidden = false; });
+    };
+    return f.title;
+  }
+  $("#feedbackBtn").onclick = function () { feedbackForm(); };
+  /* Players who are past the first-pack tips get the welcome the first time they open the app (once). */
+  if (!tourOn) setTimeout(function () { betaWelcome(); }, 3000);
+  /* Shown once to a new player after the first-pack tips: what the beta is and how to tell us what's broken. */
+  var BETA_KEY = "frcpacks.beta";
+  function betaWelcome() {
+    try { if (localStorage.getItem(BETA_KEY)) return; } catch (e) {}
+    try { localStorage.setItem(BETA_KEY, "1"); } catch (e) {}
+    present(function () {
+      modalIn.innerHTML = '<div class="profile fb-welcome"><div class="pf-sec"><h3>You are a beta tester</h3>' +
+        '<p>FRC Packs is still being built, and you are one of the first people playing. Thank you!</p>' +
+        '<ul><li>Things will break. Tell us when they do.</li><li>Have an idea? Tell us that too.</li><li>Your cards stay safe, but the game may get a reset before launch.</li></ul>' +
+        '<p>Find <b>Send feedback</b> in Settings any time.</p></div>' +
+        '<div class="cta-row"><button type="button" class="cta" id="betaFb">Send feedback</button><button type="button" class="cta ghost" id="betaOk">Got it</button></div></div>';
+      $("#betaOk").onclick = closeModal;
+      $("#betaFb").onclick = function () { closeAll(feedbackForm); };
+      return $("#betaOk");
+    });
   }
   modal.addEventListener("click", function (e) { if (e.target === modal) closeAll(); });
   addEventListener("keydown", function (e) {

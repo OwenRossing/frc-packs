@@ -1320,3 +1320,23 @@ body.has-notice .app > .top { top: calc(36px + env(safe-area-inset-top)); }
 .ftb .sn.low { color: #ffd34d; text-shadow: 0 0 8px rgba(255,211,77,.7); }
 .ftb .sn.match { color: var(--tide); text-shadow: 0 0 8px rgba(39,211,195,.8); }
 .card[data-tier="mythic"] .inner.v2::after { display: none; }
+
+/* ---------- beta and feedback ---------- */
+.beta-tag { display: inline-block; vertical-align: 4px; margin-left: 4px; padding: 1px 7px; border-radius: 99px; background: #ffd34d; color: #2a1c00; font: 700 10px var(--body); letter-spacing: .12em; text-transform: uppercase; }
+.fb-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.fb-kinds label { flex: 1 1 0; min-width: 90px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 8px; border-radius: 10px; background: #08202a; border: 1px solid var(--line); cursor: pointer; font-size: 14px; font-weight: 700; color: var(--foam); }
+.fb-kinds label:has(input:checked) { border-color: var(--tide); box-shadow: inset 0 0 0 1px var(--tide); }
+.fb-kinds input { accent-color: var(--tide); }
+.feedback textarea, .feedback input[type=text] { width: 100%; }
+.feedback textarea { resize: vertical; min-height: 110px; }
+.fb-count { justify-self: end; font-size: 11px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.fb-mine { display: grid; gap: 8px; }
+.fb-item { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; background: #08202a; border: 1px solid var(--line); }
+.fb-item .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fb-item b { font-size: 14px; color: var(--foam); overflow-wrap: anywhere; }
+.fb-item small { color: var(--ink-dim); font-size: 12px; overflow-wrap: anywhere; }
+.fb-st { flex: none; padding: 2px 9px; border-radius: 99px; font: 700 10px var(--body); letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--line); color: var(--ink-dim); }
+.fb-st.planned { color: #d7b8ff; border-color: rgba(180,120,255,.5); }
+.fb-st.done { color: var(--tide); border-color: rgba(39,211,195,.5); }
+.fb-welcome p { margin: 0; color: var(--ink); line-height: 1.5; font-size: 15px; }
+.fb-welcome ul { margin: 0; padding-left: 20px; color: var(--ink); line-height: 1.6; font-size: 15px; }

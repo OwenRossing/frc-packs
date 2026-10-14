@@ -66,3 +66,7 @@ a.cta { text-decoration: none; display: inline-block; }
 #auditOut { display: grid; gap: 4px; }
 #auditOut .good { color: var(--tide); margin: 0; font-weight: 600; } #auditOut .bad { color: #ffb4a2; margin: 0; font-weight: 600; }
 @media (max-width: 520px) { .lrow { grid-template-columns: 1fr 1fr; } .lrow span { grid-column: 1 / -1; } }
+
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.fb-details { white-space: pre-wrap; color: var(--ink); font-size: 13px; }
+.fb-ctx { font-size: 11px; opacity: .75; overflow-wrap: anywhere; }

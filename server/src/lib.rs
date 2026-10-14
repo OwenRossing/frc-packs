@@ -6,6 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod db;
 pub mod error;
+pub mod feedback;
 pub mod missions;
 pub mod model;
 pub mod packs;
@@ -63,7 +64,7 @@ pub fn app(db: Db, cfg: Config) -> anyhow::Result<Router> {
         limiter: accounts::Limiter::default(),
     });
     let mut router = Router::new()
-        .nest("/api/admin", admin::routes())
+        .nest("/api/admin", admin::routes().merge(feedback::admin_routes()))
         .nest(
             "/api",
             api::routes()
@@ -72,6 +73,7 @@ pub fn app(db: Db, cfg: Config) -> anyhow::Result<Router> {
                 .merge(missions::routes())
                 .merge(profiles::routes())
                 .merge(reports::routes())
+                .merge(feedback::routes())
                 .merge(specials::routes()),
         )
         .nest_service("/photos", ServeDir::new(cfg.data_dir.join("photos")))
