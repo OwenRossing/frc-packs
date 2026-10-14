@@ -1,8 +1,10 @@
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import { Template } from "aws-cdk-lib/assertions";
-import { config, fqdn } from "../lib/config";
+import { config, contentSecurityPolicy, fqdn } from "../lib/config";
 import { PacksBackendStack } from "../lib/packs-backend-stack";
 import { PacksCertificateStack } from "../lib/packs-certificate-stack";
 import { PacksFrontendStack } from "../lib/packs-frontend-stack";
@@ -20,6 +22,7 @@ const frontendStack = new PacksFrontendStack(app, config.stackNames.frontend, {
   crossRegionReferences: true,
   certificate: certificateStack.certificate,
   api: backendStack.api,
+  originSecret: backendStack.originSecret.secretValue.unsafeUnwrap(),
 });
 
 assert.equal(certificateStack.stackName, "packs-certificate");
@@ -44,10 +47,27 @@ backendTemplate.resourceCountIs("AWS::DynamoDB::Table", 1);
 backendTemplate.resourceCountIs("AWS::RDS::DBInstance", 0);
 backendTemplate.resourceCountIs("AWS::RDS::DBCluster", 0);
 backendTemplate.resourceCountIs("AWS::EC2::VPC", 0);
-backendTemplate.resourceCountIs("AWS::Events::Rule", 0);
+backendTemplate.resourceCountIs("AWS::Lambda::Function", 2);
+// A schedule runs the "free pack ready" check; alarms and the budget only exist once an alert email is configured.
+backendTemplate.resourceCountIs("AWS::Events::Rule", 1);
+backendTemplate.hasResourceProperties("AWS::Events::Rule", {
+  ScheduleExpression: `rate(${config.readyCheckMinutes} minutes)`,
+});
+backendTemplate.resourceCountIs("AWS::CloudWatch::Alarm", config.alertEmail ? 4 : 0);
+backendTemplate.resourceCountIs("AWS::Budgets::Budget", config.alertEmail ? 1 : 0);
+backendTemplate.resourceCountIs("AWS::SecretsManager::Secret", 1);
+backendTemplate.hasResourceProperties("AWS::ApiGatewayV2::Stage", {
+  DefaultRouteSettings: {
+    ThrottlingRateLimit: config.apiThrottle.rate,
+    ThrottlingBurstLimit: config.apiThrottle.burst,
+  },
+});
 const backendResources = backendTemplate.toJSON().Resources as Record<string, { Type: string; Properties?: Record<string, unknown> }>;
-const server = Object.values(backendResources).find((resource) =>
+const lambdas = Object.values(backendResources).filter((resource) =>
   resource.Type === "AWS::Lambda::Function" && resource.Properties?.Runtime === "provided.al2023");
+const readyCheckFn = lambdas.find((fn) => (fn.Properties?.Environment as { Variables: Record<string, unknown> }).Variables.LAMBDA_TASK === "ready-check");
+assert.ok(readyCheckFn, "the scheduled free-pack check runs as its own function");
+const server = lambdas.find((fn) => fn !== readyCheckFn);
 assert.ok(server);
 assert.deepEqual(server.Properties?.Architectures, ["arm64"]);
 const environment = (server.Properties?.Environment as { Variables: Record<string, unknown> }).Variables;
@@ -56,6 +76,8 @@ assert.equal(environment.DATA_DIR, "/var/task/data");
 assert.deepEqual(environment.TABLE_NAME, { Ref: backendTemplate.getResourceId("AWS::DynamoDB::Table") });
 assert.equal(environment.ADMIN_ONLY, "0");
 assert.equal("DATABASE_URL" in environment, false);
+assert.ok(environment.ORIGIN_SECRET, "the API only answers requests that carry CloudFront's secret");
+assert.equal("LAMBDA_TASK" in environment, false);
 backendTemplate.hasResourceProperties("AWS::DynamoDB::Table", {
   BillingMode: "PAY_PER_REQUEST",
   KeySchema: [
@@ -87,6 +109,7 @@ const tableResource = Object.values(backendTemplate.toJSON().Resources as Record
   .find(({ Type }) => Type === "AWS::DynamoDB::Table");
 assert.equal(tableResource?.DeletionPolicy, "Retain");
 assert.equal(tableResource?.UpdateReplacePolicy, "Retain");
+backendTemplate.hasResourceProperties("AWS::DynamoDB::Table", { DeletionProtectionEnabled: true });
 assert.match(JSON.stringify(backendResources), /dynamodb:TransactWriteItems/);
 assert.match(JSON.stringify(backendResources), /dynamodb:DescribeTable/);
 
@@ -121,8 +144,40 @@ for (const pathPattern of ["/api", "/api/*"]) {
   assert.ok(behavior);
   assert.ok(behavior.AllowedMethods?.includes("POST"));
   assert.equal(behavior.CachePolicyId, cloudfront.CachePolicy.CACHING_DISABLED.cachePolicyId);
-  assert.equal(behavior.OriginRequestPolicyId, cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER.originRequestPolicyId);
+  assert.ok(behavior.OriginRequestPolicyId);
+  assert.notEqual(behavior.OriginRequestPolicyId, cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER.originRequestPolicyId);
 }
+// The API must see the visitor's address (for sign-in limits) and the idempotency key, but not the browser's Host.
+frontendTemplate.hasResourceProperties("AWS::CloudFront::OriginRequestPolicy", {
+  OriginRequestPolicyConfig: {
+    HeadersConfig: {
+      HeaderBehavior: "whitelist",
+      Headers: ["CloudFront-Viewer-Address", "Idempotency-Key", "Accept"],
+    },
+    CookiesConfig: { CookieBehavior: "all" },
+  },
+});
+// Every behavior sends the security headers, and the API origin carries the shared secret.
+const securityHeadersId = Object.entries(frontendResources).find(([, r]) => r.Type === "AWS::CloudFront::ResponseHeadersPolicy")?.[0];
+assert.ok(securityHeadersId);
+for (const behavior of [distributionConfig.DefaultCacheBehavior, ...distributionConfig.CacheBehaviors]) {
+  assert.deepEqual((behavior as { ResponseHeadersPolicyId?: unknown }).ResponseHeadersPolicyId, { Ref: securityHeadersId });
+}
+frontendTemplate.hasResourceProperties("AWS::CloudFront::ResponseHeadersPolicy", {
+  ResponseHeadersPolicyConfig: {
+    SecurityHeadersConfig: {
+      ContentSecurityPolicy: { ContentSecurityPolicy: contentSecurityPolicy, Override: true },
+      FrameOptions: { FrameOption: "DENY", Override: true },
+      ContentTypeOptions: { Override: true },
+    },
+  },
+});
+assert.match(JSON.stringify(distribution.Properties), /X-Origin-Secret/);
+// The server sends the same CSP for pages it serves itself; the two must not drift apart.
+const serverSource = fs.readFileSync(path.resolve(__dirname, "../../server/src/lib.rs"), "utf8");
+const rustBlock = /CONTENT_SECURITY_POLICY: &str = concat!\(([^)]*)\);/.exec(serverSource)?.[1];
+assert.ok(rustBlock, "found the CSP in server/src/lib.rs");
+assert.equal([...rustBlock.matchAll(/"([^"]*)"/g)].map((m) => m[1]).join(""), contentSecurityPolicy);
 for (const pathPattern of ["/assets/*", "/photos/*"]) {
   const behavior = distributionConfig.CacheBehaviors.find((candidate) => candidate.PathPattern === pathPattern);
   assert.equal(behavior?.CachePolicyId, cloudfront.CachePolicy.CACHING_OPTIMIZED.cachePolicyId);

@@ -21,4 +21,5 @@ new PacksFrontendStack(app, config.stackNames.frontend, {
   crossRegionReferences: true,
   certificate: certificate.certificate,
   api: backend.api,
+  originSecret: backend.originSecret.secretValue.unsafeUnwrap(),
 });

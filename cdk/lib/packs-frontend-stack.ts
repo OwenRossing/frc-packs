@@ -9,13 +9,15 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
-import { config, fqdn } from "./config";
+import { config, contentSecurityPolicy, fqdn } from "./config";
 
 const BUILD_DIR = path.resolve(__dirname, "../.build");
 
 export interface PacksFrontendStackProps extends cdk.StackProps {
   certificate: acm.ICertificate;
   api: apigatewayv2.HttpApi;
+  /** Sent to the API with every request so it can tell they came through this distribution. */
+  originSecret: string;
 }
 
 export class PacksFrontendStack extends cdk.Stack {
@@ -33,8 +35,31 @@ export class PacksFrontendStack extends cdk.Stack {
     const siteOrigin = origins.S3BucketOrigin.withOriginAccessControl(siteBucket);
     const apiOrigin = new origins.HttpOrigin(
       `${props.api.apiId}.execute-api.${this.region}.${cdk.Aws.URL_SUFFIX}`,
-      { protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY },
+      {
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        customHeaders: { "X-Origin-Secret": props.originSecret },
+      },
     );
+    // Not "all viewer headers": that policy also passes the browser's Host header, which API Gateway rejects, and
+    // leaves out CloudFront-Viewer-Address, which the server needs to count failed sign-ins per visitor.
+    const apiRequests = new cloudfront.OriginRequestPolicy(this, "ApiRequests", {
+      headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
+        "CloudFront-Viewer-Address",
+        "Idempotency-Key",
+        "Accept",
+      ),
+      cookieBehavior: cloudfront.OriginRequestCookieBehavior.all(),
+      queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
+    });
+    const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, "SecurityHeaders", {
+      securityHeadersBehavior: {
+        contentSecurityPolicy: { contentSecurityPolicy, override: true },
+        strictTransportSecurity: { accessControlMaxAge: cdk.Duration.days(365), override: true },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
+      },
+    });
     const pathRewrite = new cloudfront.Function(this, "StaticPagePaths", {
       code: cloudfront.FunctionCode.fromInline(
         "function handler(event) { var request = event.request; if (request.uri === '/admin') request.uri = '/admin.html'; if (request.uri === '/privacy') request.uri = '/privacy.html'; return request; }",
@@ -47,6 +72,7 @@ export class PacksFrontendStack extends cdk.Stack {
       defaultBehavior: {
         origin: siteOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        responseHeadersPolicy: securityHeaders,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         functionAssociations: [{
           function: pathRewrite,
@@ -59,30 +85,35 @@ export class PacksFrontendStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          originRequestPolicy: apiRequests,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          responseHeadersPolicy: securityHeaders,
         },
         "/api/*": {
           origin: apiOrigin,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          originRequestPolicy: apiRequests,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          responseHeadersPolicy: securityHeaders,
         },
         "/assets/*": {
           origin: siteOrigin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          responseHeadersPolicy: securityHeaders,
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         },
         "/photos/*": {
           origin: siteOrigin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          responseHeadersPolicy: securityHeaders,
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         },
         "/packs/*": {
           origin: siteOrigin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          responseHeadersPolicy: securityHeaders,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         },
       },
