@@ -8,10 +8,11 @@ use std::time::{Duration, Instant};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use rand::{Rng, RngCore};
-use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::auth;
+use crate::db::{Cond, Db, DbResult, Tx, get_s, key, n, pad, s};
+use crate::model::{self, PackRow, Profile, now_ms};
 
 /// Usernames: 3 to 20 letters, digits or underscores. Unique ignoring case.
 pub fn valid_username(name: &str) -> bool {
@@ -21,9 +22,38 @@ pub fn valid_username(name: &str) -> bool {
 /// Words no username may contain anywhere: slurs, profanity, and sexual or hateful terms. Usernames are public
 /// (trades, profiles), and many players are students. Only roots that don't hide inside ordinary words.
 const BLOCKED_ANYWHERE: &[&str] = &[
-    "fuck", "fuk", "fck", "shit", "bitch", "cunt", "pussy", "asshole", "bastard", "whore", "slut", "nigg", "nigr",
-    "faggot", "retard", "kike", "chink", "tranny", "wetback", "beaner", "hitler", "rapist", "molest", "porn", "penis",
-    "vagina", "dildo", "jizz", "horny", "milf", "hentai", "killyourself",
+    "fuck",
+    "fuk",
+    "fck",
+    "shit",
+    "bitch",
+    "cunt",
+    "pussy",
+    "asshole",
+    "bastard",
+    "whore",
+    "slut",
+    "nigg",
+    "nigr",
+    "faggot",
+    "retard",
+    "kike",
+    "chink",
+    "tranny",
+    "wetback",
+    "beaner",
+    "hitler",
+    "rapist",
+    "molest",
+    "porn",
+    "penis",
+    "vagina",
+    "dildo",
+    "jizz",
+    "horny",
+    "milf",
+    "hentai",
+    "killyourself",
 ];
 
 /// Words blocked only as a whole word (split on underscores and digits), because they hide inside ordinary words:
@@ -113,51 +143,101 @@ pub fn new_password() -> String {
     grouped(&random_from(b"abcdefghjkmnpqrstuvwxyz23456789", 16))
 }
 
-/// Makes an account with its starting packs. The username must be valid; a taken one fails the insert.
-pub async fn create(
-    c: &mut PgConnection,
-    username: &str,
-    password_hash: &str,
-    invite: Option<&str>,
-    admin: bool,
-    start_pack: &str,
-    start_packs: i32,
-) -> sqlx::Result<Uuid> {
-    let id = Uuid::new_v4();
-    sqlx::query(
-        "insert into users (id, username, password_hash, invite_code, is_admin, next_claim_at)
-         values ($1, $2, $3, $4, $5, now())",
-    )
-    .bind(id)
-    .bind(username)
-    .bind(password_hash)
-    .bind(invite)
-    .bind(admin)
-    .execute(&mut *c)
-    .await?;
-    sqlx::query("select set_config('frc.reason', 'new account', true)").execute(&mut *c).await?;
-    sqlx::query("insert into user_packs (user_id, pack_id, sealed) values ($1, $2, $3)")
-        .bind(id)
-        .bind(start_pack)
-        .bind(start_packs)
-        .execute(&mut *c)
-        .await?;
-    Ok(id)
+/// A new account's profile (not saved yet). Its first free pack is ready right away.
+pub fn new_profile(username: &str, password_hash: &str, invite: Option<&str>, admin: bool) -> Profile {
+    let now = now_ms();
+    Profile {
+        id: Uuid::new_v4(),
+        username: Some(username.to_string()),
+        password_hash: Some(password_hash.to_string()),
+        is_admin: admin,
+        invite_code: invite.map(String::from),
+        next_claim_at: now,
+        created_at: now,
+        ..Default::default()
+    }
 }
 
-/// Signs the account in on one more device and returns the cookie token.
-pub async fn new_session(c: &mut PgConnection, user: Uuid) -> sqlx::Result<String> {
+/// Adds a new account to the transaction: the profile, its name (which must not be taken, label "name") and its
+/// starting packs.
+pub fn create(tx: &mut Tx, p: &mut Profile, start_pack: &str, start_packs: i32) {
+    claim_name(tx, p.id, p.username.as_deref().unwrap_or_default());
+    let before = PackRow::new(start_pack);
+    let after = PackRow { sealed: start_packs, ..before.clone() };
+    model::save_pack(tx, p.id, &before, &after, "new account");
+    model::save_user(tx, p, 0, "new account");
+}
+
+fn name_pk(name: &str) -> String {
+    format!("NAME#{}", name.to_lowercase())
+}
+
+/// Takes a username for an account; fails the transaction (label "name") if it's taken, ignoring case.
+fn claim_name(tx: &mut Tx, user: Uuid, name: &str) {
+    let mut it = key(name_pk(name), "NAME");
+    it.insert("user_id".into(), s(user.to_string()));
+    tx.put_if("name", it, Some(Cond::absent()));
+}
+
+/// Gives the player a new username in the transaction (the caller saves the profile). The old name is freed.
+pub fn rename(tx: &mut Tx, p: &mut Profile, name: &str) {
+    let old = p.username.clone().unwrap_or_default();
+    if old.to_lowercase() != name.to_lowercase() {
+        claim_name(tx, p.id, name);
+        if !old.is_empty() {
+            tx.delete_if("", &name_pk(&old), "NAME", Some(Cond::new("user_id = :me").val(":me", s(p.id.to_string()))));
+        }
+    }
+    p.username = Some(name.to_string());
+}
+
+/// The account with this username, ignoring case.
+pub async fn by_name(db: &Db, name: &str) -> DbResult<Option<Profile>> {
+    let Some(it) = db.get(&name_pk(name.trim()), "NAME").await? else { return Ok(None) };
+    let Some(id) = get_s(&it, "user_id").and_then(|v| Uuid::parse_str(&v).ok()) else { return Ok(None) };
+    model::profile(db, id).await
+}
+
+/// Signs the account in on one more device (in the transaction) and returns the cookie token.
+pub fn new_session(tx: &mut Tx, user: Uuid) -> String {
     let token = auth::new_token();
-    sqlx::query("insert into sessions (token_hash, user_id) values ($1, $2)")
-        .bind(auth::hash(&token))
-        .bind(user)
-        .execute(c)
-        .await?;
-    Ok(token)
+    let now = now_ms();
+    let mut it = key(auth::session_pk(&token), "SESSION");
+    it.insert("user_id".into(), s(user.to_string()));
+    it.insert("created_at".into(), n(now));
+    it.insert("expires_at".into(), n(now / 1000 + auth::SESSION_DAYS * 86_400));
+    it.insert("gsi2pk".into(), s(model::upk(user)));
+    it.insert("gsi2sk".into(), s(format!("SESSION#{now}")));
+    tx.put(it);
+    token
 }
 
-pub fn is_unique_violation(e: &sqlx::Error) -> bool {
-    e.as_database_error().is_some_and(|d| d.is_unique_violation())
+/// Signs the account out everywhere, except the session `keep` (its pk) if given.
+pub async fn end_sessions(db: &Db, user: Uuid, keep: Option<&str>) -> DbResult<()> {
+    for it in db.index("gsi2", &model::upk(user), None, false).await? {
+        let pk = get_s(&it, "pk").unwrap_or_default();
+        if get_s(&it, "sk").as_deref() == Some("SESSION") && Some(pk.as_str()) != keep {
+            db.delete(&pk, "SESSION").await?;
+        }
+    }
+    Ok(())
+}
+
+/// Saves an invite code.
+pub async fn put_invite(db: &Db, code: &str, note: &str, max_uses: i32, by: Option<Uuid>) -> DbResult<()> {
+    let now = now_ms();
+    let mut it = key(format!("INV#{code}"), "INVITE");
+    it.insert("code".into(), s(code));
+    it.insert("note".into(), s(note));
+    it.insert("max_uses".into(), n(max_uses));
+    it.insert("uses".into(), n(0));
+    it.insert("created_at".into(), n(now));
+    if let Some(u) = by {
+        it.insert("created_by".into(), s(u.to_string()));
+    }
+    it.insert("gsi1pk".into(), s("INVITES"));
+    it.insert("gsi1sk".into(), s(format!("{}#{code}", pad(now, 15))));
+    db.put(it).await
 }
 
 /// Counts failed sign-ins and invite codes, per username and per visitor, so passwords and codes can't be guessed by
@@ -199,10 +279,24 @@ mod tests {
 
     #[test]
     fn username_filter() {
-        for bad in ["fuckbot", "sh1tposter", "f_u_c_k", "B1TCH_x", "big_dick", "dick", "Nazi254", "sexy_robot", "xXx_420"] {
+        for bad in
+            ["fuckbot", "sh1tposter", "f_u_c_k", "B1TCH_x", "big_dick", "dick", "Nazi254", "sexy_robot", "xXx_420"]
+        {
             assert!(!decent_username(bad), "{bad} should be blocked");
         }
-        for ok in ["grapefruit", "torpedo_254", "spicy_bots", "peacock", "Dickens", "Cassie", "assembler", "classy", "cumulus", "Robo_Sexton", "analyst"] {
+        for ok in [
+            "grapefruit",
+            "torpedo_254",
+            "spicy_bots",
+            "peacock",
+            "Dickens",
+            "Cassie",
+            "assembler",
+            "classy",
+            "cumulus",
+            "Robo_Sexton",
+            "analyst",
+        ] {
             assert!(decent_username(ok), "{ok} should be allowed");
         }
     }

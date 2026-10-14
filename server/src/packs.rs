@@ -84,7 +84,12 @@ pub struct Boost {
 impl Default for Boost {
     fn default() -> Boost {
         Boost {
-            slots: HashMap::from([(Tier::Common, 0.40), (Tier::Uncommon, 0.35), (Tier::Rare, 0.20), (Tier::Legendary, 0.05)]),
+            slots: HashMap::from([
+                (Tier::Common, 0.40),
+                (Tier::Uncommon, 0.35),
+                (Tier::Rare, 0.20),
+                (Tier::Legendary, 0.05),
+            ]),
             last: HashMap::from([(Tier::Rare, 0.60), (Tier::Legendary, 0.40)]),
             mythic_mult: 4.0,
         }
@@ -138,7 +143,12 @@ impl Pack {
             }
         }
         let o = &recipe.odds;
-        for (name, w) in [("slots", &o.slots), ("last", &o.last), ("boosted slots", &o.boosted.slots), ("boosted last", &o.boosted.last)] {
+        for (name, w) in [
+            ("slots", &o.slots),
+            ("last", &o.last),
+            ("boosted slots", &o.boosted.slots),
+            ("boosted last", &o.boosted.last),
+        ] {
             let sum: f64 = w.values().sum();
             if (sum - 1.0).abs() > 1e-9 {
                 bail!("pack {}: {name} odds add up to {sum}, not 1", recipe.id);

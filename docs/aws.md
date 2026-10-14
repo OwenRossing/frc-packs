@@ -1,47 +1,87 @@
-# AWS deployment infrastructure
-
-The CDK app in `cdk/` defines the infrastructure for `https://packs.7028robotics.com` using three stacks:
-
-- `packs-certificate` in `us-east-1` creates the ACM certificate required by CloudFront.
-- `packs-backend` in `us-east-2` creates the HTTP API and Rust Lambda.
-- `packs-frontend` in `us-east-2` creates the S3 site bucket, CloudFront distribution, and (when configured) Route 53 alias record.
-
-Stack names, regions, domain, subdomain, and hosted zone ID are in [cdk/config.ts](../cdk/config.ts). Set `HOSTED_ZONE_ID` to the Route 53 hosted zone ID for `7028robotics.com` to enable DNS certificate validation and create the `packs` alias record automatically. Without it, certificate DNS validation is manual and the distribution name is emitted as an output for manual DNS configuration.
+# FRC Packs on AWS
 
 ```
-Browser
-  └── CloudFront (packs.7028robotics.com)
-       ├── /api/* ──► API Gateway HTTP API ──► Rust Lambda
-       └── other paths ──► private S3 bucket (built UI, photos, pack recipes)
+             CloudFront (packs.owenrossing.me)
+              ├── /api/*  ──►  Lambda (the Rust server, built with --features lambda)  ──►  DynamoDB (one table)
+              └── everything else  ──►  S3 (the built site, robot photos, pack recipes)
 ```
 
-## Scope and prerequisites
+Everything is pay-per-use, so a quiet site costs close to nothing: DynamoDB on-demand, Lambda per request, S3 and
+CloudFront per byte. The data layout and how cheating is kept out are in [dynamodb.md](dynamodb.md).
 
-- The stack creates a private, encrypted S3 bucket; CloudFront with origin access control and `/admin` and `/privacy` path rewrites; an API Gateway HTTP API; and an ARM64 Lambda using the `provided.al2023` runtime.
-- The frontend, robot photos, and pack recipes are packaged as S3 deployment assets. Cache headers distinguish hashed assets, photos, and revalidated pages/recipes.
-- The Lambda package includes the Rust `bootstrap` executable and `data/packs`. It sets `DATA_DIR` and `COOKIE_SECURE`, but intentionally does not configure a database URL, database, VPC, subnets, security groups, or database connectivity. The current server requires Postgres and will not start until the database is configured later.
-- Notification infrastructure is excluded. No EventBridge schedule or other replacement notification service is created.
-- With `HOSTED_ZONE_ID` configured, the certificate stack uses Route 53 DNS validation and the frontend stack creates the CloudFront alias record. Without it, deploy the certificate stack first, add its ACM validation CNAME manually, and wait for the certificate to become `ISSUED` before deploying the frontend; then point `packs.7028robotics.com` at the `DistributionDomainName` output using the domain's DNS provider.
-- The CDK stack itself, API Gateway, Lambda, and S3 bucket are in `us-east-2`. CloudFront is a global service.
+The whole setup is one CloudFormation stack, `deploy/aws/template.yaml`, and `deploy/aws/deploy.sh` does each kind of
+change in one command.
 
-## Build and verify (no deployment)
+## What you need
 
-Requirements: Node.js, npm, Rust, `cargo-lambda`, and the repository's normal frontend build dependencies.
+- The AWS CLI, signed in to the account (`aws configure sso`, or `aws sso login` once it's set up).
+- Rust with `cargo lambda` (`pip install cargo-lambda`), which builds the server for Lambda's ARM Linux.
+- Node 20+ for the site.
+- An HTTPS certificate for the domain in **us-east-1** (CloudFront only takes certificates from there).
 
-```sh
-cd cdk
-npm ci
-cd ../web && npm ci
-cd ../cdk
-npm run build:artifacts
-npm test
-npx cdk synth
-```
+## First time
 
-`build:artifacts` builds the Vite frontend and the Rust Lambda binary, then stages site assets and the Lambda package under the ignored `.build/` directory. `npm test` synthesizes the stack and checks key resource counts, API paths, cache behaviors, and excluded database/notification resources. `cdk synth` verifies CloudFormation output. These commands do not deploy or query AWS. Do not run `cdk deploy` as part of this verification.
+1. **Certificate.** In AWS Certificate Manager (region us-east-1), request a public certificate for
+   `packs.owenrossing.me` with DNS validation. ACM shows a CNAME record; add it in Cloudflare (DNS only, proxy off).
+   When the certificate says Issued, copy its ARN.
+2. **A bucket for the server's code.** Any private bucket, e.g. `aws s3 mb s3://frc-packs-code-<something> --region us-east-1`.
+3. **Settings.** Make `deploy/aws/.env` (it isn't committed):
+   ```sh
+   STACK=frc-packs
+   REGION=us-east-1
+   DOMAIN=packs.owenrossing.me
+   CERT_ARN=arn:aws:acm:us-east-1:...:certificate/...
+   CODE_BUCKET=frc-packs-code-<something>
+   ADMIN_ONLY=1          # only admin accounts can sign in while you test; set 0 to open it up
+   ```
+4. **Deploy.**
+   ```sh
+   ./deploy/aws/deploy.sh server   # builds the server and uploads it
+   ./deploy/aws/deploy.sh infra    # makes the stack: table, Lambda, bucket, CloudFront (CloudFront takes a few minutes)
+   ./deploy/aws/deploy.sh site     # builds the site and uploads it
+   ```
+   `infra` prints the CloudFront address. In Cloudflare, point `packs` at it with a CNAME, **DNS only (proxy off)**.
+5. **The admin account.** Run the server's command against the AWS table from your computer:
+   ```sh
+   cd server && TABLE_NAME=<the TableName output> AWS_REGION=us-east-1 cargo run -- create-admin
+   ```
+   It prints the password once.
 
-The CDK deployment creates no database. Once one is available, configure `DATABASE_URL` and the appropriate connectivity separately before expecting the Lambda to start.
+## Every change after that
 
-## Existing Lambda notes
+| Changed | Run |
+| --- | --- |
+| The site (`web/`), photos or pack recipes | `./deploy/aws/deploy.sh site` |
+| The server (`server/`) | `./deploy/aws/deploy.sh server` |
+| Both | `./deploy/aws/deploy.sh all` |
+| The template, or `ADMIN_ONLY` | `./deploy/aws/deploy.sh infra` |
 
-The same Rust executable supports normal server execution and Lambda via the `lambda` Cargo feature. See [server/Cargo.toml](../server/Cargo.toml) and [server/src/main.rs](../server/src/main.rs). Lambda execution uses the API Gateway HTTP API integration, with `/api` paths, cookies, query strings, and request headers forwarded and API caching disabled.
+Each takes about a minute. Nothing is down while it runs: Lambda switches to the new code between requests, and
+CloudFront's cache is cleared after the site upload.
+
+## Things to know
+
+- **Admin-only mode.** With `ADMIN_ONLY=1` nobody but admin accounts can sign in, sign up or play. Flip it to `0` and
+  run `deploy.sh infra` to open the site.
+- **Free-pack notifications.** On a normal server a loop checks every minute. Lambda only runs while answering
+  requests, so that check needs a schedule: an EventBridge rule that runs the function's `ready-check` (not set up
+  yet; trade notifications work without it).
+- **Sign-in limits** count failed guesses in memory, so each warm Lambda counts separately. It still slows guessing; for
+  a hard cap, add AWS WAF rate rules on `/api/login`.
+- **Backups.** The table has point-in-time recovery on: it can be restored to any second in the last 35 days.
+- **Cost.** At a team's scale: DynamoDB on-demand is cents a month, Lambda and CloudFront stay in or near the free tier,
+  and S3 is under a dollar. Check the AWS pricing pages before relying on that.
+
+## Deploying from GitHub
+
+`.github/workflows/deploy.yml` does the same on a Linux machine whenever you push to `main` (or from the Actions tab):
+it runs the server tests against a local DynamoDB first, and only then updates AWS. This is also the reliable way to
+build the Lambda package: building it on Windows needs Zig, which can be fussy there.
+
+One-time setup:
+
+1. In AWS IAM, add GitHub as an identity provider (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`).
+2. Make a role that `repo:OwenRossing/frc-packs:ref:refs/heads/main` can assume, allowed to update the stack, the
+   function, the code bucket and the site bucket, and to clear the CloudFront cache.
+3. In the repository's Settings → Secrets and variables → Actions → Variables, set `AWS_ROLE_ARN`, `CODE_BUCKET`
+   and (if not us-east-1) `AWS_REGION`. Until `AWS_ROLE_ARN` is set the workflow does nothing.

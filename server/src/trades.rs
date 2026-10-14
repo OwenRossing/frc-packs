@@ -1,26 +1,34 @@
 //! Trading cards between players under /api: find a player, see what they have, offer some of your cards for some of
 //! theirs, and accept, decline or cancel offers. Specific copies change hands, so serial numbers go with the cards.
+//!
+//! Accepting is one DynamoDB transaction over both players (each on condition nothing else changed them since they
+//! were read), every card (each must still exist where the offer says), the special cards (each must still belong to
+//! the giver) and the offer itself (still open). Any of those failing means nothing moves.
+
+use std::collections::HashSet;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::Shared;
-use crate::api::{self, CollectionOut};
+use crate::accounts;
+use crate::api::{self, CollectionOut, IdemKey};
 use crate::auth::User;
+use crate::db::{Cond, Db, DbError, Item, Tx, from_item, get_s, item, key, n, pad, s as sv};
 use crate::error::{ApiError, ApiResult};
+use crate::model::{self, CardRow, FeedEvent, PackRow, Profile, now_ms, upk};
 use crate::packs::{Pack, Tier};
 use crate::push;
+use crate::retry;
 
 /// Cards per side of one trade, and offers one player can have open at once.
 pub const MAX_CARDS: usize = 5;
-pub const MAX_OPEN: i64 = 20;
+pub const MAX_OPEN: usize = 20;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -37,37 +45,125 @@ fn err(status: StatusCode, code: &'static str) -> ApiError {
     ApiError::new(status, code)
 }
 
+// ---------- the trade item ----------
+
+/// One card in an offer, as it was when offered. The owner is the side it's on.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TradeCard {
+    pub id: i64,
+    pub team: i32,
+    pub tier: String,
+    pub serial: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Trade {
+    pub id: i64,
+    pub from_user: Uuid,
+    pub to_user: Uuid,
+    pub pack: String,
+    /// Cards from_user gives, and cards from_user gets from to_user.
+    pub give: Vec<TradeCard>,
+    pub want: Vec<TradeCard>,
+    #[serde(default)]
+    pub give_packs: i32,
+    #[serde(default)]
+    pub want_packs: i32,
+    #[serde(default)]
+    pub give_parts: i32,
+    #[serde(default)]
+    pub want_parts: i32,
+    #[serde(default)]
+    pub give_boosted: i32,
+    #[serde(default)]
+    pub want_boosted: i32,
+    #[serde(default)]
+    pub give_specials: Vec<i64>,
+    #[serde(default)]
+    pub want_specials: Vec<i64>,
+    /// open, accepted, declined, cancelled or failed.
+    pub status: String,
+    pub created_at: i64,
+    pub decided_at: Option<i64>,
+    // Indexes: offers a player made (gsi1) and offers made to them (gsi2), newest last.
+    #[serde(default)]
+    pub gsi1pk: String,
+    #[serde(default)]
+    pub gsi1sk: String,
+    #[serde(default)]
+    pub gsi2pk: String,
+    #[serde(default)]
+    pub gsi2sk: String,
+}
+
+fn trade_pk(id: i64) -> String {
+    format!("TRADE#{id}")
+}
+
+async fn get_trade(db: &Db, id: i64) -> ApiResult<Option<Trade>> {
+    Ok(db.get_as(&trade_pk(id), "TRADE").await?)
+}
+
+/// Every trade a player is in, either side, newest first (at most `limit` per side).
+async fn trades_of(db: &Db, user: Uuid, limit: Option<i32>) -> ApiResult<Vec<Trade>> {
+    let tu = format!("TU#{user}");
+    let (made, got) = tokio::try_join!(db.index("gsi1", &tu, limit, true), db.index("gsi2", &tu, limit, true))?;
+    // The indexes catch up a moment after a write; read each trade itself for its current status.
+    let ids: HashSet<i64> = made.iter().chain(got.iter()).filter_map(|it| crate::db::get_n(it, "id")).collect();
+    let keys: Vec<Item> = ids.iter().map(|id| key(trade_pk(*id), "TRADE")).collect();
+    let mut out: Vec<Trade> = db.batch_get(keys).await?.into_iter().map(from_item).collect::<Result<_, _>>()?;
+    out.sort_by_key(|t| std::cmp::Reverse(t.id));
+    Ok(out)
+}
+
+/// A player's open offers, made or received.
+pub async fn open_trades_of(db: &Db, user: Uuid) -> ApiResult<Vec<Trade>> {
+    Ok(trades_of(db, user, None).await?.into_iter().filter(|t| t.status == "open").collect())
+}
+
+// ---------- finding players ----------
+
 #[derive(Deserialize)]
 struct PlayerQuery {
     #[serde(default)]
     q: String,
 }
 
-/// Players whose username starts with or contains `q` (at most 10), for picking who to trade with.
+/// Every account that can play (has a username and isn't turned off).
+pub(crate) async fn all_players(db: &Db) -> ApiResult<Vec<Profile>> {
+    let rows = db.index("gsi1", "USERS", None, false).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|it| from_item::<Profile>(it).ok())
+        .filter(|p| p.username.is_some() && !p.disabled)
+        .collect())
+}
+
+/// Players whose username contains `q` (at most 10; ones starting with it first), for picking who to trade with.
 async fn players(State(s): State<Shared>, user: User, Query(q): Query<PlayerQuery>) -> ApiResult<Json<Vec<String>>> {
     let q = q.q.trim().to_lowercase();
     if q.is_empty() || q.chars().count() > 20 {
         return Ok(Json(vec![]));
     }
-    let names: Vec<String> = sqlx::query_scalar(
-        "select username from users
-         where username is not null and not disabled and id <> $1 and strpos(lower(username), $2) > 0
-         order by strpos(lower(username), $2), lower(username) limit 10",
-    )
-    .bind(user.id)
-    .bind(&q)
-    .fetch_all(&s.db)
-    .await?;
-    Ok(Json(names))
+    let mut names: Vec<(usize, String, String)> = all_players(&s.db)
+        .await?
+        .into_iter()
+        .filter(|p| p.id != user.id)
+        .filter_map(|p| {
+            let name = p.username?;
+            let lower = name.to_lowercase();
+            lower.find(&q).map(|at| (at, lower, name))
+        })
+        .collect();
+    names.sort();
+    Ok(Json(names.into_iter().take(10).map(|n| n.2).collect()))
 }
 
-async fn player_id(c: &mut PgConnection, name: &str) -> ApiResult<Uuid> {
-    let id: Option<Uuid> =
-        sqlx::query_scalar("select id from users where lower(username) = lower($1) and not disabled")
-            .bind(name.trim())
-            .fetch_optional(&mut *c)
-            .await?;
-    id.ok_or(err(StatusCode::NOT_FOUND, "unknown_player"))
+async fn player(db: &Db, name: &str) -> ApiResult<Profile> {
+    accounts::by_name(db, name)
+        .await?
+        .filter(|p| !p.disabled && p.username.is_some())
+        .ok_or(err(StatusCode::NOT_FOUND, "unknown_player"))
 }
 
 /// Another player's cards, so you can ask for some of them.
@@ -77,10 +173,11 @@ async fn player_collection(
     Path((name, pack)): Path<(String, String)>,
 ) -> ApiResult<Json<CollectionOut>> {
     let pack = api::pack(&s, &pack)?;
-    let mut c = s.db.acquire().await?;
-    let id = player_id(&mut c, &name).await?;
-    Ok(Json(api::load_collection(&mut c, id, pack).await?))
+    let p = player(&s.db, &name).await?;
+    Ok(Json(api::load_collection(&s.db, p.id, pack).await?))
 }
+
+// ---------- offering ----------
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,116 +225,78 @@ pub const NEW_ACCOUNT_HOURS: i64 = 24;
 pub const DAILY_PACKS_IN: i64 = 10;
 pub const DAILY_PARTS_IN: i64 = 2_000;
 
-async fn too_new(c: &mut PgConnection, user: Uuid) -> ApiResult<bool> {
-    Ok(sqlx::query_scalar("select created_at > now() - $2 * interval '1 hour' from users where id = $1")
-        .bind(user)
-        .bind(NEW_ACCOUNT_HOURS as f64)
-        .fetch_one(&mut *c)
-        .await?)
+fn too_new(p: &Profile) -> bool {
+    p.created_at > now_ms() - NEW_ACCOUNT_HOURS * 3_600_000
 }
 
-/// Packs and parts a player has taken in through trades in the last 24 hours.
-async fn taken_in(c: &mut PgConnection, user: Uuid) -> ApiResult<(i64, i64)> {
-    Ok(sqlx::query_as(
-        "select coalesce(sum(case when from_user = $1 then want_packs else give_packs end), 0)::bigint,
-                coalesce(sum(case when from_user = $1 then want_parts else give_parts end), 0)::bigint
-         from trades where status = 'accepted' and decided_at > now() - interval '1 day' and (from_user = $1 or to_user = $1)",
-    )
-    .bind(user)
-    .fetch_one(&mut *c)
-    .await?)
-}
-
-async fn over_daily(c: &mut PgConnection, user: Uuid, packs: i32, parts: i32) -> ApiResult<bool> {
+fn over_daily(p: &Profile, packs: i32, parts: i32) -> bool {
     if packs == 0 && parts == 0 {
-        return Ok(false);
+        return false;
     }
-    let (p, q) = taken_in(c, user).await?;
-    Ok(p + i64::from(packs) > DAILY_PACKS_IN || q + i64::from(parts) > DAILY_PARTS_IN)
+    let (a, b) = p.taken_in(now_ms());
+    a + i64::from(packs) > DAILY_PACKS_IN || b + i64::from(parts) > DAILY_PARTS_IN
 }
 
-/// Whether a player has these standard (not boosted) sealed packs and parts. `lock` takes their rows for update.
-async fn has_goods(c: &mut PgConnection, user: Uuid, pack: &str, packs: i32, boosted: i32, parts: i32, lock: bool) -> ApiResult<bool> {
-    let lock = if lock { " for no key update" } else { "" };
-    let have_parts: i32 = sqlx::query_scalar(&format!("select parts from users where id = $1{lock}")).bind(user).fetch_one(&mut *c).await?;
-    let have_packs: i32 =
-        sqlx::query_scalar(&format!("select coalesce((select sealed - boosted from user_packs where user_id = $1 and pack_id = $2{lock}), 0)"))
-            .bind(user)
-            .bind(pack)
-            .fetch_one(&mut *c)
-            .await?;
-    let have_boosted: i32 =
-        sqlx::query_scalar(&format!("select coalesce((select boosted - mythic from user_packs where user_id = $1 and pack_id = $2{lock}), 0)"))
-            .bind(user)
-            .bind(pack)
-            .fetch_one(&mut *c)
-            .await?;
-    Ok(have_parts >= parts && have_packs >= packs && have_boosted >= boosted)
+/// Whether a player has these standard sealed packs, boosted packs (not Mythic packs) and parts.
+fn has_goods(p: &Profile, row: &PackRow, packs: i32, boosted: i32, parts: i32) -> bool {
+    p.parts >= i64::from(parts) && row.standard() >= packs && row.boosted - row.mythic >= boosted
 }
 
-/// Moves standard sealed packs and parts from one player to another.
-async fn move_goods(c: &mut PgConnection, from: Uuid, to: Uuid, pack: &str, packs: i32, boosted: i32, parts: i32) -> ApiResult<()> {
-    if parts > 0 {
-        sqlx::query("update users set parts = parts - $2 where id = $1").bind(from).bind(parts).execute(&mut *c).await?;
-        sqlx::query("update users set parts = parts + $2 where id = $1").bind(to).bind(parts).execute(&mut *c).await?;
+/// Picks one tradeable copy for each team listed (a team listed twice gets two different copies): the newest one, so a
+/// player keeps their earliest (lowest) serial longest. Cards still being revealed, or (for your own side) already
+/// promised in another of your open offers, are left out.
+async fn pick_copies(
+    db: &Db,
+    owner: &Profile,
+    pack: &Pack,
+    teams: &[i32],
+    serials: &[i32],
+    own_side: bool,
+) -> ApiResult<Vec<TradeCard>> {
+    if teams.is_empty() {
+        return Ok(vec![]);
     }
-    if packs + boosted > 0 {
-        sqlx::query("update user_packs set sealed = sealed - $3 - $4, boosted = boosted - $4 where user_id = $1 and pack_id = $2")
-            .bind(from)
-            .bind(pack)
-            .bind(packs)
-            .bind(boosted)
-            .execute(&mut *c)
-            .await?;
-        sqlx::query(
-            "insert into user_packs (user_id, pack_id, sealed, boosted) values ($1, $2, $3 + $4, $4)
-             on conflict (user_id, pack_id) do update
-               set sealed = user_packs.sealed + excluded.sealed, boosted = user_packs.boosted + excluded.boosted",
-        )
-        .bind(to)
-        .bind(pack)
-        .bind(packs)
-        .bind(boosted)
-        .execute(&mut *c)
-        .await?;
+    let mut blocked: HashSet<i64> = HashSet::new();
+    if let Some(id) = owner.pending_open
+        && model::opening(db, owner.id, id).await?.is_some_and(|o| o.revealed < 5)
+    {
+        blocked.extend(
+            model::cards(db, owner.id, pack.id()).await?.iter().filter(|c| c.opening_id == Some(id)).map(|c| c.id),
+        );
     }
-    Ok(())
-}
-
-/// Picks one tradeable copy for each team listed (a team listed twice gets two different copies): the newest one, so a player keeps their earliest (lowest) serial longest.
-/// Cards still being revealed or already promised in another open offer from the same player are left out.
-async fn pick_copies(c: &mut PgConnection, owner: Uuid, pack: &Pack, teams: &[i32], serials: &[i32], promised_by: Option<Uuid>) -> ApiResult<Vec<i64>> {
-    let mut ids = Vec::with_capacity(teams.len());
+    if own_side {
+        for t in open_trades_of(db, owner.id).await? {
+            if t.from_user == owner.id {
+                blocked.extend(t.give.iter().map(|c| c.id));
+            }
+        }
+    }
+    let mut out: Vec<TradeCard> = Vec::with_capacity(teams.len());
     for (i, num) in teams.iter().enumerate() {
         let want_serial = serials.get(i).copied().unwrap_or(0);
-        let id: Option<i64> = sqlx::query_scalar(
-            "select c.id from cards c left join openings o on o.id = c.opening_id
-             where c.user_id = $1 and c.pack_id = $2 and c.team = $3 and (o.id is null or o.revealed >= 5)
-               and ($4::uuid is null or not exists (
-                 select 1 from trades t where t.status = 'open' and t.from_user = $4 and c.id = any(t.give)))
-               and not (c.id = any($5))
-               and ($6 = 0 or c.serial = $6)
-             order by c.id desc limit 1",
-        )
-        .bind(owner)
-        .bind(pack.id())
-        .bind(num)
-        .bind(promised_by)
-        .bind(&ids)
-        .bind(want_serial)
-        .fetch_optional(&mut *c)
-        .await?;
-        ids.push(id.ok_or(err(StatusCode::CONFLICT, "not_owned"))?);
+        let copies = model::team_cards(db, owner.id, pack.id(), *num).await?;
+        let pick = copies
+            .iter()
+            .rev()
+            .find(|c| {
+                !blocked.contains(&c.id)
+                    && !out.iter().any(|o| o.id == c.id)
+                    && (want_serial == 0 || c.serial == want_serial)
+            })
+            .ok_or(err(StatusCode::CONFLICT, "not_owned"))?;
+        out.push(TradeCard { id: pick.id, team: pick.team, tier: pick.tier.clone(), serial: pick.serial });
     }
-    Ok(ids)
+    Ok(out)
 }
 
-async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req): Json<OfferReq>) -> ApiResult<Response> {
+async fn offer(State(s): State<Shared>, user: User, key: IdemKey, Json(req): Json<OfferReq>) -> ApiResult<Response> {
     let pack = api::pack(&s, &req.pack)?;
     let goods = 0..=MAX_PACKS;
     let parts = 0..=MAX_PARTS;
     let side_ok = |cards: &[i32], packs: i32, boosted: i32, pts: i32, sp: &[i64]| {
-        sp.len() <= MAX_CARDS && sp.iter().enumerate().all(|(i, x)| !sp[..i].contains(x)) && (!sp.is_empty() || !cards.is_empty() || packs > 0 || boosted > 0 || pts > 0)
+        sp.len() <= MAX_CARDS
+            && sp.iter().enumerate().all(|(i, x)| !sp[..i].contains(x))
+            && (!sp.is_empty() || !cards.is_empty() || packs > 0 || boosted > 0 || pts > 0)
             && cards.len() <= MAX_CARDS
             && goods.contains(&packs)
             && goods.contains(&boosted)
@@ -248,77 +307,90 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
     {
         return Err(err(StatusCode::BAD_REQUEST, "bad_trade"));
     }
-    let mut tx = s.db.begin().await?;
-    if let Some(done) = api::idem_begin(&mut tx, user.id, &key, "offer").await? {
+    if let Some(done) = api::idem_begin(&s.db, user.id, &key, "offer").await? {
         return Ok(done);
     }
-    api::lock_user(&mut tx, user.id).await?;
-    let to = player_id(&mut tx, &req.to).await?;
-    if to == user.id {
+    let db = &s.db;
+    let to = player(db, &req.to).await?;
+    if to.id == user.id {
         return Err(err(StatusCode::BAD_REQUEST, "not_yourself"));
     }
-    let open: i64 = sqlx::query_scalar("select count(*) from trades where from_user = $1 and status = 'open'")
-        .bind(user.id)
-        .fetch_one(&mut *tx)
-        .await?;
-    if open >= MAX_OPEN {
-        return Err(err(StatusCode::CONFLICT, "too_many_offers"));
-    }
-    let give = pick_copies(&mut tx, user.id, pack, &req.give, &req.give_serials, Some(user.id)).await?;
-    let want = pick_copies(&mut tx, to, pack, &req.want, &req.want_serials, None).await?;
-    if crate::specials::owned_count(&mut tx, &req.give_specials, user.id, false).await? != req.give_specials.len() as i64
-        || crate::specials::owned_count(&mut tx, &req.want_specials, to, false).await? != req.want_specials.len() as i64
-    {
-        return Err(err(StatusCode::CONFLICT, "not_owned"));
-    }
-    if !has_goods(&mut tx, user.id, pack.id(), req.give_packs, req.give_boosted, req.give_parts, false).await? {
-        return Err(err(StatusCode::CONFLICT, "not_enough_to_trade"));
-    }
-    if !has_goods(&mut tx, to, pack.id(), req.want_packs, req.want_boosted, req.want_parts, false).await? {
-        return Err(err(StatusCode::CONFLICT, "they_lack"));
-    }
-    if (req.give_packs > 0 || req.give_boosted > 0 || req.give_parts > 0) && too_new(&mut tx, user.id).await? {
-        return Err(err(StatusCode::CONFLICT, "too_new"));
-    }
-    if (req.want_packs > 0 || req.want_boosted > 0 || req.want_parts > 0) && too_new(&mut tx, to).await? {
-        return Err(err(StatusCode::CONFLICT, "they_too_new"));
-    }
-    if over_daily(&mut tx, user.id, req.want_packs + req.want_boosted, req.want_parts).await? {
-        return Err(err(StatusCode::CONFLICT, "trade_limit"));
-    }
-    if over_daily(&mut tx, to, req.give_packs + req.give_boosted, req.give_parts).await? {
-        return Err(err(StatusCode::CONFLICT, "their_trade_limit"));
-    }
-    let give_cards = cards_by_id(&mut tx, &give).await?;
-    let want_cards = cards_by_id(&mut tx, &want).await?;
-    sqlx::query(
-        "insert into trades (from_user, to_user, pack_id, give, want, give_packs, want_packs, give_parts, want_parts,
-                             give_cards, want_cards, give_boosted, want_boosted, give_specials, want_specials)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
-    )
-    .bind(user.id)
-    .bind(to)
-    .bind(pack.id())
-    .bind(&give)
-    .bind(&want)
-    .bind(req.give_packs)
-    .bind(req.want_packs)
-    .bind(req.give_parts)
-    .bind(req.want_parts)
-    .bind(sqlx::types::Json(&give_cards))
-    .bind(sqlx::types::Json(&want_cards))
-    .bind(req.give_boosted)
-    .bind(req.want_boosted)
-    .bind(&req.give_specials)
-    .bind(&req.want_specials)
-    .execute(&mut *tx)
-    .await?;
-    let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
-    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Traded, 1).await?;
-    let out = list_in(&mut tx, user.id).await?;
-    api::idem_end(&mut tx, user.id, &key, &out).await?;
-    tx.commit().await?;
-    let me = me.unwrap_or_else(|| "Someone".into());
+    let r = retry!(async {
+        let mut p = api::me(db, user.id).await?;
+        let to = api::me(db, to.id).await?;
+        if open_trades_of(db, user.id).await?.iter().filter(|t| t.from_user == user.id).count() >= MAX_OPEN {
+            return Err(err(StatusCode::CONFLICT, "too_many_offers"));
+        }
+        let give = pick_copies(db, &p, pack, &req.give, &req.give_serials, true).await?;
+        let want = pick_copies(db, &to, pack, &req.want, &req.want_serials, false).await?;
+        if crate::specials::owned_count(db, &req.give_specials, user.id).await? != req.give_specials.len()
+            || crate::specials::owned_count(db, &req.want_specials, to.id).await? != req.want_specials.len()
+        {
+            return Err(err(StatusCode::CONFLICT, "not_owned"));
+        }
+        let (my_row, their_row) =
+            tokio::try_join!(model::pack_row(db, user.id, pack.id()), model::pack_row(db, to.id, pack.id()))?;
+        if !has_goods(&p, &my_row, req.give_packs, req.give_boosted, req.give_parts) {
+            return Err(err(StatusCode::CONFLICT, "not_enough_to_trade"));
+        }
+        if !has_goods(&to, &their_row, req.want_packs, req.want_boosted, req.want_parts) {
+            return Err(err(StatusCode::CONFLICT, "they_lack"));
+        }
+        if (req.give_packs > 0 || req.give_boosted > 0 || req.give_parts > 0) && too_new(&p) {
+            return Err(err(StatusCode::CONFLICT, "too_new"));
+        }
+        if (req.want_packs > 0 || req.want_boosted > 0 || req.want_parts > 0) && too_new(&to) {
+            return Err(err(StatusCode::CONFLICT, "they_too_new"));
+        }
+        if over_daily(&p, req.want_packs + req.want_boosted, req.want_parts) {
+            return Err(err(StatusCode::CONFLICT, "trade_limit"));
+        }
+        if over_daily(&to, req.give_packs + req.give_boosted, req.give_parts) {
+            return Err(err(StatusCode::CONFLICT, "their_trade_limit"));
+        }
+        let id = db.ids("trade", 1).await?;
+        let now = now_ms();
+        let sk = format!("{}#{}", pad(now, 15), pad(id, 12));
+        let t = Trade {
+            id,
+            from_user: user.id,
+            to_user: to.id,
+            pack: pack.id().to_string(),
+            give: give.clone(),
+            want: want.clone(),
+            give_packs: req.give_packs,
+            want_packs: req.want_packs,
+            give_parts: req.give_parts,
+            want_parts: req.want_parts,
+            give_boosted: req.give_boosted,
+            want_boosted: req.want_boosted,
+            give_specials: req.give_specials.clone(),
+            want_specials: req.want_specials.clone(),
+            status: "open".into(),
+            created_at: now,
+            decided_at: None,
+            gsi1pk: format!("TU#{}", user.id),
+            gsi1sk: sk.clone(),
+            gsi2pk: format!("TU#{}", to.id),
+            gsi2sk: sk,
+        };
+        let mut tx = Tx::new();
+        api::idem_mark(&mut tx, user.id, &key, "offer");
+        tx.put_if("", item(trade_pk(id), "TRADE", &t), Some(Cond::absent()));
+        let mut day = model::today(db, user.id).await?;
+        crate::missions::count(&mut day, crate::missions::Kind::Traded, 1);
+        model::save_day(&mut tx, user.id, &mut day);
+        let parts = p.parts;
+        model::save_user(&mut tx, &mut p, parts, "offer");
+        match tx.commit(db).await {
+            Ok(()) => Ok(Some((p.username.clone().unwrap_or_else(|| "Someone".into()), give.len(), want.len()))),
+            Err(DbError::Conflict("req")) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    })?;
+    let Some((me, gave, wanted)) = r else { return api::idem_lost(db, user.id, &key, "offer").await };
+    let out = list_in(db, user.id).await?;
+    api::idem_end(db, user.id, &key, "offer", &out).await?;
     let stuff = |n: usize, packs: i32, parts: i32| {
         let mut bits = Vec::new();
         if n > 0 {
@@ -332,14 +404,24 @@ async fn offer(State(s): State<Shared>, user: User, key: api::IdemKey, Json(req)
         }
         bits.join(" + ")
     };
-    push::notify(&s.db, to, push::Note {
-        title: format!("{me} wants to trade"),
-        body: format!("They offer {} for {} of yours.", stuff(give.len(), req.give_packs + req.give_boosted, req.give_parts), stuff(want.len(), req.want_packs + req.want_boosted, req.want_parts)),
-        url: "/#trade".into(),
-        tag: format!("trade-{me}"),
-    });
+    push::notify(
+        db,
+        to.id,
+        push::Note {
+            title: format!("{me} wants to trade"),
+            body: format!(
+                "They offer {} for {} of yours.",
+                stuff(gave, req.give_packs + req.give_boosted, req.give_parts),
+                stuff(wanted, req.want_packs + req.want_boosted, req.want_parts)
+            ),
+            url: "/#trade".into(),
+            tag: format!("trade-{me}"),
+        },
+    );
     Ok(Json(out).into_response())
 }
+
+// ---------- listing ----------
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -376,113 +458,121 @@ struct TradeOut {
 
 #[derive(Serialize)]
 struct TradesOut {
-    /// Open offers to you, open offers you made, then the last 15 that were decided.
+    /// Open offers to you, open offers you made, then the last ones that were decided.
     incoming: Vec<TradeOut>,
     outgoing: Vec<TradeOut>,
     recent: Vec<TradeOut>,
 }
 
-type Snap = Option<sqlx::types::Json<Vec<CardRef>>>;
-type TradeRow = (i64, Uuid, String, String, Vec<i64>, Vec<i64>, String, DateTime<Utc>, Option<DateTime<Utc>>, i32, i32, i32, i32, Snap, Snap, Vec<i32>);
-
-async fn cards_by_id(c: &mut PgConnection, ids: &[i64]) -> ApiResult<Vec<CardRef>> {
-    let rows: Vec<(i64, i32, String, i32)> =
-        sqlx::query_as("select id, team, tier, serial from cards where id = any($1)").bind(ids).fetch_all(&mut *c).await?;
-    // Keep the offer's order; a card that's gone (scrapped, or traded away) is left out.
-    Ok(ids
+fn refs(cards: &[TradeCard]) -> Vec<CardRef> {
+    cards
         .iter()
-        .filter_map(|id| rows.iter().find(|r| r.0 == *id))
-        .map(|r| CardRef { num: r.1, tier: Tier::parse(&r.2).unwrap_or(Tier::Common), serial: r.3 })
-        .collect())
+        .map(|c| CardRef { num: c.team, tier: Tier::parse(&c.tier).unwrap_or(Tier::Common), serial: c.serial })
+        .collect()
 }
 
-async fn list_for(s: &Shared, me: Uuid) -> ApiResult<Json<TradesOut>> {
-    let mut c = s.db.acquire().await?;
-    Ok(Json(list_in(&mut c, me).await?))
+/// An open offer shows only the cards still there (one that was scrapped or traded away is left out); a finished one
+/// shows the cards as they were offered.
+async fn still_there(db: &Db, owner: Uuid, pack: &str, cards: &[TradeCard]) -> ApiResult<Vec<TradeCard>> {
+    let keys: Vec<Item> = cards.iter().map(|c| key(upk(owner), model::card_sk(pack, c.team, c.id))).collect();
+    let found: HashSet<i64> = db.batch_get(keys).await?.iter().filter_map(|it| crate::db::get_n(it, "id")).collect();
+    Ok(cards.iter().filter(|c| found.contains(&c.id)).cloned().collect())
 }
 
-async fn list_in(c: &mut PgConnection, me: Uuid) -> ApiResult<TradesOut> {
-    let rows: Vec<TradeRow> = sqlx::query_as(
-        "(select t.id, t.from_user, coalesce(o.username, 'guest'), t.pack_id, t.give, t.want, t.status, t.created_at, t.decided_at,
-                 t.give_packs, t.want_packs, t.give_parts, t.want_parts, t.give_cards, t.want_cards, array[t.give_boosted, t.want_boosted]
-          from trades t join users o on o.id = case when t.from_user = $1 then t.to_user else t.from_user end
-          where (t.from_user = $1 or t.to_user = $1) and t.status = 'open' order by t.id desc limit 50)
-         union all
-         (select t.id, t.from_user, coalesce(o.username, 'guest'), t.pack_id, t.give, t.want, t.status, t.created_at, t.decided_at,
-                 t.give_packs, t.want_packs, t.give_parts, t.want_parts, t.give_cards, t.want_cards, array[t.give_boosted, t.want_boosted]
-          from trades t join users o on o.id = case when t.from_user = $1 then t.to_user else t.from_user end
-          where (t.from_user = $1 or t.to_user = $1) and t.status <> 'open' order by t.decided_at desc nulls last limit 100)",
-    )
-    .bind(me)
-    .fetch_all(&mut *c)
-    .await?;
+async fn list_in(db: &Db, me: Uuid) -> ApiResult<TradesOut> {
+    let rows = trades_of(db, me, Some(150)).await?;
     let mut out = TradesOut { incoming: vec![], outgoing: vec![], recent: vec![] };
-    let trade_ids: Vec<i64> = rows.iter().map(|r| r.0).collect();
-    let sp_rows: Vec<(i64, Vec<i64>, Vec<i64>)> =
-        sqlx::query_as("select id, give_specials, want_specials from trades where id = any($1)").bind(&trade_ids).fetch_all(&mut *c).await?;
-    for (id, from, with, pack, give, want, status, created, decided, gpk, wpk, gpt, wpt, gsnap, wsnap, boost) in rows {
-        let mine = from == me;
-        let (gives, gets) = if mine { (give, want) } else { (want, give) };
-        let (gives_then, gets_then) = if mine { (gsnap, wsnap) } else { (wsnap, gsnap) };
-        // A finished trade shows the cards as they were offered, even if one was scrapped since.
-        let decided_cards = |snap: Snap| if status == "open" { None } else { snap.map(|j| j.0) };
-        let (give_packs, get_packs, give_parts, get_parts) = if mine { (gpk, wpk, gpt, wpt) } else { (wpk, gpk, wpt, gpt) };
-        let (gb, wb) = (boost.first().copied().unwrap_or(0), boost.get(1).copied().unwrap_or(0));
-        let (give_boosted, get_boosted) = if mine { (gb, wb) } else { (wb, gb) };
-        let t = TradeOut {
-            id,
-            mine,
-            with,
-            pack,
-            you_give: match decided_cards(gives_then) { Some(v) => v, None => cards_by_id(&mut *c, &gives).await? },
-            you_get: match decided_cards(gets_then) { Some(v) => v, None => cards_by_id(&mut *c, &gets).await? },
-            you_give_packs: give_packs,
-            you_get_packs: get_packs,
-            you_give_boosted: give_boosted,
-            you_get_boosted: get_boosted,
-            you_give_specials: {
-                let (g, w) = sp_rows.iter().find(|r| r.0 == id).map(|r| (r.1.clone(), r.2.clone())).unwrap_or_default();
-                crate::specials::by_ids(&mut *c, if mine { &g } else { &w }).await?
-            },
-            you_get_specials: {
-                let (g, w) = sp_rows.iter().find(|r| r.0 == id).map(|r| (r.1.clone(), r.2.clone())).unwrap_or_default();
-                crate::specials::by_ids(&mut *c, if mine { &w } else { &g }).await?
-            },
-            you_give_parts: give_parts,
-            you_get_parts: get_parts,
-            status: status.clone(),
-            created_at: created.timestamp_millis(),
-            decided_at: decided.map(|d| d.timestamp_millis()),
+    let mut names: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
+    let mut open_n = 0;
+    let mut done_n = 0;
+    for t in rows {
+        let open = t.status == "open";
+        if (open && open_n >= 50) || (!open && done_n >= 100) {
+            continue;
+        }
+        if open {
+            open_n += 1
+        } else {
+            done_n += 1
+        }
+        let mine = t.from_user == me;
+        let other = if mine { t.to_user } else { t.from_user };
+        if let std::collections::hash_map::Entry::Vacant(e) = names.entry(other) {
+            let name = model::profile(db, other).await?.and_then(|p| p.username).unwrap_or_else(|| "guest".into());
+            e.insert(name);
+        }
+        let (give, want) = if open {
+            (still_there(db, t.from_user, &t.pack, &t.give).await?, still_there(db, t.to_user, &t.pack, &t.want).await?)
+        } else {
+            (t.give.clone(), t.want.clone())
         };
-        match (status.as_str(), mine) {
-            ("open", false) => out.incoming.push(t),
-            ("open", true) => out.outgoing.push(t),
-            _ => out.recent.push(t),
+        let (gives, gets) = if mine { (refs(&give), refs(&want)) } else { (refs(&want), refs(&give)) };
+        let (gs, ws) = (
+            crate::specials::by_ids(db, &t.give_specials).await?,
+            crate::specials::by_ids(db, &t.want_specials).await?,
+        );
+        let (you_give_specials, you_get_specials) = if mine { (gs, ws) } else { (ws, gs) };
+        let row = TradeOut {
+            id: t.id,
+            mine,
+            with: names[&other].clone(),
+            pack: t.pack.clone(),
+            you_give: gives,
+            you_get: gets,
+            you_give_packs: if mine { t.give_packs } else { t.want_packs },
+            you_get_packs: if mine { t.want_packs } else { t.give_packs },
+            you_give_boosted: if mine { t.give_boosted } else { t.want_boosted },
+            you_get_boosted: if mine { t.want_boosted } else { t.give_boosted },
+            you_give_specials,
+            you_get_specials,
+            you_give_parts: if mine { t.give_parts } else { t.want_parts },
+            you_get_parts: if mine { t.want_parts } else { t.give_parts },
+            status: t.status.clone(),
+            created_at: t.created_at,
+            decided_at: t.decided_at,
+        };
+        match (open, mine) {
+            (true, false) => out.incoming.push(row),
+            (true, true) => out.outgoing.push(row),
+            _ => out.recent.push(row),
         }
     }
+    out.recent.sort_by_key(|t| std::cmp::Reverse(t.decided_at.unwrap_or(t.created_at)));
     Ok(out)
 }
 
 async fn list(State(s): State<Shared>, user: User) -> ApiResult<Json<TradesOut>> {
-    list_for(&s, user.id).await
+    Ok(Json(list_in(&s.db, user.id).await?))
 }
 
-/// Locks an open trade and checks the caller's side of it.
-type OpenTrade = (Uuid, Uuid, String, Vec<i64>, Vec<i64>, i32, i32, i32, i32, i32, i32);
+// ---------- deciding ----------
 
-async fn open_trade(c: &mut PgConnection, id: i64) -> ApiResult<OpenTrade> {
-    let row: Option<OpenTrade> = sqlx::query_as(
-        "select from_user, to_user, pack_id, give, want, give_packs, want_packs, give_parts, want_parts, give_boosted, want_boosted
-         from trades where id = $1 and status = 'open' for update",
-    )
-    .bind(id)
-    .fetch_optional(&mut *c)
-    .await?;
-    row.ok_or(err(StatusCode::NOT_FOUND, "trade_gone"))
+/// Marks an open offer decided (only if it's still open).
+async fn close(db: &Db, id: i64, status: &str) -> ApiResult<bool> {
+    let mut tx = Tx::new();
+    tx.update(
+        "trade_gone",
+        &trade_pk(id),
+        "TRADE",
+        Cond::new("SET #st = :st, decided_at = :at")
+            .name("#st", "status")
+            .val(":st", sv(status))
+            .val(":at", n(now_ms()))
+            .val(":open", sv("open")),
+        Some("#st = :open"),
+    );
+    match tx.commit(db).await {
+        Ok(()) => Ok(true),
+        Err(DbError::Conflict("trade_gone")) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
 }
 
-async fn close(c: &mut PgConnection, id: i64, status: &str) -> ApiResult<()> {
-    sqlx::query("update trades set status = $2, decided_at = now() where id = $1").bind(id).bind(status).execute(&mut *c).await?;
+/// Calls off every open offer from or to the player (for example when the admin turns the account off).
+pub async fn cancel_all(db: &Db, user: Uuid) -> ApiResult<()> {
+    for t in open_trades_of(db, user).await? {
+        close(db, t.id, "cancelled").await?;
+    }
     Ok(())
 }
 
@@ -495,124 +585,270 @@ struct AcceptOut {
     trades: TradesOut,
 }
 
+/// One player's side of a trade being accepted: what they lose and gain.
+struct Side<'a> {
+    p: Profile,
+    parts_before: i64,
+    row_before: PackRow,
+    row: PackRow,
+    cards: Vec<CardRow>,
+    stats: model::Stats,
+    pack: &'a Pack,
+}
+
+/// The cards behind an offer's list, from the owner's collection. None if any is gone.
+async fn load_cards(db: &Db, owner: Uuid, pack: &str, cards: &[TradeCard]) -> ApiResult<Option<Vec<CardRow>>> {
+    let mut out = Vec::with_capacity(cards.len());
+    for c in cards {
+        match db.get_as::<CardRow>(&upk(owner), &model::card_sk(pack, c.team, c.id)).await? {
+            Some(row) => out.push(row),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(out))
+}
+
 /// Accepting swaps the cards, if both players still have every card in the offer. If not, the offer fails.
 async fn accept(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> ApiResult<Json<AcceptOut>> {
-    let mut tx = s.db.begin().await?;
-    api::reason(&mut tx, &format!("trade {id}")).await?;
-    let (from, to, ..) = open_trade(&mut tx, id).await?;
-    if to != user.id {
-        return Err(err(StatusCode::FORBIDDEN, "not_your_trade"));
-    }
-    // Both players first, in a fixed order, then their packs and cards: the same order as every other change, so this
-    // can't deadlock with an open, a scrap or another trade.
-    let (first, second) = if from < to { (from, to) } else { (to, from) };
-    api::lock_user(&mut tx, first).await?;
-    api::lock_user(&mut tx, second).await?;
-    let (from, to, pack_id, give, want, give_packs, want_packs, give_parts, want_parts, give_boosted, want_boosted) = open_trade(&mut tx, id).await?;
-    if over_daily(&mut tx, to, give_packs + give_boosted, give_parts).await? {
-        return Err(err(StatusCode::CONFLICT, "trade_limit"));
-    }
-    if over_daily(&mut tx, from, want_packs + want_boosted, want_parts).await? {
-        return Err(err(StatusCode::CONFLICT, "their_trade_limit"));
-    }
-    let from_off: bool = sqlx::query_scalar("select disabled from users where id = $1").bind(from).fetch_one(&mut *tx).await?;
-    if from_off {
-        close(&mut tx, id, "failed").await?;
-        tx.commit().await?;
-        return Err(err(StatusCode::CONFLICT, "trade_stale"));
-    }
-    let (give_sp, want_sp): (Vec<i64>, Vec<i64>) =
-        sqlx::query_as("select give_specials, want_specials from trades where id = $1").bind(id).fetch_one(&mut *tx).await?;
-    let specials_ok = crate::specials::owned_count(&mut tx, &give_sp, from, true).await? == give_sp.len() as i64
-        && crate::specials::owned_count(&mut tx, &want_sp, to, true).await? == want_sp.len() as i64;
-    let pack = api::pack(&s, &pack_id)?;
-    // Lock every card in the trade, then check each is still where the offer says and not mid-reveal.
-    let all: Vec<i64> = give.iter().chain(want.iter()).copied().collect();
-    let owners: Vec<(i64, Uuid, bool)> = sqlx::query_as(
-        "select c.id, c.user_id, (o.id is null or o.revealed >= 5) from cards c left join openings o on o.id = c.opening_id
-         where c.id = any($1) for update of c",
-    )
-    .bind(&all)
-    .fetch_all(&mut *tx)
-    .await?;
-    let ok = |ids: &[i64], owner: Uuid| ids.iter().all(|id| owners.iter().any(|(cid, u, free)| cid == id && *u == owner && *free));
-    // Packs and parts: check each still has what they're giving (their rows are locked above).
-    let mut goods_ok = true;
-    for who in [first, second] {
-        let (packs, boosted, parts) =
-            if who == from { (give_packs, give_boosted, give_parts) } else { (want_packs, want_boosted, want_parts) };
-        goods_ok &= has_goods(&mut tx, who, &pack_id, packs, boosted, parts, true).await?;
-    }
-    if !ok(&give, from) || !ok(&want, to) || !goods_ok || !specials_ok {
-        close(&mut tx, id, "failed").await?;
-        tx.commit().await?;
-        return Err(err(StatusCode::CONFLICT, "trade_stale"));
-    }
-    sqlx::query("update cards set user_id = $2, obtained = 'trade', opening_id = null, slot = null where id = any($1)")
-        .bind(&give)
-        .bind(to)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("update cards set user_id = $2, obtained = 'trade', opening_id = null, slot = null where id = any($1)")
-        .bind(&want)
-        .bind(from)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("update special_cards set user_id = $2 where id = any($1)").bind(&give_sp).bind(to).execute(&mut *tx).await?;
-    sqlx::query("update special_cards set user_id = $2 where id = any($1)").bind(&want_sp).bind(from).execute(&mut *tx).await?;
-    let all_sp: Vec<i64> = give_sp.iter().chain(want_sp.iter()).copied().collect();
-    sqlx::query(
-        "update trades set status = 'failed', decided_at = now() where id in (
-           select id from trades where status = 'open' and (give_specials && $1 or want_specials && $1) for update skip locked)",
-    )
-    .bind(&all_sp)
-    .execute(&mut *tx)
-    .await?;
-    move_goods(&mut tx, from, to, &pack_id, give_packs, give_boosted, give_parts).await?;
-    move_goods(&mut tx, to, from, &pack_id, want_packs, want_boosted, want_parts).await?;
-    close(&mut tx, id, "accepted").await?;
-    // Other open offers that promised any of these cards can't happen any more. One someone is accepting right now is
-    // skipped rather than waited on (waiting could deadlock with it); it fails its own card check instead.
-    sqlx::query(
-        "update trades set status = 'failed', decided_at = now() where id in (
-           select id from trades where status = 'open' and (give && $1 or want && $1) for update skip locked)",
-    )
-        .bind(&all)
-        .execute(&mut *tx)
-        .await?;
-    // Completing a division set by trade earns its bonus pack, same as from a pack.
-    let mut mine = Vec::new();
-    for (who, ids) in [(to, &give), (from, &want)] {
-        let teams: Vec<i32> = sqlx::query_scalar("select team from cards where id = any($1)").bind(ids).fetch_all(&mut *tx).await?;
-        let sets = api::award_sets(&mut tx, who, pack, &teams).await?;
-        if !sets.is_empty() {
-            sqlx::query(
-                "insert into user_packs (user_id, pack_id, sealed) values ($1, $2, $3)
-                 on conflict (user_id, pack_id) do update set sealed = user_packs.sealed + excluded.sealed",
-            )
-                .bind(who)
-                .bind(pack.id())
-                .bind(sets.len() as i32)
-                .execute(&mut *tx)
-                .await?;
+    let db = &s.db;
+    let r = retry!(async {
+        let Some(t) = get_trade(db, id).await?.filter(|t| t.status == "open") else {
+            return Err(err(StatusCode::NOT_FOUND, "trade_gone"));
+        };
+        if t.to_user != user.id {
+            return Err(err(StatusCode::FORBIDDEN, "not_your_trade"));
         }
-        if who == user.id {
-            mine = sets;
+        let pack = api::pack(&s, &t.pack)?;
+        let (from_p, to_p) = tokio::try_join!(api::me(db, t.from_user), api::me(db, t.to_user))?;
+        if over_daily(&to_p, t.give_packs + t.give_boosted, t.give_parts) {
+            return Err(err(StatusCode::CONFLICT, "trade_limit"));
+        }
+        if over_daily(&from_p, t.want_packs + t.want_boosted, t.want_parts) {
+            return Err(err(StatusCode::CONFLICT, "their_trade_limit"));
+        }
+        if from_p.disabled {
+            close(db, id, "failed").await?;
+            return Ok(None);
+        }
+        // Every card still where the offer says, and not in a pack still being revealed.
+        let gives = load_cards(db, t.from_user, pack.id(), &t.give).await?;
+        let wants = load_cards(db, t.to_user, pack.id(), &t.want).await?;
+        let (Some(gives), Some(wants)) = (gives, wants) else {
+            close(db, id, "failed").await?;
+            return Ok(None);
+        };
+        let (from_row, to_row) =
+            tokio::try_join!(model::pack_row(db, t.from_user, pack.id()), model::pack_row(db, t.to_user, pack.id()))?;
+        let specials_ok = crate::specials::owned_count(db, &t.give_specials, t.from_user).await?
+            == t.give_specials.len()
+            && crate::specials::owned_count(db, &t.want_specials, t.to_user).await? == t.want_specials.len();
+        if !has_goods(&from_p, &from_row, t.give_packs, t.give_boosted, t.give_parts)
+            || !has_goods(&to_p, &to_row, t.want_packs, t.want_boosted, t.want_parts)
+            || !specials_ok
+        {
+            close(db, id, "failed").await?;
+            return Ok(None);
+        }
+        let mut tx = Tx::new();
+        tx.update(
+            "trade_gone",
+            &trade_pk(id),
+            "TRADE",
+            Cond::new("SET #st = :ok, decided_at = :at")
+                .name("#st", "status")
+                .val(":ok", sv("accepted"))
+                .val(":at", n(now_ms()))
+                .val(":open", sv("open")),
+            Some("#st = :open"),
+        );
+        for (owner, cards) in [(&from_p, &gives), (&to_p, &wants)] {
+            if let Some(o) = owner.pending_open
+                && cards.iter().any(|c| c.opening_id == Some(o))
+            {
+                // A card from the pack still being revealed: only once the reveal is done.
+                tx.check(
+                    "still_revealing",
+                    &upk(owner.id),
+                    &model::open_sk(o),
+                    Cond::new("revealed >= :five").val(":five", n(5)),
+                );
+            }
+        }
+        let (fs, ts) =
+            tokio::try_join!(model::stats(db, t.from_user, pack.id()), model::stats(db, t.to_user, pack.id()))?;
+        let mut from = Side {
+            parts_before: from_p.parts,
+            p: from_p,
+            row_before: from_row.clone(),
+            row: from_row,
+            cards: model::cards(db, t.from_user, pack.id()).await?,
+            stats: fs,
+            pack,
+        };
+        let mut to = Side {
+            parts_before: to_p.parts,
+            p: to_p,
+            row_before: to_row.clone(),
+            row: to_row,
+            cards: model::cards(db, t.to_user, pack.id()).await?,
+            stats: ts,
+            pack,
+        };
+        let reason = format!("trade {id}");
+        let now = now_ms();
+        move_cards(&mut tx, &mut from, &mut to, &gives, &reason, now);
+        move_cards(&mut tx, &mut to, &mut from, &wants, &reason, now);
+        // Packs and parts.
+        move_goods(&mut from, &mut to, t.give_packs, t.give_boosted, t.give_parts, now);
+        move_goods(&mut to, &mut from, t.want_packs, t.want_boosted, t.want_parts, now);
+        crate::specials::move_all(&mut tx, &t.give_specials, t.from_user, t.to_user);
+        crate::specials::move_all(&mut tx, &t.want_specials, t.to_user, t.from_user);
+        // Completing a division set by trade earns its bonus pack, same as from a pack.
+        let mut my_sets = Vec::new();
+        for (side, got) in [(&mut to, &gives), (&mut from, &wants)] {
+            let owned: HashSet<i32> = side.cards.iter().map(|c| c.team).collect();
+            let done = api::sets_done(db, side.p.id, pack.id()).await?;
+            let teams: Vec<i32> = got.iter().map(|c| c.team).collect();
+            let sets = api::finished_sets(pack, &owned, &done, &teams);
+            for d in &sets {
+                api::record_set(&mut tx, side.p.id, pack.id(), d);
+                model::feed(
+                    &mut tx,
+                    pack.id(),
+                    FeedEvent {
+                        kind: "set".into(),
+                        who: side.p.username.clone().unwrap_or_default(),
+                        at: now,
+                        team: None,
+                        tier: None,
+                        serial: None,
+                        division: Some(d.clone()),
+                        to: None,
+                        gave: None,
+                        got: None,
+                        gave_packs: None,
+                        got_packs: None,
+                        expires_at: 0,
+                    },
+                );
+            }
+            side.row.sealed += sets.len() as i32;
+            side.stats.sets += sets.len() as i64;
+            side.stats.trades += 1;
+            if side.p.id == user.id {
+                my_sets = sets;
+            }
+        }
+        model::feed(
+            &mut tx,
+            pack.id(),
+            FeedEvent {
+                kind: "trade".into(),
+                who: from.p.username.clone().unwrap_or_default(),
+                at: now,
+                team: None,
+                tier: None,
+                serial: None,
+                division: None,
+                to: to.p.username.clone(),
+                gave: Some(serde_json::to_value(refs(&t.give)).unwrap_or_default()),
+                got: Some(serde_json::to_value(refs(&t.want)).unwrap_or_default()),
+                gave_packs: Some(t.give_packs),
+                got_packs: Some(t.want_packs),
+                expires_at: 0,
+            },
+        );
+        let mut day = model::today(db, user.id).await?;
+        crate::missions::count(&mut day, crate::missions::Kind::Traded, 1);
+        model::save_day(&mut tx, user.id, &mut day);
+        for side in [&mut from, &mut to] {
+            model::save_pack(&mut tx, side.p.id, &side.row_before, &side.row, &reason);
+            model::save_stats(&mut tx, side.p.id, pack.id(), &side.stats);
+            let parts = side.parts_before;
+            model::save_user(&mut tx, &mut side.p, parts, &reason);
+        }
+        match tx.commit(db).await {
+            Ok(()) => Ok(Some((my_sets, t, to.p.username.clone()))),
+            Err(DbError::Conflict("trade_gone")) => Err(err(StatusCode::NOT_FOUND, "trade_gone")),
+            Err(DbError::Conflict("card_gone" | "special" | "still_revealing")) => {
+                close(db, id, "failed").await?;
+                Ok(None)
+            }
+            Err(e) => Err(e.into()),
+        }
+    })?;
+    let Some((mine, t, me)) = r else { return Err(err(StatusCode::CONFLICT, "trade_stale")) };
+    // Other open offers that promised any of these cards can't happen any more.
+    let moved: HashSet<i64> = t.give.iter().chain(t.want.iter()).map(|c| c.id).collect();
+    let moved_sp: HashSet<i64> = t.give_specials.iter().chain(t.want_specials.iter()).copied().collect();
+    let mut others = open_trades_of(db, t.from_user).await?;
+    others.extend(open_trades_of(db, t.to_user).await?);
+    for o in others {
+        let clash = o.give.iter().chain(o.want.iter()).any(|c| moved.contains(&c.id))
+            || o.give_specials.iter().chain(o.want_specials.iter()).any(|x| moved_sp.contains(x));
+        if o.id != t.id && clash {
+            close(db, o.id, "failed").await?;
         }
     }
-    crate::missions::bump(&mut tx, user.id, crate::missions::Kind::Traded, 1).await?;
-    let state = api::load_state(&s, &mut tx, user.id).await?;
-    let collection = api::load_collection(&mut tx, user.id, pack).await?;
-    let me: Option<String> = sqlx::query_scalar("select username from users where id = $1").bind(user.id).fetch_one(&mut *tx).await?;
-    tx.commit().await?;
-    push::notify(&s.db, from, push::Note {
-        title: format!("{} accepted your trade", me.unwrap_or_else(|| "Someone".into())),
-        body: if want.is_empty() { "Check your packs and parts.".to_string() } else { format!("{} {} in your binder.", want.len(), if want.len() == 1 { "new card is" } else { "new cards are" }) },
-        url: "/#binder".into(),
-        tag: format!("trade-done-{id}"),
-    });
-    let trades = list_for(&s, user.id).await?.0;
+    let pack = api::pack(&s, &t.pack)?;
+    push::notify(
+        db,
+        t.from_user,
+        push::Note {
+            title: format!("{} accepted your trade", me.unwrap_or_else(|| "Someone".into())),
+            body: if t.want.is_empty() {
+                "Check your packs and parts.".to_string()
+            } else {
+                format!(
+                    "{} {} in your binder.",
+                    t.want.len(),
+                    if t.want.len() == 1 { "new card is" } else { "new cards are" }
+                )
+            },
+            url: "/#binder".into(),
+            tag: format!("trade-done-{id}"),
+        },
+    );
+    let state = api::load_state(&s, user.id).await?;
+    let collection = api::load_collection(db, user.id, pack).await?;
+    let trades = list_in(db, user.id).await?;
     Ok(Json(AcceptOut { sets: mine, state, collection, trades }))
+}
+
+/// Moves these cards from one side to the other in the transaction (each delete fails the whole trade if the card is
+/// gone), keeping both players' stats right.
+fn move_cards(tx: &mut Tx, from: &mut Side, to: &mut Side, cards: &[CardRow], reason: &str, now: i64) {
+    for c in cards {
+        model::remove_card(tx, from.p.id, c, reason);
+        from.cards.retain(|x| x.id != c.id);
+        from.stats.cards -= 1;
+        if !from.cards.iter().any(|x| x.team == c.team) {
+            model::stats_team_lost(&mut from.stats, team_tier(from.pack, c));
+        }
+        let had = to.cards.iter().any(|x| x.team == c.team);
+        let moved = CardRow { opening_id: None, slot: None, obtained: "trade".into(), created_at: now, ..c.clone() };
+        model::add_card(tx, to.p.id, &moved, reason);
+        to.cards.push(moved);
+        to.stats.cards += 1;
+        if !had {
+            model::stats_team_gained(&mut to.stats, team_tier(to.pack, c));
+        }
+    }
+}
+
+fn team_tier<'a>(pack: &'a Pack, c: &CardRow) -> &'a str {
+    pack.team_tier.get(&c.team).map_or("common", |t| t.as_str())
+}
+
+/// Moves standard packs, boosted packs and parts; the receiver's daily intake counts them.
+fn move_goods(from: &mut Side, to: &mut Side, packs: i32, boosted: i32, parts: i32, now: i64) {
+    from.p.parts -= i64::from(parts);
+    to.p.parts += i64::from(parts);
+    from.row.sealed -= packs + boosted;
+    from.row.boosted -= boosted;
+    to.row.sealed += packs + boosted;
+    to.row.boosted += boosted;
+    to.p.take_in(now, i64::from(packs + boosted), i64::from(parts));
 }
 
 async fn decline(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> ApiResult<Json<TradesOut>> {
@@ -625,17 +861,21 @@ async fn cancel(State(s): State<Shared>, user: User, Path(id): Path<i64>) -> Api
 
 /// The other player declines an offer, or the player who made it cancels it.
 async fn decide(s: &Shared, user: User, id: i64, by_maker: bool) -> ApiResult<Json<TradesOut>> {
-    let mut tx = s.db.begin().await?;
-    let (from, to, ..) = open_trade(&mut tx, id).await?;
-    if (by_maker && from != user.id) || (!by_maker && to != user.id) {
+    let Some(t) = get_trade(&s.db, id).await?.filter(|t| t.status == "open") else {
+        return Err(err(StatusCode::NOT_FOUND, "trade_gone"));
+    };
+    if (by_maker && t.from_user != user.id) || (!by_maker && t.to_user != user.id) {
         return Err(err(StatusCode::FORBIDDEN, "not_your_trade"));
     }
-    close(&mut tx, id, if by_maker { "cancelled" } else { "declined" }).await?;
-    tx.commit().await?;
-    list_for(s, user.id).await
+    if !close(&s.db, id, if by_maker { "cancelled" } else { "declined" }).await? {
+        return Err(err(StatusCode::NOT_FOUND, "trade_gone"));
+    }
+    Ok(Json(list_in(&s.db, user.id).await?))
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+// ---------- social ----------
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SocialPlayer {
     name: String,
@@ -683,80 +923,62 @@ struct SocialOut {
 /// Every player with a few stats, and the latest finished trades, so anyone can see who has what.
 async fn social(State(s): State<Shared>, _user: User, Path(pack): Path<String>) -> ApiResult<Json<SocialOut>> {
     let pack = api::pack(&s, &pack)?;
-    let players: Vec<SocialPlayer> = sqlx::query_as(
-        "select u.username as name, u.first_name, u.badge,
-                count(distinct c.team) as teams,
-                count(distinct c.team) filter (where c.tier = 'mythic') as mythics,
-                count(distinct c.team) filter (where c.tier = 'legendary') as legendaries,
-                (select count(*) from trades t where t.status = 'accepted' and (t.from_user = u.id or t.to_user = u.id)) as trades
-         from users u left join cards c on c.user_id = u.id and c.pack_id = $1
-         where u.username is not null and not u.disabled
-         group by u.id order by teams desc, lower(u.username) limit 200",
-    )
-    .bind(pack.id())
-    .fetch_all(&s.db)
-    .await?;
-    type Row = (String, String, Option<sqlx::types::Json<serde_json::Value>>, Option<sqlx::types::Json<serde_json::Value>>, i32, i32, chrono::DateTime<chrono::Utc>);
-    let rows: Vec<Row> = sqlx::query_as(
-        "select f.username, t.username, x.give_cards, x.want_cards, x.give_packs, x.want_packs, coalesce(x.decided_at, x.created_at)
-         from trades x join users f on f.id = x.from_user join users t on t.id = x.to_user
-         where x.status = 'accepted' and x.pack_id = $1 and f.username is not null and t.username is not null
-         order by x.decided_at desc nulls last limit 12",
-    )
-    .bind(pack.id())
-    .fetch_all(&s.db)
-    .await?;
-    let recent = rows
-        .into_iter()
-        .map(|(from, to, give, want, gp, wp, at)| SocialTrade {
-            from,
-            to,
-            gave: give.map(|j| j.0).unwrap_or(serde_json::Value::Null),
-            got: want.map(|j| j.0).unwrap_or(serde_json::Value::Null),
-            gave_packs: gp,
-            got_packs: wp,
-            at: at.timestamp_millis(),
+    let db = &s.db;
+    let people = all_players(db).await?;
+    let keys: Vec<Item> = people.iter().map(|p| key(upk(p.id), format!("STATS#{}", pack.id()))).collect();
+    let stats: std::collections::HashMap<String, model::Stats> =
+        db.batch_get(keys).await?.into_iter().filter_map(|it| Some((get_s(&it, "pk")?, from_item(it).ok()?))).collect();
+    let mut players: Vec<SocialPlayer> = people
+        .iter()
+        .map(|p| {
+            let st = stats.get(&upk(p.id)).cloned().unwrap_or_default();
+            SocialPlayer {
+                name: p.username.clone().unwrap_or_default(),
+                first_name: p.first_name.clone(),
+                badge: p.badge.clone(),
+                teams: st.teams,
+                mythics: st.mythic_teams,
+                legendaries: st.legendary_teams,
+                trades: st.trades,
+            }
         })
         .collect();
-    type Pull = (String, i32, String, i32, chrono::DateTime<chrono::Utc>);
-    let pulls: Vec<Pull> = sqlx::query_as(
-        "select u.username, c.team, c.tier, c.serial, c.created_at from cards c join users u on u.id = c.user_id
-         where c.pack_id = $1 and c.obtained = 'pack' and u.username is not null and not u.disabled
-           and (c.tier in ('mythic', 'legendary') or c.serial <= 3)
-         order by c.created_at desc limit 25",
-    )
-    .bind(pack.id())
-    .fetch_all(&s.db)
-    .await?;
-    let sets: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "select u.username, d.division, d.completed_at from sets_done d join users u on u.id = d.user_id
-         where d.pack_id = $1 and u.username is not null and not u.disabled order by d.completed_at desc limit 10",
-    )
-    .bind(pack.id())
-    .fetch_all(&s.db)
-    .await?;
-    let mut activity: Vec<SocialEvent> = pulls
+    players.sort_by(|a, b| b.teams.cmp(&a.teams).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    players.truncate(200);
+    let active: HashSet<String> = people.iter().filter_map(|p| p.username.clone()).collect();
+    let events: Vec<FeedEvent> = db
+        .query_desc(&format!("FEED#{}", pack.id()), "", 200)
+        .await?
         .into_iter()
-        .map(|(who, team, tier, serial, at)| SocialEvent {
-            kind: "pull",
-            who,
-            team: Some(team),
-            tier: Some(tier),
-            serial: Some(serial),
-            division: None,
-            at: at.timestamp_millis(),
-        })
-        .chain(sets.into_iter().map(|(who, division, at)| SocialEvent {
-            kind: "set",
-            who,
-            team: None,
-            tier: None,
-            serial: None,
-            division: Some(division),
-            at: at.timestamp_millis(),
-        }))
+        .filter_map(|it| from_item(it).ok())
         .collect();
-    activity.sort_by_key(|e| std::cmp::Reverse(e.at));
+    let recent: Vec<SocialTrade> = events
+        .iter()
+        .filter(|e| e.kind == "trade")
+        .take(12)
+        .map(|e| SocialTrade {
+            from: e.who.clone(),
+            to: e.to.clone().unwrap_or_default(),
+            gave: e.gave.clone().unwrap_or(serde_json::Value::Null),
+            got: e.got.clone().unwrap_or(serde_json::Value::Null),
+            gave_packs: e.gave_packs.unwrap_or(0),
+            got_packs: e.got_packs.unwrap_or(0),
+            at: e.at,
+        })
+        .collect();
+    let mut activity: Vec<SocialEvent> = events
+        .iter()
+        .filter(|e| (e.kind == "pull" || e.kind == "set") && active.contains(&e.who))
+        .map(|e| SocialEvent {
+            kind: if e.kind == "pull" { "pull" } else { "set" },
+            who: e.who.clone(),
+            team: e.team,
+            tier: e.tier.clone(),
+            serial: e.serial,
+            division: e.division.clone(),
+            at: e.at,
+        })
+        .collect();
     activity.truncate(30);
     Ok(Json(SocialOut { players, recent, activity }))
 }

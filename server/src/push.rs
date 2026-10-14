@@ -11,7 +11,6 @@ use axum::{Json, Router};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 use web_push_native::jwt_simple::algorithms::{ECDSAP256PublicKeyLike, ES256KeyPair};
@@ -19,7 +18,10 @@ use web_push_native::{Auth, WebPushBuilder};
 
 use crate::Shared;
 use crate::auth::User;
+use crate::db::{Cond, Db, DbError, Tx, get_n, get_s, key as dkey, n, pad, s as sv};
 use crate::error::{ApiError, ApiResult};
+use crate::model::{self, Profile, now_ms, upk};
+use crate::retry;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -40,7 +42,7 @@ struct Pusher {
 static PUSHER: OnceCell<Option<Pusher>> = OnceCell::const_new();
 
 /// The signing key, made and saved on first use. None if it can't be set up (push is then just off).
-async fn pusher(db: &PgPool) -> Option<&'static Pusher> {
+async fn pusher(db: &Db) -> Option<&'static Pusher> {
     PUSHER
         .get_or_init(|| async {
             match load(db).await {
@@ -55,18 +57,27 @@ async fn pusher(db: &PgPool) -> Option<&'static Pusher> {
         .as_ref()
 }
 
-async fn load(db: &PgPool) -> anyhow::Result<Pusher> {
-    let saved: Option<String> = sqlx::query_scalar("select vapid_private from settings").fetch_one(db).await?;
+async fn load(db: &Db) -> anyhow::Result<Pusher> {
+    let saved = get_s(&model::settings_item(db).await?, "vapid_private");
     let keys = match saved {
         Some(k) => ES256KeyPair::from_bytes(&URL_SAFE_NO_PAD.decode(k)?)?,
         None => {
             let k = ES256KeyPair::generate();
             // Two servers starting at once: keep whichever key was saved first.
-            sqlx::query("update settings set vapid_private = coalesce(vapid_private, $1)")
-                .bind(URL_SAFE_NO_PAD.encode(k.to_bytes()))
-                .execute(db)
-                .await?;
-            let k: String = sqlx::query_scalar("select vapid_private from settings").fetch_one(db).await?;
+            let mut tx = Tx::new();
+            tx.update(
+                "",
+                "SETTINGS",
+                "SETTINGS",
+                Cond::new("SET vapid_private = :k").val(":k", sv(URL_SAFE_NO_PAD.encode(k.to_bytes()))),
+                Some("attribute_not_exists(vapid_private)"),
+            );
+            match tx.commit(db).await {
+                Ok(()) | Err(DbError::Conflict(_)) => {}
+                Err(e) => return Err(e.into()),
+            }
+            let k = get_s(&model::settings_item(db).await?, "vapid_private")
+                .ok_or_else(|| anyhow::anyhow!("no push key"))?;
             ES256KeyPair::from_bytes(&URL_SAFE_NO_PAD.decode(k)?)?
         }
     };
@@ -110,24 +121,22 @@ async fn subscribe(State(s): State<Shared>, user: User, Json(req): Json<Subscrib
     if !ok_url || !ok_keys {
         return Err(bad());
     }
-    let count: i64 = sqlx::query_scalar("select count(*) from push_subs where user_id = $1").bind(user.id).fetch_one(&s.db).await?;
-    if count >= 10 {
+    let mut subs = subs_of(&s.db, user.id).await?;
+    if subs.len() >= 10 && !subs.iter().any(|x| x.0 == req.endpoint) {
         // Ten devices is plenty; drop the oldest.
-        sqlx::query("delete from push_subs where endpoint = (select endpoint from push_subs where user_id = $1 order by created_at limit 1)")
-            .bind(user.id)
-            .execute(&s.db)
-            .await?;
+        subs.sort_by_key(|x| x.3);
+        s.db.delete(&push_pk(&subs[0].0), "PUSH").await?;
     }
-    sqlx::query(
-        "insert into push_subs (endpoint, user_id, p256dh, auth) values ($1, $2, $3, $4)
-         on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth",
-    )
-    .bind(&req.endpoint)
-    .bind(user.id)
-    .bind(req.keys.p256dh.trim_end_matches('='))
-    .bind(req.keys.auth.trim_end_matches('='))
-    .execute(&s.db)
-    .await?;
+    let now = now_ms();
+    let mut it = dkey(push_pk(&req.endpoint), "PUSH");
+    it.insert("endpoint".into(), sv(req.endpoint.clone()));
+    it.insert("user_id".into(), sv(user.id.to_string()));
+    it.insert("p256dh".into(), sv(req.keys.p256dh.trim_end_matches('=')));
+    it.insert("auth".into(), sv(req.keys.auth.trim_end_matches('=')));
+    it.insert("created_at".into(), n(now));
+    it.insert("gsi2pk".into(), sv(upk(user.id)));
+    it.insert("gsi2sk".into(), sv(format!("PUSH#{}", pad(now, 15))));
+    s.db.put(it).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -137,7 +146,11 @@ struct UnsubscribeReq {
 }
 
 async fn unsubscribe(State(s): State<Shared>, user: User, Json(req): Json<UnsubscribeReq>) -> ApiResult<StatusCode> {
-    sqlx::query("delete from push_subs where endpoint = $1 and user_id = $2").bind(&req.endpoint).bind(user.id).execute(&s.db).await?;
+    if let Some(it) = s.db.get(&push_pk(&req.endpoint), "PUSH").await?
+        && get_s(&it, "user_id").as_deref() == Some(user.id.to_string().as_str())
+    {
+        s.db.delete(&push_pk(&req.endpoint), "PUSH").await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -153,7 +166,7 @@ pub struct Note {
 
 /// Sends a notification to every device the account turned them on for, in the background. Subscriptions the push
 /// service says are gone are deleted.
-pub fn notify(db: &PgPool, user: Uuid, note: Note) {
+pub fn notify(db: &Db, user: Uuid, note: Note) {
     let db = db.clone();
     tokio::spawn(async move {
         if let Err(e) = send(&db, user, &note).await {
@@ -162,9 +175,8 @@ pub fn notify(db: &PgPool, user: Uuid, note: Note) {
     });
 }
 
-async fn send(db: &PgPool, user: Uuid, note: &Note) -> anyhow::Result<()> {
-    let subs: Vec<(String, String, String)> =
-        sqlx::query_as("select endpoint, p256dh, auth from push_subs where user_id = $1").bind(user).fetch_all(db).await?;
+async fn send(db: &Db, user: Uuid, note: &Note) -> anyhow::Result<()> {
+    let subs: Vec<(String, String, String)> = subs_of(db, user).await?.into_iter().map(|x| (x.0, x.1, x.2)).collect();
     if subs.is_empty() {
         return Ok(());
     }
@@ -184,7 +196,7 @@ async fn send(db: &PgPool, user: Uuid, note: &Note) -> anyhow::Result<()> {
         }
         match r.send().await {
             Ok(res) if res.status() == reqwest::StatusCode::NOT_FOUND || res.status() == reqwest::StatusCode::GONE => {
-                sqlx::query("delete from push_subs where endpoint = $1").bind(&endpoint).execute(db).await?;
+                db.delete(&push_pk(&endpoint), "PUSH").await?;
             }
             Ok(res) if !res.status().is_success() => {
                 tracing::warn!("push service answered {} for one of {user}'s devices", res.status());
@@ -196,34 +208,76 @@ async fn send(db: &PgPool, user: Uuid, note: &Note) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn push_pk(endpoint: &str) -> String {
+    format!(
+        "PUSH#{}",
+        hex::encode(sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(endpoint.as_bytes())))
+    )
+}
+
+/// A player's push subscriptions: endpoint, keys, when made.
+async fn subs_of(db: &Db, user: Uuid) -> Result<Vec<(String, String, String, i64)>, DbError> {
+    let rows = db.index("gsi2", &upk(user), None, false).await?;
+    Ok(rows
+        .iter()
+        .filter(|it| get_s(it, "sk").as_deref() == Some("PUSH"))
+        .filter_map(|it| {
+            Some((
+                get_s(it, "endpoint")?,
+                get_s(it, "p256dh")?,
+                get_s(it, "auth")?,
+                get_n(it, "created_at").unwrap_or(0),
+            ))
+        })
+        .collect())
+}
+
 /// Once a minute: tell everyone whose free pack just became ready (once per timer), if they turned notifications on.
-pub async fn ready_loop(db: PgPool) {
+/// On AWS Lambda nothing runs between requests, so an EventBridge schedule calls [`ready_check`] instead.
+pub async fn ready_loop(db: Db) {
     let mut tick = tokio::time::interval(Duration::from_secs(60));
     loop {
         tick.tick().await;
-        let ready: Vec<Uuid> = match sqlx::query_scalar(
-            "update users u set pack_ping_at = u.next_claim_at
-             where u.next_claim_at <= now() and u.next_claim_at > now() - interval '1 day'
-               and (u.pack_ping_at is null or u.pack_ping_at < u.next_claim_at)
-               and not u.disabled and exists (select 1 from push_subs p where p.user_id = u.id)
-             returning u.id",
-        )
-        .fetch_all(&db)
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("checking free packs for notifications failed: {e}");
-                continue;
-            }
-        };
-        for id in ready {
-            notify(&db, id, Note {
-                title: "A free pack is ready".into(),
-                body: "Your free FRC Packs pack is waiting. Come claim it!".into(),
-                url: "/#open".into(),
-                tag: "pack-ready".into(),
-            });
+        if let Err(e) = ready_check(&db).await {
+            tracing::warn!("checking free packs for notifications failed: {e}");
         }
     }
+}
+
+pub async fn ready_check(db: &Db) -> anyhow::Result<()> {
+    let now = now_ms();
+    for it in db.index("gsi1", "USERS", None, false).await? {
+        let Ok(p) = crate::db::from_item::<Profile>(it) else { continue };
+        let due = p.next_claim_at <= now
+            && p.next_claim_at > now - 86_400_000
+            && p.pack_ping_at.is_none_or(|t| t < p.next_claim_at);
+        if !due || p.disabled || subs_of(db, p.id).await?.is_empty() {
+            continue;
+        }
+        // Mark it pinged (on the player's version, so a claim at the same moment isn't overwritten).
+        let marked: ApiResult<bool> = retry!(async {
+            let Some(mut p) = model::profile(db, p.id).await? else { return Ok(false) };
+            if p.pack_ping_at.is_some_and(|t| t >= p.next_claim_at) {
+                return Ok(false);
+            }
+            p.pack_ping_at = Some(p.next_claim_at);
+            let parts = p.parts;
+            let mut tx = Tx::new();
+            model::save_user(&mut tx, &mut p, parts, "push");
+            tx.commit(db).await.map(|_| true).map_err(ApiError::from)
+        });
+        if matches!(marked, Ok(true)) {
+            notify(
+                db,
+                p.id,
+                Note {
+                    title: "A free pack is ready".into(),
+                    body: "Your free FRC Packs pack is waiting. Come claim it!".into(),
+                    url: "/#open".into(),
+                    tag: "pack-ready".into(),
+                },
+            );
+        }
+    }
+    Ok(())
 }

@@ -4,14 +4,17 @@ pub mod accounts;
 pub mod admin;
 pub mod api;
 pub mod auth;
+pub mod db;
 pub mod error;
 pub mod missions;
+pub mod model;
 pub mod packs;
 pub mod profiles;
 pub mod push;
 pub mod reports;
 pub mod roll;
 pub mod specials;
+pub mod testkit;
 pub mod trades;
 
 use std::path::PathBuf;
@@ -22,7 +25,7 @@ use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use sqlx::PgPool;
+use db::Db;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -34,30 +37,43 @@ pub struct Config {
     pub dev_tools: bool,
     /// Mark the session cookie Secure (on whenever the site is served over HTTPS).
     pub cookie_secure: bool,
+    /// Only admin accounts can sign in or use the game (for testing on the real domain before opening it up).
+    pub admin_only: bool,
 }
 
 pub struct AppState {
-    pub db: PgPool,
+    pub db: Db,
     pub catalog: packs::Catalog,
     pub dev_tools: bool,
     pub cookie_secure: bool,
+    pub admin_only: bool,
     pub limiter: accounts::Limiter,
 }
 
 pub type Shared = Arc<AppState>;
 
-pub fn app(db: PgPool, cfg: Config) -> anyhow::Result<Router> {
+pub fn app(db: Db, cfg: Config) -> anyhow::Result<Router> {
     let catalog = packs::Catalog::load(&cfg.data_dir.join("packs"))?;
     let state = Arc::new(AppState {
         db,
         catalog,
         dev_tools: cfg.dev_tools,
         cookie_secure: cfg.cookie_secure,
+        admin_only: cfg.admin_only,
         limiter: accounts::Limiter::default(),
     });
     let mut router = Router::new()
         .nest("/api/admin", admin::routes())
-        .nest("/api", api::routes().merge(trades::routes()).merge(push::routes()).merge(missions::routes()).merge(profiles::routes()).merge(reports::routes()).merge(specials::routes()))
+        .nest(
+            "/api",
+            api::routes()
+                .merge(trades::routes())
+                .merge(push::routes())
+                .merge(missions::routes())
+                .merge(profiles::routes())
+                .merge(reports::routes())
+                .merge(specials::routes()),
+        )
         .nest_service("/photos", ServeDir::new(cfg.data_dir.join("photos")))
         .nest_service("/packs", ServeDir::new(cfg.data_dir.join("packs")));
     if let Some(web) = cfg.web_dir {
@@ -112,7 +128,10 @@ async fn json_only_writes(req: Request<Body>, next: Next) -> Response {
     next.run(req).await
 }
 
-pub async fn migrate(db: &PgPool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations").run(db).await?;
+/// Makes the table when running against a local DynamoDB (`DYNAMODB_ENDPOINT`); on AWS the stack makes it.
+pub async fn prepare(db: &Db) -> anyhow::Result<()> {
+    if std::env::var("DYNAMODB_ENDPOINT").is_ok() {
+        db.ensure_table().await?;
+    }
     Ok(())
 }

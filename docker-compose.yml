@@ -1,14 +1,8 @@
-# Local Postgres for development: docker compose up -d
+# Local DynamoDB for development and the API tests: docker compose up -d
+# Then run the server with DYNAMODB_ENDPOINT=http://localhost:8765 (it makes its table on start).
 services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: frc
-      POSTGRES_PASSWORD: frc
-      POSTGRES_DB: frcpacks
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory", "-port", "8765"]
     ports:
-      - "5432:5432"
-    volumes:
-      - frcpacks-db:/var/lib/postgresql/data
-volumes:
-  frcpacks-db:
+      - "8765:8765"

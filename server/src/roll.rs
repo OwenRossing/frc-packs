@@ -61,8 +61,11 @@ fn weighted<R: Rng + ?Sized>(rng: &mut R, w: &HashMap<Tier, f64>) -> Tier {
 pub fn roll<R: Rng + ?Sized>(pack: &Pack, rng: &mut R, o: &Opts) -> Vec<Rolled> {
     let odds = &pack.recipe.odds;
     let (pm, pl) = (o.pity.m + 1, o.pity.l + 1);
-    let (slots, last, mult) =
-        if o.boosted { (&odds.boosted.slots, &odds.boosted.last, odds.boosted.mythic_mult) } else { (&odds.slots, &odds.last, 1.0) };
+    let (slots, last, mult) = if o.boosted {
+        (&odds.boosted.slots, &odds.boosted.last, odds.boosted.mythic_mult)
+    } else {
+        (&odds.slots, &odds.last, 1.0)
+    };
     let mut cards: Vec<Rolled> = Vec::with_capacity(5);
     for slot in 0..5 {
         let tier = if o.mythic && slot >= 2 {

@@ -12,7 +12,7 @@ Pokémon-style packs, but every card is an FRC team's robot.
 browser (web/, Vite + TypeScript)
    │  JSON over /api, photos from /photos, pack recipes from /packs
    ▼
-server/ (Rust: Axum + sqlx)  ──►  Postgres
+server/ (Rust: Axum)  ──►  DynamoDB (one table, see docs/dynamodb.md)
    reads data/packs/*.json (what's in each pack, odds, pity rules)
 ```
 
@@ -24,14 +24,14 @@ server/ (Rust: Axum + sqlx)  ──►  Postgres
 
 ## Run it locally
 
-You need Rust (rustup.rs), Node 20 or newer, and Postgres (Docker is easiest).
+You need Rust (rustup.rs), Node 20 or newer, and a local DynamoDB (Docker is easiest; or AWS's DynamoDB Local jar with Java).
 
 ```sh
-docker compose up -d                       # Postgres on localhost:5432 (user, password and database in docker-compose.yml)
+docker compose up -d                       # DynamoDB Local on localhost:8765
 
 cd server
-DATABASE_URL=postgres://frc:frc@localhost:5432/frcpacks DEV_TOOLS=1 cargo run
-                                           # API on http://127.0.0.1:3000; creates its tables on start
+DYNAMODB_ENDPOINT=http://localhost:8765 DEV_TOOLS=1 cargo run
+                                           # API on http://127.0.0.1:3000; makes its table on start
 
 cd web                                     # in another terminal
 npm install
@@ -44,14 +44,17 @@ To sign in, make the admin account (it prints the password), then make invite co
 
 ```sh
 cd server
-DATABASE_URL=postgres://frc:frc@localhost:5432/frcpacks cargo run -- create-admin
+DYNAMODB_ENDPOINT=http://localhost:8765 cargo run -- create-admin
 ```
 
 ### Server settings
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `DATABASE_URL` | required | Postgres connection string |
+| `TABLE_NAME` | `frc-packs` | The DynamoDB table |
+| `DYNAMODB_ENDPOINT` | AWS | A local DynamoDB to use instead of AWS (the table is made on start) |
+| `ADMIN_ONLY` | off | Only admin accounts can sign in or play (for testing on the real domain) |
+| `GAME_TZ` | `America/Chicago` | When daily missions and the streak roll over |
 | `BIND` | `127.0.0.1:3000` | Address to listen on |
 | `DATA_DIR` | `../data` | Where `packs/` and `photos/` are |
 | `WEB_DIR` | `../web/dist` | The built site; skipped if it isn't there |
@@ -60,14 +63,14 @@ DATABASE_URL=postgres://frc:frc@localhost:5432/frcpacks cargo run -- create-admi
 
 ## Host it
 
-`deploy/install.sh` installs and runs the site on an Ubuntu machine, and Cloudflare Tunnel puts it on your domain without opening any ports. Steps, backups, and moving to another machine: [deploy/README.md](deploy/README.md).
+On AWS: DynamoDB, a Lambda for the API, and S3 + CloudFront for the site, each change one command. See [docs/aws.md](docs/aws.md).
 
 ## Tests
 
 ```sh
-cd server && DATABASE_URL=postgres://frc:frc@localhost:5432/frcpacks cargo test
+cd server && DYNAMODB_ENDPOINT=http://localhost:8765 cargo test
 ```
-Odds over 200,000 simulated packs, the pity guarantees, and API tests against a real database (claims, packs in hand, opening, serial numbers, division sets, two tabs opening at once, resuming a pack mid-reveal, invite codes, signing in on two devices, password guessing, the admin panel). The API tests are skipped without `DATABASE_URL`.
+Odds over 200,000 simulated packs, the pity guarantees, and API tests against a real database (claims, packs in hand, opening, serial numbers, division sets, two tabs opening at once, resuming a pack mid-reveal, invite codes, signing in on two devices, password guessing, the admin panel). The API tests also try to cheat: simultaneous opens, claims, crafts and mission claims, two offers racing for one card, serials pulled at the same moment, forged packs in hand, and trading cards still being revealed. They're skipped without `DYNAMODB_ENDPOINT`.
 
 ```sh
 cd web && npx playwright install chromium   # once
@@ -80,4 +83,4 @@ Set `ADMIN_USER` and `ADMIN_PASSWORD` to the admin account to check the admin pa
 
 - Signing in with Google (needs a Google Cloud OAuth client) or the 7028 portal.
 - Rate limiting on pack opening (sign-in and invite codes are limited already).
-- Trading, crafting with parts, and more packs.
+- More packs.

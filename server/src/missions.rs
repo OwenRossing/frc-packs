@@ -13,13 +13,15 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::Serialize;
-use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::Shared;
 use crate::api::{self, StateOut};
 use crate::auth::User;
+use crate::db::{Db, Tx};
 use crate::error::{ApiError, ApiResult};
+use crate::model::{self, Day, Profile};
+use crate::retry;
 
 pub fn routes() -> Router<Shared> {
     Router::new().route("/missions/{id}/claim", post(claim)).route("/level/claim", post(claim_level))
@@ -41,16 +43,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// The first three have a column of their own; the rest are keys in `daily.extra`.
-    fn column(self) -> Option<&'static str> {
-        match self {
-            Kind::Opened => Some("opened"),
-            Kind::Scrapped => Some("scrapped"),
-            Kind::Traded => Some("traded"),
-            _ => None,
-        }
-    }
-
     fn key(self) -> &'static str {
         match self {
             Kind::Opened => "opened",
@@ -116,82 +108,29 @@ fn todays(user: Uuid, day: i64) -> Vec<&'static Mission> {
     out
 }
 
-/// Days since a fixed date, in the game's time zone: the seed for a day's missions.
-async fn day_number(c: &mut PgConnection) -> ApiResult<i64> {
-    Ok(sqlx::query_scalar("select ((now() at time zone $1)::date - date '2020-01-01')::bigint").bind(tz()).fetch_one(&mut *c).await?)
-}
-
 /// A boosted pack every this many days of streak.
 pub const STREAK_REWARD_EVERY: i32 = 7;
 
-pub fn tz() -> String {
-    std::env::var("GAME_TZ").unwrap_or_else(|_| "America/Chicago".into())
+/// Counts something toward today's missions (the caller saves the day in its transaction).
+pub fn count(day: &mut Day, kind: Kind, n: i64) {
+    if n > 0 {
+        *day.counts.entry(kind.key().to_string()).or_default() += n;
+    }
 }
 
-/// Counts something toward today's missions.
-pub async fn bump(c: &mut PgConnection, user: Uuid, kind: Kind, n: i64) -> ApiResult<()> {
-    if n <= 0 {
-        return Ok(());
-    }
-    if let Some(col) = kind.column() {
-        // One of three fixed names, never user input.
-        sqlx::query(&format!(
-            "insert into daily (user_id, day, {col}) values ($1, (now() at time zone $3)::date, $2)
-             on conflict (user_id, day) do update set {col} = daily.{col} + excluded.{col}"
-        ))
-        .bind(user)
-        .bind(n as i32)
-        .bind(tz())
-        .execute(&mut *c)
-        .await?;
-    } else {
-        sqlx::query(
-            "insert into daily (user_id, day, extra) values ($1, (now() at time zone $3)::date, jsonb_build_object($4::text, $2::int))
-             on conflict (user_id, day) do update
-               set extra = daily.extra || jsonb_build_object($4::text, coalesce((daily.extra->>$4)::int, 0) + $2::int)",
-        )
-        .bind(user)
-        .bind(n as i32)
-        .bind(tz())
-        .bind(kind.key())
-        .execute(&mut *c)
-        .await?;
-    }
-    Ok(())
-}
-
-/// After a pack is opened: count it, and move the streak along. Returns true when this pack earned the streak's
-/// boosted pack (which this adds).
-pub async fn on_open(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResult<bool> {
-    bump(c, user, Kind::Opened, 1).await?;
-    let (streak, advanced): (i32, bool) = sqlx::query_as(
-        "with today as (select (now() at time zone $2)::date as d),
-              old as (select streak, streak_day from users where id = $1 for no key update)
-         update users u set
-           streak = case when old.streak_day = today.d then old.streak
-                         when old.streak_day = today.d - 1 then old.streak + 1
-                         else greatest(1, old.streak / 2) end,
-           streak_day = today.d
-         from old, today where u.id = $1
-         returning u.streak, old.streak_day is distinct from today.d",
-    )
-    .bind(user)
-    .bind(tz())
-    .fetch_one(&mut *c)
-    .await?;
-    if advanced && streak > 0 && streak % STREAK_REWARD_EVERY == 0 {
-        api::reason(&mut *c, "streak").await?;
-        sqlx::query(
-            "insert into user_packs (user_id, pack_id, sealed, boosted) values ($1, $2, 1, 1)
-             on conflict (user_id, pack_id) do update set sealed = user_packs.sealed + 1, boosted = user_packs.boosted + 1",
-        )
-        .bind(user)
-        .bind(pack)
-        .execute(&mut *c)
-        .await?;
-        return Ok(true);
-    }
-    Ok(false)
+/// After a pack is opened: count it, and move the streak along (on the profile the caller saves). Returns true when
+/// this pack earned the streak's boosted pack, which the caller adds.
+pub fn on_open(p: &mut Profile, day: &mut Day) -> bool {
+    count(day, Kind::Opened, 1);
+    let today = model::day_number();
+    let advanced = p.streak_day != Some(today);
+    p.streak = match p.streak_day {
+        Some(d) if d == today => p.streak,
+        Some(d) if d == today - 1 => p.streak + 1,
+        _ => 1.max(p.streak / 2),
+    };
+    p.streak_day = Some(today);
+    advanced && p.streak > 0 && p.streak % STREAK_REWARD_EVERY == 0
 }
 
 #[derive(Serialize)]
@@ -217,82 +156,54 @@ pub struct StreakOut {
     every: i32,
 }
 
-pub async fn load(c: &mut PgConnection, user: Uuid) -> ApiResult<(Vec<MissionOut>, StreakOut)> {
-    let tz = tz();
-    let row: Option<sqlx::types::Json<serde_json::Value>> = sqlx::query_scalar(
-        "select to_jsonb(d) from daily d where user_id = $1 and day = (now() at time zone $2)::date",
-    )
-    .bind(user)
-    .bind(&tz)
-    .fetch_optional(&mut *c)
-    .await?;
-    let row = row.map(|j| j.0).unwrap_or(serde_json::Value::Null);
-    let count = |kind: Kind| -> i32 {
-        let direct = kind.column().and_then(|col| row.get(col)).and_then(|v| v.as_i64());
-        direct.or_else(|| row.get("extra").and_then(|e| e.get(kind.key())).and_then(|v| v.as_i64())).unwrap_or(0) as i32
-    };
-    let claimed: Vec<String> =
-        row.get("claimed").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-    let day = day_number(c).await?;
-    let missions = todays(user, day)
+fn progress(day: &Day, kind: Kind) -> i64 {
+    day.counts.get(kind.key()).copied().unwrap_or(0)
+}
+
+pub fn load(p: &Profile, day: &Day) -> (Vec<MissionOut>, StreakOut) {
+    let today = model::day_number();
+    let missions = todays(p.id, today)
         .into_iter()
         .map(|(id, label, kind, goal, reward)| MissionOut {
             id,
             label,
             goal: *goal,
-            progress: count(*kind).min(*goal),
+            progress: progress(day, *kind).min(i64::from(*goal)) as i32,
             reward: *reward,
-            claimed: claimed.iter().any(|c| c == id),
+            claimed: day.claimed.iter().any(|c| c == id),
         })
         .collect();
-    let (days, today, alive): (i32, bool, bool) = sqlx::query_as(
-        "select streak, coalesce(streak_day = (now() at time zone $2)::date, false),
-                coalesce(streak_day >= (now() at time zone $2)::date - 1, false)
-         from users where id = $1",
-    )
-    .bind(user)
-    .bind(&tz)
-    .fetch_one(&mut *c)
-    .await?;
-    Ok((missions, StreakOut { days: if alive { days } else { 0 }, today, alive, every: STREAK_REWARD_EVERY }))
+    let alive = p.streak_day.is_some_and(|d| d >= today - 1);
+    let streak = StreakOut {
+        days: if alive { p.streak } else { 0 },
+        today: p.streak_day == Some(today),
+        alive,
+        every: STREAK_REWARD_EVERY,
+    };
+    (missions, streak)
 }
 
 /// Collects a finished mission's parts, once.
 async fn claim(State(s): State<Shared>, user: User, Path(id): Path<String>) -> ApiResult<Json<StateOut>> {
-    let mut tx = s.db.begin().await?;
-    api::reason(&mut tx, "mission").await?;
-    api::lock_user(&mut tx, user.id).await?;
-    let day = day_number(&mut tx).await?;
-    let Some((mid, _, kind, goal, reward)) = todays(user.id, day).into_iter().find(|m| m.0 == id) else {
+    let Some((mid, _, kind, goal, reward)) = todays(user.id, model::day_number()).into_iter().find(|m| m.0 == id)
+    else {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown_mission"));
     };
-    let progress = match kind.column() {
-        Some(col) => format!("{col}"),
-        None => format!("coalesce((extra->>'{}')::int, 0)", kind.key()), // fixed names, never user input
-    };
-    let done: Option<bool> = sqlx::query_scalar(&format!(
-        "select {progress} >= $3 and not ($4 = any(claimed)) from daily
-         where user_id = $1 and day = (now() at time zone $2)::date for update"
-    ))
-    .bind(user.id)
-    .bind(tz())
-    .bind(goal)
-    .bind(mid)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if done != Some(true) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "mission_not_ready"));
-    }
-    sqlx::query("update daily set claimed = array_append(claimed, $3) where user_id = $1 and day = (now() at time zone $2)::date")
-        .bind(user.id)
-        .bind(tz())
-        .bind(mid)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("update users set parts = parts + $2 where id = $1").bind(user.id).bind(reward).execute(&mut *tx).await?;
-    let out = api::load_state(&s, &mut tx, user.id).await?;
-    tx.commit().await?;
-    Ok(Json(out))
+    retry!(async {
+        let mut p = api::me(&s.db, user.id).await?;
+        let mut day = model::today(&s.db, user.id).await?;
+        if progress(&day, *kind) < i64::from(*goal) || day.claimed.iter().any(|c| c == mid) {
+            return Err(ApiError::new(StatusCode::CONFLICT, "mission_not_ready"));
+        }
+        day.claimed.push(mid.to_string());
+        let mut tx = Tx::new();
+        model::save_day(&mut tx, user.id, &mut day);
+        let parts = p.parts;
+        p.parts += i64::from(*reward);
+        model::save_user(&mut tx, &mut p, parts, "mission");
+        tx.commit(&s.db).await.map_err(ApiError::from)
+    })?;
+    Ok(Json(api::load_state(&s, user.id).await?))
 }
 
 /// Collector level: one level for every this many different teams you own.
@@ -310,33 +221,31 @@ pub struct LevelOut {
     reward: i32,
 }
 
-pub async fn level(c: &mut PgConnection, user: Uuid, pack: &str) -> ApiResult<LevelOut> {
-    let teams: i64 = sqlx::query_scalar("select count(distinct team) from cards where user_id = $1 and pack_id = $2")
-        .bind(user)
-        .bind(pack)
-        .fetch_one(&mut *c)
-        .await?;
-    let claimed: i32 = sqlx::query_scalar("select level_claimed from users where id = $1").bind(user).fetch_one(&mut *c).await?;
-    Ok(LevelOut { teams, level: (teams / LEVEL_TEAMS) as i32, claimed, per: LEVEL_TEAMS, reward: LEVEL_PARTS })
+fn level_of(teams: i64, claimed: i32) -> LevelOut {
+    LevelOut { teams, level: (teams / LEVEL_TEAMS) as i32, claimed, per: LEVEL_TEAMS, reward: LEVEL_PARTS }
+}
+
+pub async fn level(db: &Db, user: Uuid, pack: &str) -> ApiResult<LevelOut> {
+    let teams = model::stats(db, user, pack).await?.teams;
+    let claimed = api::me(db, user).await?.level_claimed;
+    Ok(level_of(teams, claimed))
 }
 
 /// Collects the parts for every level reached since the last collect.
 async fn claim_level(State(s): State<Shared>, user: User) -> ApiResult<Json<StateOut>> {
-    let mut tx = s.db.begin().await?;
-    api::reason(&mut tx, "level").await?;
-    api::lock_user(&mut tx, user.id).await?;
-    let l = level(&mut tx, user.id, s.catalog.claimable().id()).await?;
-    if l.level <= l.claimed {
-        return Err(ApiError::new(StatusCode::CONFLICT, "nothing_to_claim"));
-    }
-    let gained = (l.level - l.claimed) * LEVEL_PARTS;
-    sqlx::query("update users set parts = parts + $2, level_claimed = $3 where id = $1")
-        .bind(user.id)
-        .bind(gained)
-        .bind(l.level)
-        .execute(&mut *tx)
-        .await?;
-    let out = api::load_state(&s, &mut tx, user.id).await?;
-    tx.commit().await?;
-    Ok(Json(out))
+    let free = s.catalog.claimable().id();
+    retry!(async {
+        let mut p = api::me(&s.db, user.id).await?;
+        let l = level_of(model::stats(&s.db, user.id, free).await?.teams, p.level_claimed);
+        if l.level <= l.claimed {
+            return Err(ApiError::new(StatusCode::CONFLICT, "nothing_to_claim"));
+        }
+        let parts = p.parts;
+        p.parts += i64::from((l.level - l.claimed) * LEVEL_PARTS);
+        p.level_claimed = l.level;
+        let mut tx = Tx::new();
+        model::save_user(&mut tx, &mut p, parts, "level");
+        tx.commit(&s.db).await.map_err(ApiError::from)
+    })?;
+    Ok(Json(api::load_state(&s, user.id).await?))
 }

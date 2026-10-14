@@ -322,30 +322,33 @@ export function start(RECIPE) {
   var EDGES = [-2, -1, 1, 2].map(function (z) { return '<i class="edge" style="--z:' + z + '"></i>'; }).join("") + '<i class="edge e0" style="--z:0"></i>';
   /* c = { num, tier, serial, isNew, copy } */
   function cardEl(c, opts) {
-    opts = opts || {}; var t = BY_NUM[c.num], T = TIERS[c.tier], full = c.tier === "legendary" || c.tier === "mythic";
+    opts = opts || {}; var t = BY_NUM[c.num], T = TIERS[c.tier];
     var slot = document.createElement("div");
     slot.className = "slot" + (opts.faceUp ? " flipped" : "") + (opts.button ? " btn" : "") + (opts.alive ? " alive" : "") + (opts.locked ? " locked" : "");
     slot.style.setProperty("--tc", T.color);
     if (myTeam() && c.num === myTeam()) slot.classList.add("mine");
     if (opts.button) { slot.setAttribute("role", "button"); slot.tabIndex = 0; }
     slot.setAttribute("aria-label", t.name + ", team " + t.num + ", " + T.label);
-    var art = '<div class="art">' + artSVG(t.num, c.tier) + '</div>';
+    // One layout for every tier: team, name and EPA pills on the frame, the robot photo with its location tags, a tier crest,
+    // the champs box, then the stars and serial pills on the bottom of the frame.
+    var epa = t.epa == null ? "–" : Math.round(t.epa * 10) / 10, snCls = (+c.serial > 0 && +c.serial <= 10 ? " low" : "") + (+c.serial === c.num ? " match" : "");
+    var pic = t.photo ? photoHTML(t.num) : '<svg class="ph-fallback" viewBox="0 0 200 200" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g transform="translate(6 38) scale(1.04)">' + robotSVG(t.num) + '</g></svg>';
     slot.innerHTML =
       '<div class="shade"></div><div class="float"><div class="tilt rest"><div class="flip card" data-tier="' + c.tier + '">' + EDGES +
       '<div class="face back">' + BACK_SVG + '</div>' +
-      '<div class="face front"><div class="inner' + (full ? " full" : "") + '" style="--nl:' + nameScale(t.name) + '">' +
-      (full ? art : "") +
-      // The team number leads the card, set like EPA on the other side; the name goes under them.
-      '<div class="hdr"><span class="tn"><small>TEAM</small>' + t.num + '</span><span class="hp"><small>EPA</small>' + (t.epa == null ? "–" : Math.round(t.epa)) + '</span><span class="nm">' + esc(t.name) + '</span></div>' +
-      (full ? "" : art) +
-      '<div class="sub-l"><span>' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span>CMP 2026</span></div>' +
-      (full && t.photo ? '<div class="fwrap"><div class="fphoto">' + photoHTML(t.num) + '</div>' + (c.tier === "mythic" ? '<span class="crest">★ Mythic ★</span>' : '') + '</div>' : '') +
+      '<div class="face front"><div class="inner v2" style="--nl:' + nameScale(t.name) + '">' +
+      '<div class="fwrap"><div class="fphoto">' + pic +
+        '<span class="loc l">' + esc(t.div) + (t.loc ? ' · ' + esc(t.loc) : '') + '</span><span class="loc r">CMP 2026</span></div>' +
+        '<span class="crest">★ ' + T.label + ' ★</span></div>' +
+      '<div class="fine2">EPA data from Statbotics</div>' +
       '<div class="moves">' +
         '<div class="mv"><i></i><span>Champs record</span><b>' + esc(t.wl) + '</b></div>' +
         '<div class="mv"><i></i><span>Champs EPA rank</span><b>#' + t.rank + '</b></div>' +
       '</div>' +
-      '<div class="ft"><span class="rar">' + T.gems + '</span><span class="sn' + (+c.serial > 0 && +c.serial <= 10 ? " low" : "") + (+c.serial === c.num ? " match" : "") + '">No. ' + esc(c.serial || "------") + '</span><span>' + T.label + '</span></div>' +
-      '<div class="foil"></div><div class="spark"></div><div class="glare"></div></div></div></div></div></div>';
+      '<div class="foil"></div><div class="spark"></div><div class="glare"></div></div>' +
+      '<div class="ttb"><span class="a"><small>TEAM</small>' + t.num + '</span><span class="nmp">' + esc(t.name) + '</span><span class="c"><small>EPA</small>' + epa + '</span></div>' +
+      '<div class="ftb"><span class="rar">' + T.gems + '</span><span class="sn' + snCls + '">No. ' + esc(c.serial || "------") + '</span></div>' +
+      '</div></div></div></div></div>';
     if (opts.ribbon) { var r = document.createElement("div"); r.className = "ribbon" + (c.isNew ? "" : " dupe"); r.textContent = c.test ? "TEST" : c.isNew ? "NEW" : "COPY #" + c.copy; r.hidden = true; slot.appendChild(r); slot._ribbon = r; }
     if (opts.count > 1) { var b = document.createElement("div"); b.className = "count-badge"; b.textContent = "×" + opts.count; slot.appendChild(b); }
     attachTilt(slot);

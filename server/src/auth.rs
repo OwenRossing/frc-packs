@@ -7,11 +7,12 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::Shared;
+use crate::db::{Db, DbResult, get_n, get_s};
 use crate::error::ApiError;
+use crate::model::{self, now_ms};
 
 pub const COOKIE: &str = "sid";
 
@@ -23,6 +24,14 @@ pub fn new_token() -> String {
 
 pub fn hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
+}
+
+/// Sessions last this long after signing in.
+pub const SESSION_DAYS: i64 = 400;
+
+/// Where a session is kept: only the token's hash, never the token.
+pub fn session_pk(token: &str) -> String {
+    format!("S#{}", hex::encode(hash(token)))
 }
 
 pub fn cookie(token: &str, secure: bool) -> String {
@@ -64,16 +73,19 @@ pub struct Session {
     pub disabled: bool,
 }
 
-pub async fn session(c: &mut PgConnection, headers: &HeaderMap) -> sqlx::Result<Option<Session>> {
+pub async fn session(db: &Db, headers: &HeaderMap) -> DbResult<Option<Session>> {
     let Some(token) = token_from(headers) else { return Ok(None) };
-    let row: Option<(Uuid, Option<String>, bool, bool)> = sqlx::query_as(
-        "select u.id, u.username, u.is_admin, u.disabled from sessions s join users u on u.id = s.user_id
-         where s.token_hash = $1 and s.created_at > now() - interval '400 days'",
-    )
-    .bind(hash(&token))
-    .fetch_optional(c)
-    .await?;
-    Ok(row.map(|(id, username, is_admin, disabled)| Session { id, username, is_admin, disabled }))
+    let Some(it) = db.get(&session_pk(&token), "SESSION").await? else { return Ok(None) };
+    if get_n(&it, "created_at").is_none_or(|t| t < now_ms() - SESSION_DAYS * 86_400_000) {
+        return Ok(None);
+    }
+    let Some(id) = get_s(&it, "user_id").and_then(|v| Uuid::parse_str(&v).ok()) else { return Ok(None) };
+    Ok(model::profile(db, id).await?.map(|p| Session {
+        id,
+        username: p.username,
+        is_admin: p.is_admin,
+        disabled: p.disabled,
+    }))
 }
 
 /// A signed-in account. Handlers that take this reject requests without one (401 `no_session`).
@@ -86,8 +98,9 @@ impl FromRequestParts<Shared> for User {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &Shared) -> Result<User, ApiError> {
-        let mut c = state.db.acquire().await?;
-        match session(&mut c, &parts.headers).await? {
+        match session(&state.db, &parts.headers).await? {
+            // While the site is admin-only (testing on the real domain), nobody else gets in.
+            Some(s) if state.admin_only && !s.is_admin => Err(ApiError::new(StatusCode::FORBIDDEN, "admin_only")),
             Some(s) if s.username.is_some() && !s.disabled => Ok(User { id: s.id, is_admin: s.is_admin }),
             _ => Err(ApiError::new(StatusCode::UNAUTHORIZED, "no_session")),
         }
