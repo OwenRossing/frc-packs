@@ -2421,3 +2421,98 @@ async fn players_cannot_act_for_each_other() {
     .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "at most 5 cards a side");
 }
+
+#[tokio::test]
+async fn beta_testers_send_feedback_and_the_admin_sorts_it() {
+    let (app, db) = need_db!(own_setup(false));
+    let (ca, sa) = player(&app, &db).await;
+    let (cb, _) = player(&app, &db).await;
+    let admin = make_admin(&app, &db).await;
+    let a_name = sa["account"]["username"].as_str().unwrap().to_string();
+    // Needs a sign-in, a known kind and a real title.
+    let body = json!({ "kind": "bug", "title": "Card is cut off", "details": "Seen on my phone.", "context": "binder | v1 | Pixel 8" });
+    assert_eq!(call(&app, "POST", "/api/feedback", None, Some(body.clone())).await.status, StatusCode::UNAUTHORIZED);
+    for bad in [
+        json!({ "kind": "spam", "title": "Hello there" }),
+        json!({ "kind": "bug", "title": "  " }),
+        json!({ "kind": "bug", "title": "ab" }),
+        json!({ "kind": "bug", "title": "x".repeat(81) }),
+        json!({ "kind": "bug", "title": "fine title", "details": "y".repeat(1501) }),
+        json!({ "kind": "bug", "title": "bad \u{0007} bell" }),
+    ] {
+        assert_eq!(
+            call(&app, "POST", "/api/feedback", Some(&ca), Some(bad.clone())).await.status,
+            StatusCode::BAD_REQUEST,
+            "{bad}"
+        );
+    }
+    assert_eq!(call(&app, "POST", "/api/feedback", Some(&ca), Some(body)).await.status, StatusCode::NO_CONTENT);
+    call(&app, "POST", "/api/feedback", Some(&cb), Some(json!({ "kind": "idea", "title": "Add dark mode" }))).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // A player sees only their own, without the admin's extra details.
+    let mine = call(&app, "GET", "/api/feedback/mine", Some(&ca), None).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    let list = mine.body.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!((list[0]["title"].as_str(), list[0]["status"].as_str()), (Some("Card is cut off"), Some("open")));
+    assert!(list[0].get("username").is_none() && list[0].get("context").is_none(), "{}", list[0]);
+    // Only the admin sees everyone's, with who sent it and where they were.
+    assert_eq!(call(&app, "GET", "/api/admin/feedback", Some(&ca), None).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(call(&app, "GET", "/api/admin/feedback", None, None).await.status, StatusCode::UNAUTHORIZED);
+    let all = call(&app, "GET", "/api/admin/feedback", Some(&admin), None).await.body;
+    let item = all.as_array().unwrap().iter().find(|f| f["title"] == "Card is cut off").unwrap().clone();
+    assert_eq!(
+        (item["username"].as_str(), item["context"].as_str()),
+        (Some(a_name.as_str()), Some("binder | v1 | Pixel 8"))
+    );
+    assert!(all.as_array().unwrap().iter().any(|f| f["title"] == "Add dark mode"));
+    // The admin sets a status and a note; the sender sees it. Players can't.
+    let id = item["id"].as_i64().unwrap();
+    let st = json!({ "status": "done", "note": "Fixed in the next update" });
+    assert_eq!(
+        call(&app, "POST", &format!("/api/admin/feedback/{id}/status"), Some(&ca), Some(st.clone())).await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/api/admin/feedback/{id}/status"),
+            Some(&admin),
+            Some(json!({ "status": "maybe" }))
+        )
+        .await
+        .status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(&app, "POST", "/api/admin/feedback/999999999/status", Some(&admin), Some(st.clone())).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, "POST", &format!("/api/admin/feedback/{id}/status"), Some(&admin), Some(st)).await.status,
+        StatusCode::NO_CONTENT
+    );
+    let mine = call(&app, "GET", "/api/feedback/mine", Some(&ca), None).await.body;
+    assert_eq!(
+        (mine[0]["status"].as_str(), mine[0]["note"].as_str()),
+        (Some("done"), Some("Fixed in the next update"))
+    );
+    // Ten a day.
+    for i in 0..9 {
+        let r = call(
+            &app,
+            "POST",
+            "/api/feedback",
+            Some(&ca),
+            Some(json!({ "kind": "other", "title": format!("note number {i}") })),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT, "{i}");
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let r =
+        call(&app, "POST", "/api/feedback", Some(&ca), Some(json!({ "kind": "other", "title": "one too many" }))).await;
+    assert_eq!((r.status, r.body["error"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some("too_much_feedback")));
+    drop_table(&db).await;
+}

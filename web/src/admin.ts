@@ -3,7 +3,7 @@
 
 import "./style.css";
 import "./admin.css";
-import { api, ApiError, explain, type AdminUser, type Invite, type Report, type Rules } from "./api";
+import { api, ApiError, explain, type AdminUser, type Feedback, type FeedbackStatus, type Invite, type Report, type Rules } from "./api";
 
 type Kid = Node | string | null | undefined | false;
 
@@ -555,17 +555,90 @@ function paintReports() {
   }
 }
 
+// ---------- feedback ----------
+
+const KIND: Record<Feedback["kind"], string> = { bug: "Bug", idea: "Idea", other: "Other" };
+const STATUS: Record<FeedbackStatus, string> = { open: "Open", planned: "Planned", done: "Done", wontfix: "Won't do" };
+let feedback: Feedback[] = [];
+let fbShow: FeedbackStatus | "all" = "open";
+
+function paintFeedback() {
+  const open = feedback.filter((f) => f.status === "open").length;
+  $("#fbCount").textContent = open ? `${open} open` : "";
+  const filter = $("#fbFilter");
+  filter.replaceChildren();
+  for (const s of ["open", "planned", "done", "wontfix", "all"] as const) {
+    const n = s === "all" ? feedback.length : feedback.filter((f) => f.status === s).length;
+    const label = `${s === "all" ? "All" : STATUS[s]} (${n})`;
+    filter.append(
+      button(
+        label,
+        () => {
+          fbShow = s;
+          paintFeedback();
+        },
+        fbShow === s ? "chip armed" : "chip",
+      ),
+    );
+  }
+  const list = $("#feedback");
+  list.replaceChildren();
+  const shown = feedback.filter((f) => fbShow === "all" || f.status === fbShow);
+  if (!shown.length) list.append(h("p", { class: "empty" }, feedback.length ? "Nothing here." : "No feedback yet. When a tester sends some, it shows up here."));
+  for (const f of shown) {
+    const note = h("input", { class: "input", maxlength: "200", placeholder: "Note for the sender (optional)", "aria-label": "Note for the sender" });
+    note.value = f.note;
+    const set = (status: FeedbackStatus) => async (b: HTMLButtonElement) => {
+      b.disabled = true;
+      try {
+        await api.admin.feedbackStatus(f.id, status, note.value.trim());
+        f.status = status;
+        f.note = note.value.trim();
+        paintFeedback();
+      } catch (e) {
+        fail(e);
+        b.disabled = false;
+      }
+    };
+    list.append(
+      h(
+        "div",
+        { class: f.status === "done" || f.status === "wontfix" ? "item done" : "item" },
+        h(
+          "div",
+          { class: "item-main" },
+          h("div", { class: "who" }, h("b", {}, f.title), h("span", { class: "badge" }, KIND[f.kind] ?? f.kind), h("span", { class: "badge off" }, STATUS[f.status] ?? f.status)),
+          f.details ? h("div", { class: "meta fb-details" }, f.details) : null,
+          h("div", { class: "meta" }, h("span", {}, `from ${f.username ?? "?"}`), h("span", {}, when(f.createdAt))),
+          f.context ? h("div", { class: "meta fb-ctx" }, f.context) : null,
+          note,
+        ),
+        h(
+          "div",
+          { class: "actions" },
+          f.status !== "planned" ? button("Planned", set("planned")) : null,
+          f.status !== "done" ? button("Done", set("done")) : null,
+          f.status !== "wontfix" ? button("Won't do", set("wontfix")) : null,
+          f.status !== "open" ? button("Reopen", set("open")) : null,
+        ),
+      ),
+    );
+  }
+}
+
 // ---------- start ----------
 
 async function boot() {
   try {
-    const [st, inv, us, rules, reps] = await Promise.all([api.state(), api.admin.invites(), api.admin.users(), api.admin.settings(), api.admin.reports()]);
+    const [st, inv, us, rules, reps, fb] = await Promise.all([api.state(), api.admin.invites(), api.admin.users(), api.admin.settings(), api.admin.reports(), api.admin.feedback()]);
     reports = reps;
+    feedback = fb;
     me = st.account.username;
     invites = inv;
     users = us;
     showRules(rules);
     paintReports();
+    paintFeedback();
     $("#panel").hidden = false;
     paintInvites();
     paintUsers();

@@ -114,6 +114,23 @@ export interface Report {
   createdAt: number;
 }
 
+export type FeedbackKind = "bug" | "idea" | "other";
+export type FeedbackStatus = "open" | "planned" | "done" | "wontfix";
+
+export interface Feedback {
+  id: number;
+  kind: FeedbackKind;
+  title: string;
+  details: string;
+  status: FeedbackStatus;
+  /** A note from the admin, shown next to the status. */
+  note: string;
+  createdAt: number;
+  /** Admin only: who sent it and where they were (page, version, device). */
+  username?: string;
+  context?: string;
+}
+
 export interface Profile {
   username: string;
   me: boolean;
@@ -386,6 +403,11 @@ export const api = {
   setWish: (pack: string, team: number, on: boolean) => call<number[]>("POST", "/api/wishlist", { pack, team, on }),
   /** Pin up to 3 teams you own to your profile. */
   setShowcase: (pack: string, teams: number[]) => call<number[]>("POST", "/api/showcase", { pack, teams }),
+  /** Send a bug report, idea or other note to the admin. `context` says where you were and on what device. */
+  sendFeedback: (kind: FeedbackKind, title: string, details: string, context: string) =>
+    call<void>("POST", "/api/feedback", { kind, title, details, context }),
+  /** What you've sent and how each is doing. */
+  myFeedback: () => call<Feedback[]>("GET", "/api/feedback/mine"),
   /** Report a player to the admin: reason is username, cheating, harassment or other. */
   report: (username: string, reason: string, details: string) => call<void>("POST", "/api/report", { username, reason, details }),
   /** Collect a finished daily mission's parts. */
@@ -412,6 +434,9 @@ export const api = {
     badge: (id: string, badge: string) => call<void>("POST", `/api/admin/users/${id}/badge`, { badge }),
     rename: (id: string, username: string) => call<void>("POST", `/api/admin/users/${id}/rename`, { username }),
     reports: () => call<Report[]>("GET", "/api/admin/reports"),
+    feedback: () => call<Feedback[]>("GET", "/api/admin/feedback"),
+    feedbackStatus: (id: number, status: FeedbackStatus, note: string) =>
+      call<void>("POST", `/api/admin/feedback/${id}/status`, { status, note }),
     resolveReport: (id: number) => call<void>("POST", `/api/admin/reports/${id}/resolve`),
     givePacks: (id: string, count: number) => call<void>("POST", `/api/admin/users/${id}/packs`, { count }),
     setAdmin: (id: string, admin: boolean) => call<void>("POST", `/api/admin/users/${id}/admin`, { admin }),
@@ -467,6 +492,8 @@ export function explain(e: unknown): string {
     mission_not_ready: "That mission isn't finished yet.",
     wishlist_full: "Your wishlist is full (50). Take something off first.",
     username_not_allowed: "That username isn't allowed. Pick something else.",
+    too_much_feedback: "You've sent a lot of feedback today. Thank you! Try again tomorrow.",
+    admin_only: "The beta isn't open to everyone yet.",
     too_many_reports: "You've sent a lot of reports today. The admin will look at them.",
   };
   return words[e.code] ?? "Something went wrong. Try again.";
